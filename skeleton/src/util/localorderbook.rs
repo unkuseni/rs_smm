@@ -149,3 +149,4 @@ impl LocalBook {
         (self.best_bid.clone(), self.best_ask.clone())
     }
 }
+unsafe impl Send for LocalBook {}
