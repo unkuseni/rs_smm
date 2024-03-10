@@ -1,14 +1,14 @@
-use std::time::Duration;
-
 use bybit::{
+    account::AccountManager,
     api::Bybit,
     general::General,
     model::{
-        Category, KlineData, LinearTickerData, LiquidationData, OrderBookUpdate, Subscription,
-        Tickers, WebsocketEvents, WsKline, WsTrade,
+        Category, ExecutionData, KlineData, LinearTickerData, LiquidationData, OrderBookUpdate,
+        OrderData, PositionData, Subscription, Tickers, WalletData, WebsocketEvents, WsTrade,
     },
     ws::Stream as BybitStream,
 };
+use std::{collections::VecDeque, time::Duration};
 use tokio::sync::mpsc;
 
 use crate::util::localorderbook::LocalBook;
@@ -31,11 +31,28 @@ unsafe impl Sync for BybitMarket {}
 #[derive(Clone, Debug)]
 pub struct BybitPrivate {
     pub time: u64,
-    pub wallet: String,
-    pub orders: String,
-    pub positions: String,
-    pub executions: String,
+    pub wallet: VecDeque<WalletData>,
+    pub orders: VecDeque<OrderData>,
+    pub positions: VecDeque<PositionData>,
+    pub executions: VecDeque<ExecutionData>,
 }
+
+unsafe impl Send for BybitPrivate {}
+unsafe impl Sync for BybitPrivate {}
+
+impl Default for BybitPrivate {
+    fn default() -> Self {
+        Self {
+            time: 0,
+            wallet: VecDeque::with_capacity(20),
+            orders: VecDeque::with_capacity(1000),
+            positions: VecDeque::with_capacity(500),
+            executions: VecDeque::with_capacity(500),
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq)]
 pub struct BybitClient {
     pub key: String,
     pub secret: String,
@@ -54,12 +71,12 @@ impl Default for BybitMarket {
     }
 }
 
-impl Exchange for BybitClient {
-    fn init(key: String, secret: String) -> Self {
+impl BybitClient {
+    pub fn init(key: String, secret: String) -> Self {
         Self { key, secret }
     }
 
-    async fn exchange_time(&self) -> u64 {
+    pub async fn exchange_time(&self) -> u64 {
         let general: General = Bybit::new(None, None);
         let response = general.get_server_time().await;
         if let Ok(v) = response {
@@ -70,7 +87,21 @@ impl Exchange for BybitClient {
         }
     }
 
-    async fn market_subscribe(
+   pub async fn fee_rate(&self, symbol: &str) -> f64 {
+        let account: AccountManager = Bybit::new(Some(self.key.clone()), Some(self.secret.clone()));
+        let mut rate;
+        let response = account
+            .get_fee_rate(Category::Linear, Some(symbol.to_string()))
+            .await;
+        if let Ok(v) = response {
+            rate = v[0].maker_fee_rate.parse().unwrap();
+        } else {
+            rate = 0.0000_f64;
+        }
+        rate
+    }
+
+    pub async fn market_subscribe(
         &self,
         symbol: Vec<&str>,
         sender: mpsc::UnboundedSender<BybitMarket>,
@@ -196,8 +227,74 @@ impl Exchange for BybitClient {
             }
         }
     }
-    async fn private_subscribe(&self, sender: mpsc::UnboundedSender<BybitPrivate>) {
-        unimplemented!()
+   pub async fn private_subscribe(&self, sender: mpsc::UnboundedSender<BybitPrivate>) {
+        let mut delay = 600;
+        let user_stream: BybitStream = BybitStream::new(
+            Some(self.key.clone()),    // API key
+            Some(self.secret.clone()), // Secret Key
+        );
+        let request_args = {
+            let mut args = vec![];
+            args.push("position.linear".to_string());
+            args.push("execution.linear".to_string());
+            args.push("order.linear".to_string());
+            args.push("wallet".to_string());
+            args
+        };
+        let mut private_data = BybitPrivate::default();
+        let request = Subscription::new(
+            "subscribe",
+            request_args.iter().map(String::as_str).collect(),
+        );
+        let handler = move |event| {
+            match event {
+                WebsocketEvents::Wallet(data) => {
+                    while private_data.wallet.len() + data.data.len()
+                        > private_data.wallet.capacity()
+                    {
+                        private_data.wallet.pop_front();
+                    }
+                    for d in data.data {
+                        private_data.wallet.push_back(d);
+                    }
+                }
+                WebsocketEvents::PositionEvent(data) => private_data.positions = data.data.into(),
+                WebsocketEvents::ExecutionEvent(data) => {
+                    while private_data.executions.len() + data.data.len()
+                        > private_data.executions.capacity()
+                    {
+                        private_data.executions.pop_front();
+                    }
+                    for d in data.data {
+                        private_data.executions.push_back(d);
+                    }
+                }
+                WebsocketEvents::OrderEvent(data) => {
+                    private_data.orders = data.data.into();
+                }
+                _ => {
+                    eprintln!("Unhandled event: {:#?}", event);
+                }
+            }
+            sender.send(private_data.clone()).unwrap();
+            Ok(())
+        };
+        loop {
+            match user_stream
+                .ws_priv_subscribe(request.clone(), handler.clone())
+                .await
+            {
+                Ok(_) => {
+                    println!("Subscription successful");
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("Subscription error: {}", e);
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    delay *= 2;
+                }
+            }
+        }
     }
 }
 
@@ -207,7 +304,7 @@ fn build_requests(symbol: &[&str]) -> Vec<String> {
     // Building book requests
     let book_req: Vec<String> = symbol
         .iter()
-        .flat_map(|&sym| vec![(1, sym), (50, sym)])
+        .flat_map(|&sym| vec![(1, sym), (50, sym), (500, sym)])
         .map(|(num, sym)| format!("orderbook.{}.{}", num, sym.to_uppercase()))
         .collect();
     request_args.extend(book_req);

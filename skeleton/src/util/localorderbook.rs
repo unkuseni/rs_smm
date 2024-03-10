@@ -150,3 +150,30 @@ impl LocalBook {
     }
 }
 unsafe impl Send for LocalBook {}
+
+pub trait ProcessAsks {
+    fn process_asks(ask: Self) -> Ask;
+}
+
+trait ProcessBids {
+    fn process_bids(bid: Self) -> Bid;
+}
+
+impl ProcessAsks for binance::model::Asks {
+    fn process_asks(ask: Self) -> Ask {
+        Ask {
+            price: ask.price,
+            qty: ask.qty,
+        }
+    }
+}
+
+impl ProcessBids for binance::model::Bids {
+    fn process_bids(bid: Self) -> Bid {
+        Bid {
+            price: bid.price,
+            qty: bid.qty,
+        }
+    }
+}
+
