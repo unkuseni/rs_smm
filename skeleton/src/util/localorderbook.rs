@@ -63,32 +63,6 @@ impl LocalBook {
 
         self.bids.retain(|_, &mut v| v != 0.0);
         self.asks.retain(|_, &mut v| v != 0.0);
-        // Set the best bid based on the highest bid price and quantity in the order book
-        self.best_bid = self
-            .bids
-            .iter()
-            .next_back()
-            .map(|(price, qty)| Bid {
-                price: **price,
-                qty: *qty,
-            })
-            .unwrap_or_else(|| Bid {
-                price: 0.0,
-                qty: 0.0,
-            });
-        // Set the best ask based on the lowest ask price and quantity in the order boo
-        self.best_ask = self
-            .asks
-            .iter()
-            .next()
-            .map(|(price, qty)| Ask {
-                price: **price,
-                qty: *qty,
-            })
-            .unwrap_or_else(|| Ask {
-                price: 0.0,
-                qty: 0.0,
-            });
 
         self.last_update = timestamp;
     }
@@ -156,6 +130,35 @@ impl LocalBook {
             });
         // Update the last update timestamp
         self.last_update = timestamp;
+    }
+
+    pub fn binance_bba(&mut self) {
+         // Set the best bid based on the highest bid price and quantity in the order book
+        self.best_bid = self
+            .bids
+            .iter()
+            .next_back()
+            .map(|(price, qty)| Bid {
+                price: **price,
+                qty: *qty,
+            })
+            .unwrap_or_else(|| Bid {
+                price: 0.0,
+                qty: 0.0,
+            });
+        // Set the best ask based on the lowest ask price and quantity in the order boo
+        self.best_ask = self
+            .asks
+            .iter()
+            .next()
+            .map(|(price, qty)| Ask {
+                price: **price,
+                qty: *qty,
+            })
+            .unwrap_or_else(|| Ask {
+                price: 0.0,
+                qty: 0.0,
+            });
     }
 
     /// Get the best ask prices and quantities in the order book.
