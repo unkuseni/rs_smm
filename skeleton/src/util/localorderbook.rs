@@ -2,8 +2,6 @@ use bybit::model::{Ask, Bid};
 use ordered_float::OrderedFloat;
 use std::collections::BTreeMap;
 
-use super::helpers::generate_timestamp;
-
 #[derive(Debug, Clone)]
 pub struct LocalBook {
     pub asks: BTreeMap<OrderedFloat<f64>, f64>,
@@ -18,7 +16,7 @@ impl LocalBook {
         Self {
             asks: BTreeMap::new(),
             bids: BTreeMap::new(),
-            last_update: generate_timestamp(),
+            last_update: 0,
             best_ask: Ask {
                 price: 0.0,
                 qty: 0.0,
@@ -43,7 +41,7 @@ impl LocalBook {
     ///
     /// Finally, it updates the last_update timestamp to the input timestamp.
     pub fn update(&mut self, bids: Vec<Bid>, asks: Vec<Ask>, timestamp: u64) {
-        if timestamp <= self.last_update {
+        if timestamp == self.last_update {
             return;
         }
 
@@ -65,6 +63,32 @@ impl LocalBook {
 
         self.bids.retain(|_, &mut v| v != 0.0);
         self.asks.retain(|_, &mut v| v != 0.0);
+        // Set the best bid based on the highest bid price and quantity in the order book
+        self.best_bid = self
+            .bids
+            .iter()
+            .next_back()
+            .map(|(price, qty)| Bid {
+                price: **price,
+                qty: *qty,
+            })
+            .unwrap_or_else(|| Bid {
+                price: 0.0,
+                qty: 0.0,
+            });
+        // Set the best ask based on the lowest ask price and quantity in the order boo
+        self.best_ask = self
+            .asks
+            .iter()
+            .next()
+            .map(|(price, qty)| Ask {
+                price: **price,
+                qty: *qty,
+            })
+            .unwrap_or_else(|| Ask {
+                price: 0.0,
+                qty: 0.0,
+            });
 
         self.last_update = timestamp;
     }
@@ -181,7 +205,7 @@ pub trait ProcessAsks {
     fn process_asks(ask: Self) -> Ask;
 }
 
-trait ProcessBids {
+pub trait ProcessBids {
     fn process_bids(bid: Self) -> Bid;
 }
 

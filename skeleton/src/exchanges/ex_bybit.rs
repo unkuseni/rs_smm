@@ -13,16 +13,15 @@ use tokio::sync::mpsc;
 
 use crate::util::localorderbook::LocalBook;
 
-use super::exchange::Exchange;
 
 #[derive(Clone, Debug)]
 pub struct BybitMarket {
     pub time: u64,
     pub books: Vec<(String, LocalBook)>,
-    pub klines: Vec<(String, Vec<KlineData>)>,
-    pub trades: Vec<(String, Vec<WsTrade>)>,
-    pub tickers: Vec<(String, Vec<LinearTickerData>)>,
-    pub liquidations: Vec<(String, Vec<LiquidationData>)>,
+    pub klines: Vec<(String, VecDeque<KlineData>)>,
+    pub trades: Vec<(String, VecDeque<WsTrade>)>,
+    pub tickers: Vec<(String, VecDeque<LinearTickerData>)>,
+    pub liquidations: Vec<(String, VecDeque<LiquidationData>)>,
 }
 
 unsafe impl Send for BybitMarket {}
@@ -45,9 +44,9 @@ impl Default for BybitPrivate {
         Self {
             time: 0,
             wallet: VecDeque::with_capacity(20),
-            orders: VecDeque::with_capacity(1000),
+            orders: VecDeque::with_capacity(1500),
             positions: VecDeque::with_capacity(500),
-            executions: VecDeque::with_capacity(500),
+            executions: VecDeque::with_capacity(2000),
         }
     }
 }
@@ -87,7 +86,7 @@ impl BybitClient {
         }
     }
 
-   pub async fn fee_rate(&self, symbol: &str) -> f64 {
+    pub async fn fee_rate(&self, symbol: &str) -> f64 {
         let account: AccountManager = Bybit::new(Some(self.key.clone()), Some(self.secret.clone()));
         let mut rate;
         let response = account
@@ -121,27 +120,28 @@ impl BybitClient {
             .collect::<Vec<(String, LocalBook)>>();
         market_data.klines = symbol
             .iter()
-            .map(|s| (s.to_string(), Vec::new()))
-            .collect::<Vec<(String, Vec<KlineData>)>>();
+            .map(|s| (s.to_string(), VecDeque::with_capacity(2000)))
+            .collect::<Vec<(String, VecDeque<KlineData>)>>();
 
         market_data.liquidations = symbol
             .iter()
-            .map(|s| (s.to_string(), Vec::new()))
-            .collect::<Vec<(String, Vec<LiquidationData>)>>();
+            .map(|s| (s.to_string(), VecDeque::with_capacity(2000)))
+            .collect::<Vec<(String, VecDeque<LiquidationData>)>>();
         market_data.trades = symbol
             .iter()
-            .map(|s| (s.to_string(), Vec::new()))
-            .collect::<Vec<(String, Vec<WsTrade>)>>();
+            .map(|s| (s.to_string(), VecDeque::with_capacity(5000)))
+            .collect::<Vec<(String, VecDeque<WsTrade>)>>();
         market_data.tickers = symbol
             .iter()
-            .map(|s| (s.to_string(), Vec::new()))
-            .collect::<Vec<(String, Vec<LinearTickerData>)>>();
+            .map(|s| (s.to_string(), VecDeque::with_capacity(10)))
+            .collect::<Vec<(String, VecDeque<LinearTickerData>)>>();
         let handler = move |event| {
             match event {
                 WebsocketEvents::OrderBookEvent(OrderBookUpdate {
                     topic,
                     data,
                     timestamp,
+                    
                     ..
                 }) => {
                     let sym = topic.split('.').nth(2).unwrap();
@@ -168,6 +168,13 @@ impl BybitClient {
                         .find(|(s, _)| s == sym)
                         .unwrap()
                         .1;
+                    if kline.len() == kline.capacity()
+                        || (kline.capacity() - kline.len()) <= klines.data.len()
+                    {
+                        for _ in 0..klines.data.len() {
+                            kline.pop_front();
+                        }
+                    }
                     kline.extend(klines.data);
                 }
                 WebsocketEvents::TickerEvent(tick) => {
@@ -178,10 +185,17 @@ impl BybitClient {
                         .find(|(s, _)| s == sym)
                         .unwrap()
                         .1;
-                    *ticker = vec![match tick.data {
+                    if ticker.len() == ticker.capacity() || (ticker.capacity() - ticker.len()) <= 1
+                    {
+                        for _ in 0..2 {
+                            ticker.pop_front();
+                        }
+                    }
+                    let d = match tick.data {
                         Tickers::Linear(data) => data,
                         _ => unreachable!(),
-                    }];
+                    };
+                    ticker.push_back(d);
                 }
                 WebsocketEvents::TradeEvent(data) => {
                     let sym = data.topic.split('.').nth(1).unwrap();
@@ -191,6 +205,13 @@ impl BybitClient {
                         .find(|(s, _)| s == sym)
                         .unwrap()
                         .1;
+                    if trades.len() == trades.capacity()
+                        || (trades.capacity() - trades.len()) <= data.data.len()
+                    {
+                        for _ in 0..data.data.len() {
+                            trades.pop_front();
+                        }
+                    }
                     trades.extend(data.data);
                 }
                 WebsocketEvents::LiquidationEvent(data) => {
@@ -201,8 +222,14 @@ impl BybitClient {
                         .find(|(s, _)| s == sym)
                         .unwrap()
                         .1;
-
-                    liquidations.push(data.data);
+                    if liquidations.len() == liquidations.capacity()
+                        || (liquidations.capacity() - liquidations.len()) <= 5
+                    {
+                        for _ in 0..5 {
+                            liquidations.pop_front();
+                        }
+                    }
+                    liquidations.push_back(data.data);
                 }
                 _ => {
                     eprintln!("Unhandled event: {:#?}", event);
@@ -227,7 +254,7 @@ impl BybitClient {
             }
         }
     }
-   pub async fn private_subscribe(&self, sender: mpsc::UnboundedSender<BybitPrivate>) {
+    pub async fn private_subscribe(&self, sender: mpsc::UnboundedSender<BybitPrivate>) {
         let mut delay = 600;
         let user_stream: BybitStream = BybitStream::new(
             Some(self.key.clone()),    // API key
@@ -249,28 +276,48 @@ impl BybitClient {
         let handler = move |event| {
             match event {
                 WebsocketEvents::Wallet(data) => {
-                    while private_data.wallet.len() + data.data.len()
-                        > private_data.wallet.capacity()
+                    if private_data.wallet.len() == private_data.wallet.capacity()
+                        || (private_data.wallet.capacity() - private_data.wallet.len())
+                            <= data.data.len()
                     {
-                        private_data.wallet.pop_front();
+                        for _ in 0..data.data.len() {
+                            private_data.wallet.pop_front();
+                        }
                     }
-                    for d in data.data {
-                        private_data.wallet.push_back(d);
-                    }
+                    private_data.wallet.extend(data.data);
                 }
-                WebsocketEvents::PositionEvent(data) => private_data.positions = data.data.into(),
-                WebsocketEvents::ExecutionEvent(data) => {
-                    while private_data.executions.len() + data.data.len()
-                        > private_data.executions.capacity()
+                WebsocketEvents::PositionEvent(data) => {
+                    if private_data.positions.len() == private_data.positions.capacity()
+                        || (private_data.positions.capacity() - private_data.positions.len())
+                            <= data.data.len()
                     {
-                        private_data.executions.pop_front();
+                        for _ in 0..data.data.len() {
+                            private_data.positions.pop_front();
+                        }
                     }
-                    for d in data.data {
-                        private_data.executions.push_back(d);
+                    private_data.positions.extend(data.data);
+                }
+                WebsocketEvents::ExecutionEvent(data) => {
+                    if private_data.executions.len() == private_data.executions.capacity()
+                        || (private_data.executions.capacity() - private_data.executions.len())
+                            <= data.data.len()
+                    {
+                        for _ in 0..data.data.len() {
+                            private_data.executions.pop_front();
+                        }
                     }
+                    private_data.executions.extend(data.data);
                 }
                 WebsocketEvents::OrderEvent(data) => {
-                    private_data.orders = data.data.into();
+                    if private_data.orders.len() == private_data.orders.capacity()
+                        || (private_data.orders.capacity() - private_data.orders.len())
+                            <= data.data.len()
+                    {
+                        for _ in 0..data.data.len() {
+                            private_data.orders.pop_front();
+                        }
+                    }
+                    private_data.orders.extend(data.data);
                 }
                 _ => {
                     eprintln!("Unhandled event: {:#?}", event);
