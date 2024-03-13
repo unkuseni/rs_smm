@@ -145,10 +145,36 @@ impl LocalBook {
     }
 
     /// Get the best ask and bid prices and quantities in the order book.
-    pub fn get_bba(&self) -> (Bid, Ask) {
-        (self.best_bid.clone(), self.best_ask.clone())
+    pub fn get_bba(&self) -> (Ask, Bid) {
+        (self.best_ask.clone(), self.best_bid.clone())
+    }
+    pub fn get_book_depth(&self, depth: usize) -> (Vec<Ask>, Vec<Bid>) {
+        let asks: Vec<Ask> = {
+            let mut ask_vec = Vec::new();
+            for (p, q) in self.asks.iter().take(depth) {
+                ask_vec.push(Ask {
+                    price: **p,
+                    qty: *q,
+                })
+            }
+            ask_vec.reverse();
+            ask_vec
+        };
+
+        let bids: Vec<Bid> = {
+            let mut bid_vec = Vec::new();
+            for (p, q) in self.bids.iter().rev().take(depth) {
+                bid_vec.push(Bid {
+                    price: **p,
+                    qty: *q,
+                })
+            }
+            bid_vec
+        };
+        (asks, bids)
     }
 }
+
 unsafe impl Send for LocalBook {}
 
 pub trait ProcessAsks {
@@ -176,4 +202,3 @@ impl ProcessBids for binance::model::Bids {
         }
     }
 }
-
