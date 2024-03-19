@@ -13,7 +13,6 @@ use tokio::sync::mpsc;
 
 use crate::util::localorderbook::LocalBook;
 
-
 #[derive(Clone, Debug)]
 pub struct BybitMarket {
     pub time: u64,
@@ -77,13 +76,11 @@ impl BybitClient {
 
     pub async fn exchange_time(&self) -> u64 {
         let general: General = Bybit::new(None, None);
-        let response = general.get_server_time().await;
-        if let Ok(v) = response {
-            println!("Server time: {}", v.time_second);
-            v.time_second
-        } else {
-            0
-        }
+        general
+            .get_server_time()
+            .await
+            .map(|data| data.result.time_second)
+            .unwrap_or(0)
     }
 
     pub async fn fee_rate(&self, symbol: &str) -> f64 {
@@ -93,7 +90,7 @@ impl BybitClient {
             .get_fee_rate(Category::Linear, Some(symbol.to_string()))
             .await;
         if let Ok(v) = response {
-            rate = v[0].maker_fee_rate.parse().unwrap();
+            rate = v.result.list[0].maker_fee_rate.parse().unwrap();
         } else {
             rate = 0.0000_f64;
         }
@@ -141,7 +138,6 @@ impl BybitClient {
                     topic,
                     data,
                     timestamp,
-                    
                     ..
                 }) => {
                     let sym = topic.split('.').nth(2).unwrap();

@@ -132,8 +132,48 @@ impl LocalBook {
         self.last_update = timestamp;
     }
 
-    pub fn binance_bba(&mut self) {
-         // Set the best bid based on the highest bid price and quantity in the order book
+    pub fn update_binance_bba(&mut self, bids: Vec<Bid>, asks: Vec<Ask>, timestamp: u64) {
+        // If the timestamp is not newer than the last update, return early
+        if timestamp <= self.last_update {
+            return;
+        }
+
+        // Update the bids in the order book
+        let prices_iter = bids.iter().map(|bid| OrderedFloat::from(bid.price));
+        for bid in bids.iter() {
+            let price = OrderedFloat::from(bid.price);
+
+            // Modify or insert the bid price and quantity into the bids HashMap
+            self.bids
+                .entry(price)
+                .and_modify(|qty| *qty = bid.qty)
+                .or_insert(bid.qty);
+            // Remove bids with prices higher than the current bid price
+        }
+        if let Some(highest_bid_price) = prices_iter.max() {
+            self.bids.retain(|&key, _| key <= highest_bid_price);
+        }
+
+        let ask_prices_iter = asks.iter().map(|ask| OrderedFloat::from(ask.price));
+        for ask in asks.iter() {
+            let price = OrderedFloat::from(ask.price);
+            // Modify or insert the ask price and quantity into the asks HashMap
+            self.asks
+                .entry(price)
+                .and_modify(|qty| *qty = ask.qty)
+                .or_insert(ask.qty);
+            // Remove asks with prices lower than the current ask price
+        }
+        if let Some(lowest_ask_price) = ask_prices_iter.min() {
+            self.asks.retain(|&key, _| key >= lowest_ask_price);
+        }
+
+        // Remove any bids with quantity equal to 0
+        self.bids.retain(|_, &mut v| v != 0.0);
+        // Remove any asks with quantity equal to 0
+        self.asks.retain(|_, &mut v| v != 0.0);
+
+        // Set the best bid based on the highest bid price and quantity in the order book
         self.best_bid = self
             .bids
             .iter()
@@ -159,6 +199,8 @@ impl LocalBook {
                 price: 0.0,
                 qty: 0.0,
             });
+        // Update the last update timestamp
+        self.last_update = timestamp;
     }
 
     /// Get the best ask prices and quantities in the order book.

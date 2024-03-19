@@ -27,11 +27,11 @@ impl EMA {
     }
 
     pub fn update(&mut self, new_val: f64) {
-        self.value = self.alpha * new_val + (1.0 - self.alpha) * self.value;
-        self.arr.push_back(self.value);
-        if self.arr.len() > self.window {
+        if self.arr.len() == self.window {
             self.arr.pop_front();
         }
+        self.value = self.alpha * new_val + (1.0 - self.alpha) * self.value;
+        self.arr.push_back(self.value);
     }
 
     // Access the current EMA value
@@ -39,9 +39,8 @@ impl EMA {
         self.value
     }
 
-    // Access the internal EMA values as a slice
-
-    pub fn arr(&self) -> &[f64] {
-        &self.arr.as_slices().0
+    // Access the internal EMA values as a Vec
+    pub fn arr(&self) -> Vec<f64> {
+        self.arr.iter().cloned().collect()
     }
 }
