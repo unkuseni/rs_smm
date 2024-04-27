@@ -70,6 +70,15 @@ pub struct BinanceClient {
     pub secret: String,
 }
 
+impl Default for BinanceClient {
+    fn default() -> Self {
+        Self {
+            key: String::new(),
+            secret: String::new(),
+        }
+    }
+}
+
 impl BinanceClient {
     pub fn init(key: String, secret: String) -> Self {
         Self { key, secret }
@@ -152,7 +161,7 @@ impl BinanceClient {
                         // Process when the lengths are not equal or not equal to 5, 10, or 20
                         book.update(new_bids.clone(), new_asks.clone(), event_time);
                     }
-                    sender.send(market_data.clone()).unwrap();
+                    let _ = sender.send(market_data.clone());
                     market_data.time = event_time;
                 }
                 FuturesWebsocketEvent::AggrTrades(agg) => {
@@ -296,13 +305,17 @@ impl BinanceClient {
                             executions_keys.push_back(id_to_find);
                         }
                     } else if private_data.executions.contains_key(&id_to_find) {
-                        remove_oldest_if_needed(&mut private_data.executions, &mut executions_keys, 2000);
+                        remove_oldest_if_needed(
+                            &mut private_data.executions,
+                            &mut executions_keys,
+                            2000,
+                        );
                         private_data.executions.insert(id_to_find, order);
                     }
                 }
                 _ => (),
             };
-            sender.send(private_data.clone()).unwrap();
+            let _ = sender.send(private_data.clone());
             Ok(())
         };
         if let Ok(answer) = user_stream.start() {

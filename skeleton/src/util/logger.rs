@@ -1,6 +1,7 @@
 use std::fmt;
 use super::helpers::generate_timestamp;
 
+#[derive(Debug, Clone)]
 pub struct Logger;
 
 impl Logger {

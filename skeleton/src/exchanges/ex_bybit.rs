@@ -69,6 +69,15 @@ impl Default for BybitMarket {
     }
 }
 
+impl Default for BybitClient {
+    fn default() -> Self {
+        Self {
+            key: String::new(),
+            secret: String::new(),
+        }
+    }
+}
+
 impl BybitClient {
     pub fn init(key: String, secret: String) -> Self {
         Self { key, secret }
@@ -79,13 +88,13 @@ impl BybitClient {
         general
             .get_server_time()
             .await
-            .map(|data| data.result.time_second)
+            .map(|data| data.result.time_nano / 1_000_000)
             .unwrap_or(0)
     }
 
     pub async fn fee_rate(&self, symbol: &str) -> f64 {
         let account: AccountManager = Bybit::new(Some(self.key.clone()), Some(self.secret.clone()));
-        let mut rate;
+        let rate;
         let response = account
             .get_fee_rate(Category::Linear, Some(symbol.to_string()))
             .await;
@@ -151,7 +160,7 @@ impl BybitClient {
                     if topic == format!("orderbook.1.{}", sym) {
                         book.update_bba(data.bids, data.asks, timestamp);
                         market_data.time = timestamp;
-                        sender.send(market_data.clone()).unwrap();
+                        let _ = sender.send(market_data.clone());
                     } else {
                         book.update(data.bids, data.asks, timestamp);
                     }

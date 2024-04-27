@@ -13,8 +13,26 @@ pub fn generate_timestamp() -> u64 {
         .as_millis() as u64
 }
 
+
+/*
+This function generates a linearly spaced vector of f64 numbers.
+
+Parameters:
+- start: f64 - The starting value of the sequence.
+- end: f64 - The ending value of the sequence.
+- n: usize - The number of elements in the sequence.
+
+Return:
+- Vec<f64> - A vector containing n numbers, equally spaced between start and end.
+*/
 pub fn linspace(start: f64, end: f64, n: usize) -> Vec<f64> {
+    // Calculate the step size between consecutive numbers in the sequence.
+    // The step size is calculated as (end - start) divided by the number of elements minus 1.
     let step = (end - start) / (n - 1) as f64;
+
+    // Generate the sequence of numbers using the start value, the step size and the number of elements.
+    // The map function applies the formula (start + i as f64 * step) to each element in the range 0..n,
+    // creating a new vector with the resulting numbers.
     (0..n).map(|i| start + i as f64 * step).collect()
 }
 
