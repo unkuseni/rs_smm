@@ -1,66 +1,65 @@
-use std::collections::HashSet;
-
-use tokio::sync::mpsc;
+// Declare the ss struct
+use std::{collections::HashMap as Hashmap, sync::Arc};
+use tokio::sync::{mpsc, Mutex};
 
 use crate::{
-    exchanges::{
-        ex_binance::BinanceClient,
-        ex_bybit::{BybitClient, BybitMarket, BybitPrivate},
-        exchange::{Exchange},
-    },
+    exchanges::ex_bybit::{BybitClient, BybitMarket, BybitPrivate},
     util::logger::Logger,
 };
 
+#[derive(Debug, Clone)]
 pub struct SharedState {
     pub logging: Logger,
-    pub markets: BybitMarket,
-    pub private: BybitPrivate,
-    pub clients: Vec<Exchange>,
+    pub clients: Hashmap<String, BybitClient>,
+    pub bybit_market: BybitMarket,
     pub symbols: Vec<&'static str>,
 }
 
-impl Default for SharedState {
-    fn default() -> Self {
+impl SharedState {
+    pub fn new() -> Self {
+        let log = Logger;
         Self {
-            logging: Logger,
-            markets: BybitMarket::default(),
-            private: BybitPrivate::default(),
-            clients: Vec::new(),
+            logging: log,
+            clients: Hashmap::new(),
+            bybit_market: BybitMarket::default(),
             symbols: Vec::new(),
         }
     }
-}
 
-impl SharedState {
-    pub async fn load_markets(&mut self, symbols: Vec<&'static str>) {
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let client = BybitClient::init("key".to_string(), "secret".to_string());
-
-        let stream = tokio::spawn(async move {
-            client.market_subscribe(symbols, tx).await;
-        });
-        while let Some(v) = rx.recv().await {
-            self.markets = v;
+    pub fn add_clients(&mut self, clients: Vec<(String, BybitClient)>) {
+        for v in clients {
+            self.clients.insert(v.0, v.1);
         }
     }
 
-    pub async fn load_clients(&mut self, clients: Vec<String>) -> Vec<Exchange> {
-        let mut client_arr = Vec::new();
-        for v in clients {
-            match v.as_str() {
-                "bybit" => {
-                    let client = BybitClient::init("key".to_string(), "secret".to_string());
-                    client_arr.push(Exchange::Bybit(client));
-                }
-                "binance" => {
-                    let client = BinanceClient::init("key".to_string(), "secret".to_string());
-                    client_arr.push(Exchange::Binance(client));
-                }
-                _ => {
-                    println!("Unknown client: {}", v);
-                }
+    pub fn add_symbols(&mut self, markets: Vec<&'static str>) {
+        self.symbols.extend(markets);
+    }
+
+    pub async fn load_data(&mut self, ) {
+        self.logging
+            .info("Shared state has been loaded: successfully");
+        let (bybit_sender, mut bybit_receiver) = mpsc::unbounded_channel::<BybitMarket>();
+        let bybit_symbols = self.symbols.clone();
+
+        tokio::spawn(async move {
+            let market_client = BybitClient::default();
+            market_client
+                .market_subscribe(bybit_symbols, bybit_sender)
+                .await;
+        });
+        let market_data = Arc::new(Mutex::new(self.bybit_market.clone()));
+        let m_clone = Arc::clone(&market_data);
+        tokio::spawn(async move {
+            while let Some(v) = bybit_receiver.recv().await {
+                let mut market_data = m_clone.lock().await;
+                *market_data = v;
             }
-        }
-        client_arr
+        });
+    }
+
+    pub fn setup_log(&self, msg: &str) {
+        let new_msg = String::from("Shared state has been setup: successfully");
+        self.logging.info(msg);
     }
 }

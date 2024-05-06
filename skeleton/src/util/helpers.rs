@@ -1,4 +1,8 @@
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::{io::Read, time::{SystemTime, UNIX_EPOCH}};
+
+use toml::Value;
+
+use crate::exchanges::ex_bybit::BybitClient;
 
 pub fn round_step(num: f64, step: f64) -> f64 {
     let p = (1.0 / step) as i32;
@@ -12,7 +16,6 @@ pub fn generate_timestamp() -> u64 {
         .expect("Time went backwards")
         .as_millis() as u64
 }
-
 
 /*
 This function generates a linearly spaced vector of f64 numbers.
@@ -68,5 +71,14 @@ mod tests {
         let num: f64 = -5.437945;
         println!("{:#?}", num.abs().round_to(3));
     }
+}
 
+/// This section is for a toml parser that will be used for reading config files
+///
+pub fn read_toml(path: &str) -> Value {
+    let mut file = std::fs::File::open(path).expect("Unable to open file");
+    let mut contents = String::new();
+    file.read_to_string(&mut contents)
+        .expect("Unable to read file");
+    toml::from_str(&contents).expect("Unable to parse file")
 }

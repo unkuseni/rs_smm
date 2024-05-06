@@ -11,4 +11,4 @@ ordered-float = "4.2.0"
 rs_bybit = "0.2.0"
 serde = "1.0.197"
 tokio = "1.36.0"
-
+toml = "0.8.12"

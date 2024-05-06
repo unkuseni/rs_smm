@@ -11,27 +11,27 @@ impl Logger {
         println!("{:02}:{:02}:{:02} | {:<8} | {}", h, m, s, level, msg);
     }
 
-    pub fn success(msg: &str) {
+    pub fn success(&self, msg: &str) {
         Self::log(LogLevel::Success, msg);
     }
 
-    pub fn info(msg: &str) {
+    pub fn info(&self, msg: &str) {
         Self::log(LogLevel::Info, msg);
     }
 
-    pub fn debug(msg: &str) {
+    pub fn debug(&self, msg: &str) {
         Self::log(LogLevel::Debug, msg);
     }
 
-    pub fn warning(msg: &str) {
+    pub fn warning(&self, msg: &str) {
         Self::log(LogLevel::Warning, msg);
     }
 
-    pub fn error(msg: &str) {
+    pub fn error(&self, msg: &str) {
         Self::log(LogLevel::Error, msg);
     }
 
-    pub fn critical(msg: &str) {
+    pub fn critical(&self, msg: &str) {
         Self::log(LogLevel::Critical, msg);
     }
 }
