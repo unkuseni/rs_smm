@@ -11,7 +11,7 @@ mod tests {
 
     use tokio::{sync::mpsc, task};
 
-    use crate::exchanges::{ex_binance::BinanceClient, ex_bybit::BybitClient};
+    use crate::exchanges::{ex_binance::{BinanceClient, BinanceMarket}, ex_bybit::BybitClient};
 
     use self::util::helpers::read_toml;
 
@@ -31,29 +31,29 @@ mod tests {
         let api_key = "key".to_string();
         let api_secret = "secret".to_string();
         let bub = BybitClient::init(api_key.clone(), api_secret.clone());
-        let symbol = vec!["SKLUSDT", "SKLUSDT"];
+        let symbol = vec!["TNSRUSDT"];
         let clone_symbol = symbol.clone();
-        let (tx2, mut rx2) = mpsc::unbounded_channel();
+        let (tx2, mut rx2) = mpsc::unbounded_channel::<BinanceMarket>();
         let bub_2 = BinanceClient::init(api_key, api_secret);
-        let symbol_2 = vec!["AEVOUSDT"];
+        let symbol_2 = vec!["SKLUSDT"];
         let clone_symbol_2 = symbol_2.clone();
 
         tokio::spawn(async move {
             bub.market_subscribe(symbol, tx).await;
         });
 
-        let binance_task = tokio::task::spawn_blocking(move || {
-            bub_2.market_subscribe(symbol_2, tx2);
-        });
-        tokio::spawn(async move {
-            while let Some(v) = rx2.recv().await {
-                let depth = v.books[0].1.get_bba();
-                println!(
-                    "Binance Market data: {:#?}, {:#?}",
-                    clone_symbol_2[0], depth
-                );
-            }
-        });
+        // let binance_task = tokio::task::spawn_blocking(move || {
+        //     bub_2.market_subscribe(symbol_2, tx2);
+        // });
+        // tokio::spawn(async move {
+        //     while let Some(v) = rx2.recv().await {
+        //         let depth = v.books[0].1.get_bba();
+        //         println!(
+        //             "Binance Market data: {:#?}, {:#?}",
+        //             clone_symbol_2[0], depth
+        //         );
+        //     }
+        // });
 
         while let Some(v) = rx.recv().await {
             let depth = v.books[0].1.get_bba();
@@ -61,7 +61,7 @@ mod tests {
             println!("Bybit Market data: {:#?}, {:#?}", clone_symbol[0], depth);
         }
 
-        binance_task.await.unwrap();
+        // binance_task.await.unwrap();
     }
 
     #[tokio::test]

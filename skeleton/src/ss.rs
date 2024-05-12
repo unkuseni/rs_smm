@@ -36,7 +36,7 @@ impl SharedState {
         self.symbols.extend(markets);
     }
 
-    pub async fn load_data(&mut self, ) {
+    pub async fn load_data(&mut self, sender: mpsc::) {
         self.logging
             .info("Shared state has been loaded: successfully");
         let (bybit_sender, mut bybit_receiver) = mpsc::unbounded_channel::<BybitMarket>();
