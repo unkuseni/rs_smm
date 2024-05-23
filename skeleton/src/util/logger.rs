@@ -7,7 +7,7 @@ pub struct Logger;
 impl Logger {
     pub fn log(level: LogLevel, msg: &str) {
         let now = generate_timestamp() / 1000; // Convert milliseconds to seconds
-        let (h, m, s) = (now / 3600, (now / 60) % 60, now % 60);
+        let (h, m, s) = (now / 3600, (now % 3600) / 60, now % 60);
         println!("{:02}:{:02}:{:02} | {:<8} | {}", h, m, s, level, msg);
     }
 

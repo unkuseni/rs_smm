@@ -9,9 +9,21 @@ pub fn add(left: usize, right: usize) -> usize {
 #[cfg(test)]
 mod tests {
 
-    use tokio::{sync::mpsc, task};
+    use std::{sync::Arc, time::Duration};
 
-    use crate::exchanges::{ex_binance::{BinanceClient, BinanceMarket}, ex_bybit::BybitClient};
+    use tokio::{
+        sync::{mpsc, Mutex},
+        task,
+        time::Instant,
+    };
+
+    use crate::{
+        exchanges::{
+            ex_binance::{BinanceClient, BinanceMarket},
+            ex_bybit::BybitClient,
+        },
+        util::logger::Logger,
+    };
 
     use self::util::helpers::read_toml;
 
@@ -23,15 +35,13 @@ mod tests {
         assert_eq!(result, 4);
     }
 
-
-
     #[tokio::test]
     async fn test_orderbook_both() {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let api_key = "key".to_string();
         let api_secret = "secret".to_string();
         let bub = BybitClient::init(api_key.clone(), api_secret.clone());
-        let symbol = vec!["TNSRUSDT"];
+        let symbol = vec!["SKLUSDT"];
         let clone_symbol = symbol.clone();
         let (tx2, mut rx2) = mpsc::unbounded_channel::<BinanceMarket>();
         let bub_2 = BinanceClient::init(api_key, api_secret);
@@ -42,26 +52,25 @@ mod tests {
             bub.market_subscribe(symbol, tx).await;
         });
 
-        // let binance_task = tokio::task::spawn_blocking(move || {
-        //     bub_2.market_subscribe(symbol_2, tx2);
-        // });
-        // tokio::spawn(async move {
-        //     while let Some(v) = rx2.recv().await {
-        //         let depth = v.books[0].1.get_bba();
-        //         println!(
-        //             "Binance Market data: {:#?}, {:#?}",
-        //             clone_symbol_2[0], depth
-        //         );
-        //     }
-        // });
+        let binance_task = tokio::task::spawn_blocking(move || {
+            bub_2.market_subscribe(symbol_2, tx2);
+        });
 
-        while let Some(v) = rx.recv().await {
-            let depth = v.books[0].1.get_bba();
-            let bba = v.books[0].1.get_bba();
-            println!("Bybit Market data: {:#?}, {:#?}", clone_symbol[0], depth);
+        loop {
+            tokio::select! {
+                Some(v) = rx.recv() => {
+                    let depth = v.books[0].1.get_bba();
+                    println!("Bybit Market data: {:#?}, {:#?}", clone_symbol[0], depth);
+                }
+                Some(v) = rx2.recv() => {
+                    let depth = v.books[0].1.get_bba();
+                    println!("Binance Market data: {:#?}, {:#?}", clone_symbol_2[0], depth);
+                }
+                else => break,
+            }
         }
 
-        // binance_task.await.unwrap();
+        binance_task.await.unwrap();
     }
 
     #[tokio::test]
@@ -180,5 +189,32 @@ mod tests {
             bub.fee_rate();
         })
         .await;
+    }
+
+    #[tokio::test]
+    pub async fn test_log() {
+        let logger = Logger;
+        logger.info("info");
+        logger.success("success");
+        logger.debug("debug");
+        logger.warning("warning");
+        logger.error("error");
+    }
+
+    #[tokio::test]
+    pub async fn test_new_state() {
+        let mut state = ss::SharedState::new();
+        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let instant = Instant::now();
+        let wrapped = Arc::new(Mutex::new(state));
+        tokio::spawn(async move {
+            ss::load_data(wrapped, sender).await;
+        });
+        while let Some(v) = receiver.recv().await {
+            if instant.elapsed() > Duration::from_secs(60) {
+                println!("Shared State: {:#?}", v);
+                break;
+            }
+        }
     }
 }

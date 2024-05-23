@@ -4,7 +4,9 @@
 - Binance
 
 ## OBJECTIVES
-
+ - Built in support for Bybit and Binance Market and Private data.
+ - Built in support for Bybit and Binance Websockets.
+ // TODO: Streamline all websockets into one struct
 
 
 ## FEATURES 

@@ -8,7 +8,7 @@ edition = "2021"
 [dependencies]
 binance = "0.21.0"
 ordered-float = "4.2.0"
-rs_bybit = "0.2.0"
+rs_bybit = "0.2.1"
 serde = "1.0.197"
 tokio = "1.36.0"
 toml = "0.8.12"

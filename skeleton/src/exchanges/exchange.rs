@@ -1,12 +1,24 @@
 use binance::model::AggrTradesEvent;
 use bybit::model::WsTrade;
 
-use super::{ex_binance::BinanceClient, ex_bybit::BybitClient};
+use super::{ex_binance::{BinanceClient, BinanceMarket}, ex_bybit::{BybitClient, BybitMarket}};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExchangeClient {
     Bybit(BybitClient),
     Binance(BinanceClient),
+}
+
+#[derive(Clone, Debug)]
+pub enum MarketMessage {
+    Bybit(BybitMarket),
+    Binance(BinanceMarket),
+}
+
+#[derive(Debug)]
+pub enum Market {
+    Bybit,
+    Binance,
 }
 
 #[derive(Debug)]
