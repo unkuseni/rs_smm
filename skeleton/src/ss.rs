@@ -32,7 +32,7 @@ impl SharedState {
             logging: log,
             clients: HashMap::new(),
             private: HashMap::new(),
-            markets: Vec::with_capacity(2),
+            markets: [MarketMessage::Bybit(BybitMarket::default()), MarketMessage::Binance(BinanceMarket::default())].to_vec(),
             symbols: Vec::new(),
         }
     }
@@ -52,18 +52,16 @@ impl SharedState {
 
 pub async fn load_data(state: WrappedState, state_sender: mpsc::UnboundedSender<SharedState>) {
     let logger = state.lock().await.logging.clone();
-    state.lock().await.markets = vec![
-        MarketMessage::Bybit(BybitMarket::default()),
-        MarketMessage::Binance(BinanceMarket::default()),
-    ];
     let bit_ss_sender_clone = state_sender.clone();
     let bybit_state_clone = state.clone();
     let binance_state_clone = state.clone();
-    let (bybit_sender, mut bybit_receiver) = mpsc::unbounded_channel::<BybitMarket>();
-    let (binance_sender, mut binance_receiver) = mpsc::unbounded_channel::<BinanceMarket>();
     let binance_symbols = state.lock().await.symbols.clone();
     let symbols = state.lock().await.symbols.clone();
     let bybit_clients = state.lock().await.clients.clone();
+    let (bybit_sender, mut bybit_receiver) = mpsc::unbounded_channel::<BybitMarket>();
+    let (binance_sender, mut binance_receiver) = mpsc::unbounded_channel::<BinanceMarket>();
+
+
     for (symbol, client) in bybit_clients {
         let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<BybitPrivate>();
         let _ = &state.lock().await.private.insert(symbol, Arc::new(Mutex::new(private_receiver)));
