@@ -281,6 +281,7 @@ impl BybitClient {
         let handler = move |event| {
             match event {
                 WebsocketEvents::Wallet(data) => {
+                    private_data.time = data.creation_time;
                     if private_data.wallet.len() == private_data.wallet.capacity()
                         || (private_data.wallet.capacity() - private_data.wallet.len())
                             <= data.data.len()
@@ -292,6 +293,7 @@ impl BybitClient {
                     private_data.wallet.extend(data.data);
                 }
                 WebsocketEvents::PositionEvent(data) => {
+                    private_data.time = data.creation_time;
                     if private_data.positions.len() == private_data.positions.capacity()
                         || (private_data.positions.capacity() - private_data.positions.len())
                             <= data.data.len()
@@ -303,6 +305,7 @@ impl BybitClient {
                     private_data.positions.extend(data.data);
                 }
                 WebsocketEvents::ExecutionEvent(data) => {
+                    private_data.time = data.creation_time;
                     if private_data.executions.len() == private_data.executions.capacity()
                         || (private_data.executions.capacity() - private_data.executions.len())
                             <= data.data.len()
@@ -314,6 +317,7 @@ impl BybitClient {
                     private_data.executions.extend(data.data);
                 }
                 WebsocketEvents::OrderEvent(data) => {
+                    private_data.time = data.creation_time;
                     if private_data.orders.len() == private_data.orders.capacity()
                         || (private_data.orders.capacity() - private_data.orders.len())
                             <= data.data.len()
