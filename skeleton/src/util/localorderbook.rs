@@ -2,12 +2,14 @@ use bybit::model::{Ask, Bid};
 use ordered_float::OrderedFloat;
 use std::collections::BTreeMap;
 
+use super::helpers::Round;
 #[derive(Debug, Clone)]
 pub struct LocalBook {
     pub asks: BTreeMap<OrderedFloat<f64>, f64>,
     pub bids: BTreeMap<OrderedFloat<f64>, f64>,
     pub best_ask: Ask,
     pub best_bid: Bid,
+    pub mid_price: f64,
     pub tick_size: f64,
     pub last_update: u64,
 }
@@ -22,12 +24,12 @@ impl LocalBook {
                 price: 0.0,
                 qty: 0.0,
             },
+            mid_price: 0.0,
             best_bid: Bid {
                 price: 0.0,
                 qty: 0.0,
             },
             tick_size: 0.0,
-
         }
     }
 
@@ -131,6 +133,9 @@ impl LocalBook {
                 price: 0.0,
                 qty: 0.0,
             });
+
+        // Calculate the mid price
+        self.set_mid_price();
         // Update the last update timestamp
         self.last_update = timestamp;
     }
@@ -202,10 +207,18 @@ impl LocalBook {
                 price: 0.0,
                 qty: 0.0,
             });
+
+        // Set the mid price
+        self.set_mid_price();
         // Update the last update timestamp
         self.last_update = timestamp;
     }
 
+    fn set_mid_price(&mut self) {
+        let units = self.tick_size.count_decimal_places() + 1;
+        let avg = (self.best_ask.price + self.best_bid.price) / 2.0;
+        self.mid_price = avg.round_to(units as u8);
+    }
     /// Get the tick size of the order book.
     ///
     /// # Returns
@@ -220,6 +233,10 @@ impl LocalBook {
     /// Get the best ask prices and quantities in the order book.
     pub fn get_best_ask(&self) -> Ask {
         self.best_ask.clone()
+    }
+
+    pub fn get_mid_price(&self) -> f64 {
+        self.mid_price
     }
 
     /// Get the best bid prices and quantities in the order book.

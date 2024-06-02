@@ -1,5 +1,4 @@
 use std::collections::{HashMap, VecDeque};
-use std::fmt::format;
 use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time::Duration;
@@ -119,7 +118,7 @@ impl BinanceClient {
                     };
                     b.tick_size = price_filter;
                 }
-                Err(e) => {
+                Err(_) => {
                     b.tick_size = 0.0;
                 }
             }

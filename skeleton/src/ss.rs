@@ -1,9 +1,6 @@
 // Declare the ss struct
 use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{
-    mpsc::{self, UnboundedReceiver},
-    Mutex,
-};
+use tokio::sync::{mpsc, Mutex};
 
 use crate::{
     exchanges::{
@@ -11,7 +8,7 @@ use crate::{
         ex_bybit::{BybitClient, BybitMarket, BybitPrivate},
         exchange::MarketMessage,
     },
-    util::logger::{self, Logger},
+    util::logger::Logger,
 };
 
 #[derive(Debug, Clone)]
@@ -32,7 +29,11 @@ impl SharedState {
             logging: log,
             clients: HashMap::new(),
             private: HashMap::new(),
-            markets: [MarketMessage::Bybit(BybitMarket::default()), MarketMessage::Binance(BinanceMarket::default())].to_vec(),
+            markets: [
+                MarketMessage::Bybit(BybitMarket::default()),
+                MarketMessage::Binance(BinanceMarket::default()),
+            ]
+            .to_vec(),
             symbols: Vec::new(),
         }
     }
@@ -61,10 +62,13 @@ pub async fn load_data(state: WrappedState, state_sender: mpsc::UnboundedSender<
     let (bybit_sender, mut bybit_receiver) = mpsc::unbounded_channel::<BybitMarket>();
     let (binance_sender, mut binance_receiver) = mpsc::unbounded_channel::<BinanceMarket>();
 
-
     for (symbol, client) in bybit_clients {
         let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<BybitPrivate>();
-        let _ = &state.lock().await.private.insert(symbol, Arc::new(Mutex::new(private_receiver)));
+        let _ = &state
+            .lock()
+            .await
+            .private
+            .insert(symbol, Arc::new(Mutex::new(private_receiver)));
         tokio::spawn(async move {
             let subscriber = client;
             let _ = subscriber.private_subscribe(private_sender).await;
@@ -89,7 +93,7 @@ pub async fn load_data(state: WrappedState, state_sender: mpsc::UnboundedSender<
                 bit_ss_sender_clone
                     .send(state.clone())
                     .expect("Failed to send state to main thread");
-                logger.debug("Bybit market data received");
+                // logger.debug("Bybit market data received");
             }
             Some(v) = binance_receiver.recv() => {
                 let mut state = binance_state_clone.lock().await;
@@ -97,7 +101,7 @@ pub async fn load_data(state: WrappedState, state_sender: mpsc::UnboundedSender<
                 state_sender
                     .send(state.clone())
                     .expect("Failed to send state to main thread");
-                logger.debug("Binance market data received");
+                // logger.debug("Binance market data received");
             }
             else => break,
         }

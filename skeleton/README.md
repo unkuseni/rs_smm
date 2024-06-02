@@ -1,5 +1,7 @@
 # SMM EXCHANGE HANDLER
 
+   Build a shared state handler for exchange data.
+
 - Bybit
 - Binance
 

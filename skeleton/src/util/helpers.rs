@@ -1,8 +1,9 @@
-use std::{io::Read, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    io::Read,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 use toml::Value;
-
-use crate::exchanges::ex_bybit::BybitClient;
 
 pub fn round_step(num: f64, step: f64) -> f64 {
     let p = (1.0 / step) as i32;
@@ -39,9 +40,10 @@ pub fn linspace(start: f64, end: f64, n: usize) -> Vec<f64> {
     (0..n).map(|i| start + i as f64 * step).collect()
 }
 
-trait Round {
+pub trait Round {
     fn round_to(&self, digit: u8) -> f64;
     fn clip(&self, min: f64, max: f64) -> f64;
+    fn count_decimal_places(&self) -> usize;
 }
 impl Round for f64 {
     fn round_to(&self, digit: u8) -> f64 {
@@ -50,6 +52,13 @@ impl Round for f64 {
     }
     fn clip(&self, min: f64, max: f64) -> f64 {
         self.max(min).min(max)
+    }
+    fn count_decimal_places(&self) -> usize {
+        let num_str = self.to_string();
+        match num_str.split_once('.') {
+            Some((_, decimals)) => decimals.trim_end_matches('0').len(),
+            None => 0,
+        }
     }
 }
 
@@ -70,6 +79,12 @@ mod tests {
         println!("{:#?}", generate_timestamp());
         let num: f64 = -5.437945;
         println!("{:#?}", num.abs().round_to(3));
+    }
+
+    #[test]
+    fn test_places() {
+        let num: f64 = -5.437945;
+        println!("{:#?}", num.abs().count_decimal_places());
     }
 }
 
