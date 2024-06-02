@@ -8,15 +8,16 @@ pub struct LocalBook {
     pub bids: BTreeMap<OrderedFloat<f64>, f64>,
     pub best_ask: Ask,
     pub best_bid: Bid,
+    pub tick_size: f64,
     pub last_update: u64,
 }
 
 impl LocalBook {
     pub fn new() -> Self {
         Self {
+            last_update: 0,
             asks: BTreeMap::new(),
             bids: BTreeMap::new(),
-            last_update: 0,
             best_ask: Ask {
                 price: 0.0,
                 qty: 0.0,
@@ -25,6 +26,8 @@ impl LocalBook {
                 price: 0.0,
                 qty: 0.0,
             },
+            tick_size: 0.0,
+
         }
     }
 
@@ -203,6 +206,17 @@ impl LocalBook {
         self.last_update = timestamp;
     }
 
+    /// Get the tick size of the order book.
+    ///
+    /// # Returns
+    ///
+    /// The tick size as a `f64`.
+    pub fn get_tick_size(&self) -> f64 {
+        // Returns the tick size of the order book. Tick size is the minimum price
+        // increment for the market.
+        self.tick_size
+    }
+
     /// Get the best ask prices and quantities in the order book.
     pub fn get_best_ask(&self) -> Ask {
         self.best_ask.clone()
@@ -217,6 +231,21 @@ impl LocalBook {
     pub fn get_bba(&self) -> (Ask, Bid) {
         (self.best_ask.clone(), self.best_bid.clone())
     }
+
+    /// Get the spread between the best ask and best bid prices.
+    ///
+    /// # Returns
+    ///
+    /// The spread as a `f64`.
+    pub fn get_spread(&self) -> f64 {
+        // Calculate the spread between the best ask price and the best bid price.
+        // The spread represents the difference between the best ask and best bid prices.
+        // The spread is positive if the best ask price is higher than the best bid price,
+        // and negative if the best ask price is lower than the best bid price.
+        self.best_ask.price - self.best_bid.price
+    }
+
+    /// Get the bids and asks in the order book at the specified depth.
     pub fn get_book_depth(&self, depth: usize) -> (Vec<Ask>, Vec<Bid>) {
         let asks: Vec<Ask> = {
             let mut ask_vec = Vec::new();

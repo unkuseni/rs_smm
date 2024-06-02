@@ -2,9 +2,11 @@ use bybit::{
     account::AccountManager,
     api::Bybit,
     general::General,
+    market::MarketData,
     model::{
-        Category, ExecutionData, KlineData, LinearTickerData, LiquidationData, OrderBookUpdate,
-        OrderData, PositionData, Subscription, Tickers, WalletData, WebsocketEvents, WsTrade,
+        Category, ExecutionData, InstrumentRequest, KlineData, LinearTickerData, LiquidationData,
+        OrderBookUpdate, OrderData, PositionData, Subscription, Tickers, WalletData,
+        WebsocketEvents, WsTrade,
     },
     ws::Stream as BybitStream,
 };
@@ -124,6 +126,13 @@ impl BybitClient {
             .iter()
             .map(|s| (s.to_string(), LocalBook::new()))
             .collect::<Vec<(String, LocalBook)>>();
+        for (s, b) in &mut market_data.books {
+            let cl: MarketData = Bybit::new(None, None);
+            let req = InstrumentRequest::new(category, Some(s), None, None, None);
+            if let Ok(res) = cl.get_futures_instrument_info(req).await {
+                b.tick_size = res.result.list[0].price_filter.tick_size;
+            }
+        }
         market_data.klines = symbol
             .iter()
             .map(|s| (s.to_string(), VecDeque::with_capacity(2000)))

@@ -1,9 +1,12 @@
 use std::collections::{HashMap, VecDeque};
+use std::fmt::format;
 use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time::Duration;
 
 use binance::futures::account::FuturesAccount;
+use binance::futures::general::FuturesGeneral;
+use binance::futures::model::Filters::PriceFilter;
 use binance::futures::model::{AccountInformation, OrderTradeEvent, OrderUpdate};
 use binance::futures::userstream::FuturesUserStream;
 use binance::model::{
@@ -105,6 +108,22 @@ impl BinanceClient {
             .iter()
             .map(|s| (s.to_string(), LocalBook::new()))
             .collect::<Vec<(String, LocalBook)>>();
+        for (s, b) in &mut market_data.books {
+            let cl_symbol = format!("{}", s);
+            let cl: FuturesGeneral = Binance::new(None, None);
+            match cl.get_symbol_info(cl_symbol) {
+                Ok(v) => {
+                    let price_filter = match &v.filters[0] {
+                        PriceFilter { tick_size, .. } => tick_size.parse().unwrap_or(0.0),
+                        _ => 0.0,
+                    };
+                    b.tick_size = price_filter;
+                }
+                Err(e) => {
+                    b.tick_size = 0.0;
+                }
+            }
+        }
         market_data.klines = symbol
             .iter()
             .map(|s| (s.to_string(), VecDeque::with_capacity(2000)))
