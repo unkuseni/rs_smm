@@ -11,6 +11,8 @@ mod tests {
 
     use std::{sync::Arc, time::Duration};
 
+    use binance::{api::Binance, futures::general::FuturesGeneral};
+    use exchanges::exchange::PrivateData;
     use tokio::{
         sync::{mpsc, Mutex},
         task,
@@ -156,8 +158,14 @@ mod tests {
             let _ = bub.private_subscribe(tx);
         });
         while let Some(v) = rx.recv().await {
-            for (k, d) in v.orders.iter() {
-                println!("Private data: {:#?}, {:#?}", k, d);
+            match v {
+                PrivateData::Binance(v) => {
+
+                    for (k, d) in v.orders.iter() {
+                        println!("Private data: {:#?}, {:#?}", k, d);
+                    }
+                }
+                _ => {}
             }
         }
     }
@@ -203,18 +211,31 @@ mod tests {
 
     #[tokio::test]
     pub async fn test_new_state() {
-        let mut state = ss::SharedState::new();
-        let (sender, mut receiver) = mpsc::unbounded_channel();
+        let exchange = "bybit";
+        let mut state = ss::SharedState::new(exchange);
+        state.add_symbols(["SKLUSDT", "MATICUSDT"].to_vec());
+        let (sender, mut receiver) = mpsc::unbounded_channel::<ss::SharedState>();
         let instant = Instant::now();
         let wrapped = Arc::new(Mutex::new(state));
-        tokio::spawn(async move {
-            ss::load_data(wrapped, sender).await;
-        });
-        while let Some(v) = receiver.recv().await {
-            if instant.elapsed() > Duration::from_secs(60) {
-                println!("Shared State: {:#?}", v);
-                break;
-            }
+        println!("Shared State: {:#?}", wrapped.lock().await.exchange);
+        // tokio::spawn(async move {
+        //     ss::load_data(wrapped, sender).await;
+        // });
+        // while let Some(v) = receiver.recv().await {
+        //     v.logging.info("Received state");
+        //     if instant.elapsed() > Duration::from_secs(60) {
+        //         println!("Shared State: {:#?}", v.markets[0]);
+        //         break;
+        //     }
+        // }
+    }
+
+    #[test]
+    pub fn test_general() {
+        let data_cl: FuturesGeneral = Binance::new(None, None);
+        match data_cl.get_symbol_info("SKLUSDT") {
+            Ok(v) => println!("{:#?}", v),
+            Err(e) => println!("{:#?}", e),
         }
     }
 }

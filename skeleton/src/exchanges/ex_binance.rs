@@ -13,15 +13,18 @@ use binance::model::{
     EventBalance, EventPosition, LiquidationOrder,
 };
 use binance::{api::Binance, futures::websockets::*, general::General, model::AggrTradesEvent};
+use bybit::model::WsTrade;
 use tokio::sync::mpsc;
 
 use crate::util::localorderbook::{LocalBook, ProcessAsks, ProcessBids};
+
+use super::exchange::{PrivateData, ProcessTrade};
 #[derive(Clone, Debug)]
 pub struct BinanceMarket {
     pub time: u64,
     pub books: Vec<(String, LocalBook)>,
     pub klines: Vec<(String, VecDeque<ContinuousKline>)>,
-    pub trades: Vec<(String, VecDeque<AggrTradesEvent>)>,
+    pub trades: Vec<(String, VecDeque<WsTrade>)>,
     pub tickers: Vec<(String, VecDeque<BookTickerEvent>)>,
     pub liquidations: Vec<(String, VecDeque<LiquidationOrder>)>,
 }
@@ -134,7 +137,7 @@ impl BinanceClient {
         market_data.trades = symbol
             .iter()
             .map(|s| (s.to_string(), VecDeque::with_capacity(5000)))
-            .collect::<Vec<(String, VecDeque<AggrTradesEvent>)>>();
+            .collect::<Vec<(String, VecDeque<WsTrade>)>>();
         market_data.tickers = symbol
             .iter()
             .map(|s| (s.to_string(), VecDeque::with_capacity(10)))
@@ -196,7 +199,7 @@ impl BinanceClient {
                             trades.pop_front();
                         }
                     }
-                    trades.push_back(agg);
+                    trades.push_back(agg.process_trade());
                 }
                 FuturesWebsocketEvent::Liquidation(liquidation) => {
                     let sym = liquidation.liquidation_order.symbol.as_str();
@@ -269,7 +272,7 @@ impl BinanceClient {
         }
     }
 
-    pub fn private_subscribe(&self, sender: mpsc::UnboundedSender<BinancePrivate>) {
+    pub fn private_subscribe(&self, sender: mpsc::UnboundedSender<PrivateData>) {
         let mut delay = 600;
         let keep_running = AtomicBool::new(true); // Used to control the event loop
         let user_stream: FuturesUserStream = Binance::new(Some(self.key.clone()), None);
@@ -333,7 +336,7 @@ impl BinanceClient {
                 }
                 _ => (),
             };
-            let _ = sender.send(private_data.clone());
+            let _ = sender.send(PrivateData::Binance(private_data.clone()));
             Ok(())
         };
         if let Ok(answer) = user_stream.start() {
@@ -469,8 +472,8 @@ fn bin_build_requests(symbol: &[&str]) -> Vec<String> {
     request_args
 }
 
-fn remove_oldest_if_needed(
-    map: &mut HashMap<u64, OrderUpdate>,
+pub fn remove_oldest_if_needed<T>(
+    map: &mut HashMap<u64, T>,
     keys: &mut VecDeque<u64>,
     capacity: usize,
 ) {

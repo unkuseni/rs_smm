@@ -18,6 +18,10 @@ pub fn generate_timestamp() -> u64 {
         .as_millis() as u64
 }
 
+pub fn calculate_exponent(n: f64) -> f64 {
+    let exponent = -0.5 * n;
+    f64::exp(exponent)
+}
 /*
 This function generates a linearly spaced vector of f64 numbers.
 

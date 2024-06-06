@@ -1,7 +1,12 @@
+use std::fmt::Debug;
+
 use binance::model::AggrTradesEvent;
 use bybit::model::WsTrade;
 
-use super::{ex_binance::{BinanceClient, BinanceMarket}, ex_bybit::{BybitClient, BybitMarket}};
+use super::{
+    ex_binance::{BinanceClient, BinanceMarket, BinancePrivate},
+    ex_bybit::{BybitClient, BybitMarket, BybitPrivate},
+};
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ExchangeClient {
@@ -9,25 +14,38 @@ pub enum ExchangeClient {
     Binance(BinanceClient),
 }
 
+impl ExchangeClient {
+    pub fn unwrap(self) -> Box<dyn Debug> {
+        match self {
+            Self::Bybit(v) => Box::new(v),
+            Self::Binance(v) => Box::new(v),
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
+pub enum PrivateData {
+    Bybit(BybitPrivate),
+    Binance(BinancePrivate),
+}
+
+impl PrivateData {
+    pub fn unwrap(self) -> Box<dyn Debug> {
+        match self {
+            Self::Bybit(v) => Box::new(v),
+            Self::Binance(v) => Box::new(v),
+        }
+    }
+}
+
+
+#[derive(Debug)]
 pub enum MarketMessage {
     Bybit(BybitMarket),
     Binance(BinanceMarket),
 }
 
-#[derive(Debug)]
-pub enum Market {
-    Bybit,
-    Binance,
-}
-
-#[derive(Debug)]
-pub enum ExchangeTrades {
-    Bybit(WsTrade),
-    Binance(AggrTradesEvent),
-}
-
-impl Clone for ExchangeTrades {
+impl Clone for MarketMessage {
     fn clone(&self) -> Self {
         match self {
             Self::Bybit(v) => Self::Bybit(v.clone()),
@@ -35,14 +53,16 @@ impl Clone for ExchangeTrades {
         }
     }
 }
-impl ExchangeTrades {
-    fn unwrap_trade(&self) -> Option<WsTrade> {
+
+impl MarketMessage {
+    pub fn unwrap(self) -> Box<dyn Debug> {
         match self {
-            ExchangeTrades::Bybit(v) => Some(v.clone()),
-            ExchangeTrades::Binance(v) => Some(v.clone().process_trade()),
+            MarketMessage::Bybit(v) => Box::new(v),
+            MarketMessage::Binance(v) => Box::new(v),
         }
     }
 }
+
 pub trait ProcessTrade {
     fn process_trade(&self) -> WsTrade;
 }
@@ -52,12 +72,18 @@ impl ProcessTrade for AggrTradesEvent {
         WsTrade {
             timestamp: self.event_time,
             symbol: self.symbol.clone(),
-            price: self.price.parse().unwrap_or_else(|_| 0.0),
-            volume: self.qty.parse().unwrap_or_else(|_| 0.0),
+            price: self.price.parse::<f64>().unwrap(),
+            volume: self.qty.parse::<f64>().unwrap(),
             side: self.event_type.clone(),
             tick_direction: "Zero".to_string(),
             id: self.aggregated_trade_id.to_string(),
             buyer_is_maker: self.is_buyer_maker,
         }
+    }
+}
+
+impl ProcessTrade for WsTrade {
+    fn process_trade(&self) -> WsTrade {
+        self.clone()
     }
 }
