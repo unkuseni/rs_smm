@@ -90,8 +90,8 @@ impl SharedState {
     }
 }
 
-pub async fn load_data(state: WrappedState, state_sender: mpsc::UnboundedSender<SharedState>) {
-    let exchange = state.lock().await.exchange;
+pub async fn load_data(state: SharedState, state_sender: mpsc::UnboundedSender<SharedState>) {
+    let exchange = state.exchange;
     match exchange {
         "bybit" => load_bybit(state.clone(), state_sender).await,
         "binance" => load_binance(state.clone(), state_sender).await,
@@ -102,7 +102,8 @@ pub async fn load_data(state: WrappedState, state_sender: mpsc::UnboundedSender<
     };
 }
 
-async fn load_binance(state: WrappedState, state_sender: mpsc::UnboundedSender<SharedState>) {
+async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<SharedState>) {
+    let state = Arc::new(Mutex::new(state));
     let symbols = state.lock().await.symbols.clone();
     let clients = state.lock().await.clients.clone();
     let (sender, mut receiver) = mpsc::unbounded_channel::<BinanceMarket>();
@@ -137,7 +138,8 @@ async fn load_binance(state: WrappedState, state_sender: mpsc::UnboundedSender<S
     }
 }
 
-async fn load_bybit(state: WrappedState, state_sender: mpsc::UnboundedSender<SharedState>) {
+async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<SharedState>) {
+    let state = Arc::new(Mutex::new(state));
     let symbols = state.lock().await.symbols.clone();
     let clients = state.lock().await.clients.clone();
     let (sender, mut receiver) = mpsc::unbounded_channel::<BybitMarket>();
@@ -172,7 +174,8 @@ async fn load_bybit(state: WrappedState, state_sender: mpsc::UnboundedSender<Sha
     }
 }
 
-async fn load_both(state: WrappedState, state_sender: mpsc::UnboundedSender<SharedState>) {
+async fn load_both(state: SharedState, state_sender: mpsc::UnboundedSender<SharedState>) {
+    let state = Arc::new(Mutex::new(state));
     let logger = state.lock().await.logging.clone();
     let bit_ss_sender_clone = state_sender.clone();
     let bybit_state_clone = state.clone();

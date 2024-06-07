@@ -215,9 +215,8 @@ mod tests {
         state.add_symbols(["SKLUSDT", "MATICUSDT"].to_vec());
         let (sender, mut receiver) = mpsc::unbounded_channel::<ss::SharedState>();
         let instant = Instant::now();
-        let wrapped = Arc::new(Mutex::new(state));
         tokio::spawn(async move {
-            ss::load_data(wrapped, sender).await;
+            ss::load_data(state, sender).await;
         });
         while let Some(v) = receiver.recv().await {
             println!("Shared State: {:#?}", v.exchange);

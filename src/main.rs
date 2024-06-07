@@ -16,10 +16,8 @@ async fn main() {
     let mut state = ss::SharedState::new("bybit");
     state.add_symbols(["BTCUSDT", "ETHUSDT"].to_vec());
     let (sender, mut receiver) = mpsc::unbounded_channel();
-
-    let wrapped = Arc::new(Mutex::new(state));
     tokio::spawn(async move {
-        ss::load_data(wrapped, sender).await;
+        ss::load_data(state, sender).await;
     });
     // let mut old_mk = None;
 
