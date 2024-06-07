@@ -160,7 +160,6 @@ mod tests {
         while let Some(v) = rx.recv().await {
             match v {
                 PrivateData::Binance(v) => {
-
                     for (k, d) in v.orders.iter() {
                         println!("Private data: {:#?}, {:#?}", k, d);
                     }
@@ -211,23 +210,23 @@ mod tests {
 
     #[tokio::test]
     pub async fn test_new_state() {
-        let exchange = "bybit";
+        let exchange = "binance";
         let mut state = ss::SharedState::new(exchange);
         state.add_symbols(["SKLUSDT", "MATICUSDT"].to_vec());
         let (sender, mut receiver) = mpsc::unbounded_channel::<ss::SharedState>();
         let instant = Instant::now();
         let wrapped = Arc::new(Mutex::new(state));
-        println!("Shared State: {:#?}", wrapped.lock().await.exchange);
-        // tokio::spawn(async move {
-        //     ss::load_data(wrapped, sender).await;
-        // });
-        // while let Some(v) = receiver.recv().await {
-        //     v.logging.info("Received state");
-        //     if instant.elapsed() > Duration::from_secs(60) {
-        //         println!("Shared State: {:#?}", v.markets[0]);
-        //         break;
-        //     }
-        // }
+        tokio::spawn(async move {
+            ss::load_data(wrapped, sender).await;
+        });
+        while let Some(v) = receiver.recv().await {
+            println!("Shared State: {:#?}", v.exchange);
+            v.logging.info("Received state");
+            if instant.elapsed() > Duration::from_secs(60) {
+                println!("Shared State: {:#?}", v.markets[0]);
+                break;
+            }
+        }
     }
 
     #[test]

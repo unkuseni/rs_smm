@@ -91,142 +91,151 @@ impl SharedState {
 }
 
 pub async fn load_data(state: WrappedState, state_sender: mpsc::UnboundedSender<SharedState>) {
-    match state.lock().await.exchange {
-        "bybit" => {
-            let symbols = state.lock().await.symbols.clone();
-            let clients = state.lock().await.clients.clone();
-            let (sender, mut receiver) = mpsc::unbounded_channel::<BybitMarket>();
-
-            for (symbol, client) in clients {
-                let (private_sender, mut private_receiver) =
-                    mpsc::unbounded_channel::<PrivateData>();
-                let _ = &state
-                    .lock()
-                    .await
-                    .private
-                    .insert(symbol, Arc::new(Mutex::new(private_receiver)));
-                tokio::spawn(async move {
-                    let subscriber = match client {
-                        ExchangeClient::Bybit(client) => client,
-                        _ => panic!("Invalid exchange"),
-                    };
-                    let _ = subscriber.private_subscribe(private_sender).await;
-                });
-            }
-
-            tokio::spawn(async move {
-                let subscriber = BybitClient::default();
-                let _ = subscriber.market_subscribe(symbols, sender).await;
-            });
-
-            while let Some(v) =  receiver.recv().await {
-                    let mut state = state.lock().await;
-                state.markets[0] = MarketMessage::Bybit(v);
-                state_sender
-                    .send(state.clone())
-                    .expect("Failed to send state to main thread");
-                }
-            },
-        "binance" => {
-            let symbols = state.lock().await.symbols.clone();
-            let clients = state.lock().await.clients.clone();
-            let (sender, mut receiver) = mpsc::unbounded_channel::<BinanceMarket>();
-
-            for (symbol, client) in clients {
-                let (private_sender, mut private_receiver) =
-                    mpsc::unbounded_channel::<PrivateData>();
-                let _ = &state
-                    .lock()
-                    .await
-                    .private
-                    .insert(symbol, Arc::new(Mutex::new(private_receiver)));
-                tokio::spawn(async move {
-                    let subscriber = match client {
-                        ExchangeClient::Binance(client) => client,
-                        _ => panic!("Invalid exchange"),
-                    };
-                    let _ = subscriber.private_subscribe(private_sender);
-                });
-            }
-
-            tokio::spawn(async move {
-                let subscriber = BinanceClient::default();
-                let _ = subscriber.market_subscribe(symbols, sender);
-            });
-
-            while let Some(v) = receiver.recv().await {
-                let mut state = state.lock().await;
-                state.markets[0] = MarketMessage::Binance(v);
-                state_sender
-                    .send(state.clone())
-                    .expect("Failed to send state to main thread");
-            }
-        },
-        "both" => {
-            let logger = state.lock().await.logging.clone();
-            let bit_ss_sender_clone = state_sender.clone();
-            let bybit_state_clone = state.clone();
-            let binance_state_clone = state.clone();
-            let binance_symbols = state.lock().await.symbols.clone();
-            let symbols = state.lock().await.symbols.clone();
-            let clients = state.lock().await.clients.clone();
-            let (bybit_sender, mut bybit_receiver) = mpsc::unbounded_channel::<BybitMarket>();
-            let (binance_sender, mut binance_receiver) = mpsc::unbounded_channel::<BinanceMarket>();
-            if clients.is_empty() {
-                logger.error("No clients found");
-            }
-            for (symbol, client) in clients {
-                let (private_sender, mut private_receiver) =
-                    mpsc::unbounded_channel::<PrivateData>();
-                let _ = &state
-                    .lock()
-                    .await
-                    .private
-                    .insert(symbol, Arc::new(Mutex::new(private_receiver)));
-                tokio::spawn(async move {
-                    let _ = match client {
-                        ExchangeClient::Bybit(client) => {
-                            client.private_subscribe(private_sender).await
-                        }
-                        ExchangeClient::Binance(client) => client.private_subscribe(private_sender),
-                    };
-                });
-            }
-
-            tokio::spawn(async move {
-                let subscriber = BybitClient::default();
-                let _ = subscriber.market_subscribe(symbols, bybit_sender).await;
-            });
-
-            tokio::task::spawn_blocking(move || {
-                let subscriber = BinanceClient::default();
-                let _ = subscriber.market_subscribe(binance_symbols, binance_sender);
-            });
-
-            loop {
-                tokio::select! {
-                    Some(v) = bybit_receiver.recv() => {
-                        let mut state = bybit_state_clone.lock().await;
-                        state.markets[0] = MarketMessage::Bybit(v);
-                        bit_ss_sender_clone
-                            .send(state.clone())
-                            .expect("Failed to send state to main thread");
-                        // logger.debug("Bybit market data received");
-                    }
-                    Some(v) = binance_receiver.recv() => {
-                        let mut state = binance_state_clone.lock().await;
-                        state.markets[1] = MarketMessage::Binance(v);
-                        state_sender
-                            .send(state.clone())
-                            .expect("Failed to send state to main thread");
-                        // logger.debug("Binance market data received");
-                    }
-                    else => break,
-                }
-            }
-        }
+    let exchange = state.lock().await.exchange;
+    match exchange {
+        "bybit" => load_bybit(state.clone(), state_sender).await,
+        "binance" => load_binance(state.clone(), state_sender).await,
+        "both" => load_both(state.clone(), state_sender).await,
         _ => {
             panic!("Invalid exchange");
+        }
+    };
+}
+
+async fn load_binance(state: WrappedState, state_sender: mpsc::UnboundedSender<SharedState>) {
+    let symbols = state.lock().await.symbols.clone();
+    let clients = state.lock().await.clients.clone();
+    let (sender, mut receiver) = mpsc::unbounded_channel::<BinanceMarket>();
+
+    for (symbol, client) in clients {
+        let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<PrivateData>();
+        let _ = &state
+            .lock()
+            .await
+            .private
+            .insert(symbol, Arc::new(Mutex::new(private_receiver)));
+        tokio::task::spawn_blocking(move || {
+            let subscriber = match client {
+                ExchangeClient::Binance(client) => client,
+                _ => panic!("Invalid exchange"),
+            };
+            let _ = subscriber.private_subscribe(private_sender);
+        });
+    }
+
+    tokio::task::spawn_blocking(move || {
+        let subscriber = BinanceClient::default();
+        let _ = subscriber.market_subscribe(symbols, sender);
+    });
+    while let Some(v) = receiver.recv().await {
+        let mut state = state.lock().await;
+        state.logging.debug("is it sending?");
+        state.markets[0] = MarketMessage::Binance(v);
+        state_sender
+            .send(state.clone())
+            .expect("Failed to send state to main thread");
+    }
+}
+
+async fn load_bybit(state: WrappedState, state_sender: mpsc::UnboundedSender<SharedState>) {
+    let symbols = state.lock().await.symbols.clone();
+    let clients = state.lock().await.clients.clone();
+    let (sender, mut receiver) = mpsc::unbounded_channel::<BybitMarket>();
+
+    for (symbol, client) in clients {
+        let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<PrivateData>();
+        let _ = &state
+            .lock()
+            .await
+            .private
+            .insert(symbol, Arc::new(Mutex::new(private_receiver)));
+        tokio::spawn(async move {
+            let subscriber = match client {
+                ExchangeClient::Bybit(client) => client,
+                _ => panic!("Invalid exchange"),
+            };
+            let _ = subscriber.private_subscribe(private_sender).await;
+        });
+    }
+
+    tokio::spawn(async move {
+        let subscriber = BybitClient::default();
+        let _ = subscriber.market_subscribe(symbols, sender).await;
+    });
+
+    while let Some(v) = receiver.recv().await {
+        let mut state = state.lock().await;
+        state.markets[0] = MarketMessage::Bybit(v);
+        state_sender
+            .send(state.clone())
+            .expect("Failed to send state to main thread");
+    }
+}
+
+async fn load_both(state: WrappedState, state_sender: mpsc::UnboundedSender<SharedState>) {
+    let logger = state.lock().await.logging.clone();
+    let bit_ss_sender_clone = state_sender.clone();
+    let bybit_state_clone = state.clone();
+    let binance_state_clone = state.clone();
+    let binance_symbols = state.lock().await.symbols.clone();
+    let symbols = state.lock().await.symbols.clone();
+    let clients = state.lock().await.clients.clone();
+    let (bybit_sender, mut bybit_receiver) = mpsc::unbounded_channel::<BybitMarket>();
+    let (binance_sender, mut binance_receiver) = mpsc::unbounded_channel::<BinanceMarket>();
+    if clients.is_empty() {
+        logger.error("No clients found");
+    }
+    for (symbol, client) in clients {
+        let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<PrivateData>();
+        let _ = &state
+            .lock()
+            .await
+            .private
+            .insert(symbol, Arc::new(Mutex::new(private_receiver)));
+
+        match client {
+            ExchangeClient::Bybit(client) => {
+                tokio::spawn(async move {
+                    client.private_subscribe(private_sender).await;
+                });
+            }
+            ExchangeClient::Binance(client) => {
+                tokio::task::spawn_blocking(move || {
+                    client.private_subscribe(private_sender);
+                });
+            }
+        }
+    }
+
+    tokio::spawn(async move {
+        let subscriber = BybitClient::default();
+        let _ = subscriber.market_subscribe(symbols, bybit_sender).await;
+    });
+
+    tokio::task::spawn_blocking(move || {
+        let subscriber = BinanceClient::default();
+        let _ = subscriber.market_subscribe(binance_symbols, binance_sender);
+    });
+
+    loop {
+        tokio::select! {
+            Some(v) = bybit_receiver.recv() => {
+                let mut state = bybit_state_clone.lock().await;
+                state.markets[0] = MarketMessage::Bybit(v);
+                bit_ss_sender_clone
+                    .send(state.clone())
+                    .expect("Failed to send state to main thread");
+                // logger.debug("Bybit market data received");
+            }
+            Some(v) = binance_receiver.recv() => {
+                let mut state = binance_state_clone.lock().await;
+                state.markets[1] = MarketMessage::Binance(v);
+                state_sender
+                    .send(state.clone())
+                    .expect("Failed to send state to main thread");
+                // logger.debug("Binance market data received");
+            }
+            else => break,
         }
     }
 }
