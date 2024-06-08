@@ -15,6 +15,8 @@ use tokio::sync::mpsc;
 
 use crate::util::localorderbook::LocalBook;
 
+use super::exchange::PrivateData;
+
 #[derive(Clone, Debug)]
 pub struct BybitMarket {
     pub time: u64,
@@ -268,7 +270,7 @@ impl BybitClient {
             }
         }
     }
-    pub async fn private_subscribe(&self, sender: mpsc::UnboundedSender<BybitPrivate>) {
+    pub async fn private_subscribe(&self, sender: mpsc::UnboundedSender<PrivateData>) {
         let mut delay = 600;
         let user_stream: BybitStream = BybitStream::new(
             Some(self.key.clone()),    // API key
@@ -341,7 +343,7 @@ impl BybitClient {
                     eprintln!("Unhandled event: {:#?}", event);
                 }
             }
-            sender.send(private_data.clone()).unwrap();
+            sender.send(PrivateData::Bybit(private_data.clone())).unwrap();
             Ok(())
         };
         loop {
