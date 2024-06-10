@@ -9,7 +9,7 @@ use crate::{
         ex_bybit::{BybitClient, BybitMarket},
         exchange::{ExchangeClient, MarketMessage, PrivateData},
     },
-    util::logger::{self, Logger},
+    util::logger::Logger,
 };
 
 #[derive(Debug, Clone)]
@@ -22,7 +22,6 @@ pub struct SharedState {
     pub symbols: Vec<&'static str>,
 }
 
-type WrappedState = Arc<Mutex<SharedState>>;
 
 impl SharedState {
     /// Creates a new instance of `SharedState`.
@@ -40,8 +39,8 @@ impl SharedState {
 
         // Initialize the `SharedState` struct with default values
         Self {
-            exchange, // The exchange where the market is traded
-            logging: log, // The logger for the application
+            exchange,                // The exchange where the market is traded
+            logging: log,            // The logger for the application
             clients: HashMap::new(), // A hashmap to store exchange clients
             private: HashMap::new(), // A hashmap to store private data
             markets: match exchange {
@@ -222,7 +221,6 @@ async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Sh
     }
 }
 
-
 /// Asynchronously loads data from the Bybit exchange.
 ///
 /// # Arguments
@@ -278,8 +276,6 @@ async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<Shar
             .expect("Failed to send state to main thread");
     }
 }
-
-
 
 /// Asynchronously loads data from both Bybit and Binance exchanges.
 ///

@@ -9,15 +9,11 @@ pub fn add(left: usize, right: usize) -> usize {
 #[cfg(test)]
 mod tests {
 
-    use std::{sync::Arc, time::Duration};
+    use std::time::Duration;
 
     use binance::{api::Binance, futures::general::FuturesGeneral};
     use exchanges::exchange::PrivateData;
-    use tokio::{
-        sync::{mpsc, Mutex},
-        task,
-        time::Instant,
-    };
+    use tokio::{sync::mpsc, task, time::Instant};
 
     use crate::{
         exchanges::{
@@ -26,8 +22,6 @@ mod tests {
         },
         util::logger::Logger,
     };
-
-    use self::util::helpers::read_toml;
 
     use super::*;
 

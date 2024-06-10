@@ -4,6 +4,7 @@ use rs_smm::features::imbalance::imbalance_ratio;
 use rs_smm::features::imbalance::trade_imbalance;
 use rs_smm::features::imbalance::voi;
 
+use rs_smm::features::impact::price_impact;
 use skeleton::exchanges::exchange::MarketMessage;
 use skeleton::ss;
 use skeleton::util::helpers::Round;
@@ -40,14 +41,20 @@ async fn main() {
                     Some(prev_book) => voi(v.1.clone(), prev_book.clone(), Some(5)),
                     None => 0.0, // Or some other default value.
                 };
-        
+
+                let price_impact = match prev_book {
+                    Some(prev_book) => price_impact(v.1.clone(), prev_book.clone(), Some(5)),
+                    None => 0.0, // Or some other default value.
+                };
+
                 println!(
-                    "Bybit Imbalance data: \n{:#?}, {:.5} {:.6} {:.5} {:#?}",
+                    "Bybit Imbalance data: \n{:#?}, {:.5} {:.6} {:.5} {:#?} {:#?}",
                     v.0,
                     imbalance_ratio(v.1.clone(), Some(5)),
                     v.1.mid_price,
                     trade_imbalance(trades[k].clone()).1,
-                    voi_value
+                    voi_value, 
+                    price_impact
                 );
 
                 // Store the current LocalBook as the previous LocalBook for the next iteration.

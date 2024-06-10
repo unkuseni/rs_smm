@@ -1,12 +1,74 @@
 use std::collections::VecDeque;
 
 use bybit::model::WsTrade;
+use skeleton::util::localorderbook::LocalBook;
 
-pub fn price_impact() {
-    // Relationship between trade sizes and price changes
-    // Prices are a function of supply and demand.
+/// Calculates the price impact of a trade based on the old and current order book state.
+///
+/// # Arguments
+///
+/// * `old_book` - The old order book state.
+/// * `new_book` - The current order book state.
+/// * `depth` - The depth of the order book to consider, if any.
+///
+/// # Returns
+///
+/// The price impact of the trade.
+pub fn price_impact(new_book: LocalBook, old_book: LocalBook, depth: Option<usize>) -> f64 {
+    // Calculate the volume at the bid and ask offsets
+    let (mut old_bid_vol, mut curr_bid_vol, old_bid_price, curr_bid_price) = (
+        old_book.best_bid.qty,
+        new_book.best_bid.qty,
+        old_book.best_bid.price,
+        new_book.best_bid.price,
+    );
+    let (mut old_ask_vol, mut curr_ask_vol, old_ask_price, curr_ask_price) = (
+        old_book.best_ask.qty,
+        new_book.best_ask.qty,
+        old_book.best_ask.price,
+        new_book.best_ask.price,
+    );
 
-    // The price impact of trades is an increasing concave function of their size. the impact has diminishing returns on price as the size of the trade increases.
+    // Calculate the volume at the depth, if provided
+    if let Some(depth) = depth {
+        old_bid_vol = 0.0;
+        curr_bid_vol = 0.0;
+        old_ask_vol = 0.0;
+        curr_ask_vol = 0.0;
+
+        // Iterate over the depth asks and bids in the old and new order books
+        for (_, (_, qty)) in old_book.asks.iter().take(depth).enumerate() {
+            old_ask_vol += qty;
+        }
+        for (_, (_, qty)) in new_book.asks.iter().take(depth).enumerate() {
+            curr_ask_vol += qty;
+        }
+        for (_, (_, qty)) in old_book.bids.iter().rev().take(depth).enumerate() {
+            old_bid_vol += qty;
+        }
+        for (_, (_, qty)) in new_book.bids.iter().rev().take(depth).enumerate() {
+            curr_bid_vol += qty;
+        }
+    }
+
+    // Calculate the volume at the bid and ask offsets
+    let bid_impact = if curr_bid_price > old_bid_price || curr_bid_vol > old_bid_vol {
+        curr_bid_vol - old_bid_vol
+    } else if curr_bid_price < old_bid_price || curr_bid_vol < old_bid_vol {
+        curr_bid_vol - old_bid_vol
+    } else {
+        0.0
+    };
+    let ask_impact = if curr_ask_price < old_ask_price || curr_ask_vol > old_ask_vol {
+        curr_ask_vol - old_ask_vol
+    } else if curr_ask_price > old_ask_price || curr_ask_vol < old_ask_vol {
+        curr_ask_vol - old_ask_vol
+    } else {
+        0.0
+    };
+
+    // Return the sum of the bid and ask impacts
+    bid_impact + ask_impact
 }
 
 /// Calculates the expected value of a trade based on the old price, current price, and imbalance.
@@ -47,7 +109,6 @@ pub fn mid_price_change(old_price: f64, curr_price: f64, avg_spread: f64) -> f64
     diff / avg_spread
 }
 
-
 /// Calculates the difference between the current price and the old price.
 ///
 /// # Arguments
@@ -78,7 +139,6 @@ pub fn mid_price_avg(old_price: f64, curr_price: f64) -> f64 {
     (old_price + curr_price) / 2.0
 }
 
-
 /// Calculates the basis of the average trade price relative to the mid price.
 ///
 /// The basis is the difference between the average trade price and the mid price.
@@ -93,7 +153,7 @@ pub fn mid_price_avg(old_price: f64, curr_price: f64) -> f64 {
 ///
 /// The basis of the average trade price relative to the mid price.
 /// Good predictor of midprice because of its reversion back to 0.
-/// 
+///
 /// Using a time series on this value
 /// If the basis is negative, recent trades were closer to the bid price as such midprice will decrease and revert to the avg trade price.
 /// If the basis is positive, recent trades were closer to the ask price as such midprice will increase and revert to the avg trade price.
@@ -102,7 +162,6 @@ pub fn mid_price_basis(old_price: f64, curr_price: f64, avg_trade_price: f64) ->
     // The basis is the difference between the average trade price and the mid price.
     avg_trade_price - mid_price_avg(old_price, curr_price)
 }
-
 
 /// Calculates the average trade price based on the current mid price, the old trades,
 /// the current trades, the previous average trade price, and the tick window.
