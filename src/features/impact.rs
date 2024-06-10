@@ -179,8 +179,8 @@ pub fn mid_price_basis(old_price: f64, curr_price: f64, avg_trade_price: f64) ->
 /// The average trade price.
 pub fn avg_trade_price(
     curr_mid: f64,
-    old_trades: Option<VecDeque<WsTrade>>,
-    curr_trades: VecDeque<WsTrade>,
+    old_trades: Option<&VecDeque<WsTrade>>,
+    curr_trades: &VecDeque<WsTrade>,
     prev_avg: f64,
     tick_window: usize,
 ) -> f64 {
@@ -208,7 +208,8 @@ pub fn avg_trade_price(
     // If the cumulative volume of the old trades is not equal to the cumulative volume of the
     // current trades, calculate the average trade price and return it.
     if old_volume != curr_volume {
-        ((old_turnover + curr_turnover) / (old_volume + curr_volume)) * tick_window as f64
+        let inv_tick = 1.0 / tick_window as f64;
+        ((old_turnover + curr_turnover) / (old_volume + curr_volume)) * inv_tick
     } else {
         // Otherwise, return the previous average trade price.
         prev_avg
