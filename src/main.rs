@@ -1,29 +1,28 @@
+use std::collections::HashMap;
+
 use rs_smm::features::imbalance::imbalance_ratio;
-use rs_smm::features::imbalance::imbalance_ratio_at_depth;
 use rs_smm::features::imbalance::trade_imbalance;
 use rs_smm::features::imbalance::voi;
-use skeleton::exchanges::ex_bybit::BybitMarket;
+
 use skeleton::exchanges::exchange::MarketMessage;
-use skeleton::exchanges::exchange::ProcessTrade;
 use skeleton::ss;
+use skeleton::util::helpers::Round;
 use skeleton::util::localorderbook::LocalBook;
-use std::sync::Arc;
 use tokio::sync::mpsc;
-use tokio::sync::Mutex;
-use tokio::time::{Duration, Instant};
+
 #[tokio::main]
 async fn main() {
     let mut state = ss::SharedState::new("bybit");
-    state.add_symbols(["BTCUSDT", "ETHUSDT"].to_vec());
+    state.add_symbols(["MEWUSDT", "NOTUSDT", "JASMYUSDT"].to_vec());
     let (sender, mut receiver) = mpsc::unbounded_channel();
     tokio::spawn(async move {
         ss::load_data(state, sender).await;
     });
-    // let mut old_mk = None;
+
+    // Initialize a HashMap to store the previous LocalBook for each market.
+    let mut prev_books: HashMap<String, LocalBook> = HashMap::new();
 
     while let Some(v) = receiver.recv().await {
-        // handle_markets(v.clone().markets, old_mk);
-        // old_mk = Some(v.markets);
         let bybit_market = v.markets[0].clone();
 
         let trades = match bybit_market.clone() {
@@ -31,17 +30,28 @@ async fn main() {
             _ => panic!("Not bybit market"),
         };
 
-
         if let MarketMessage::Bybit(bybit_market) = bybit_market {
             for (k, v) in bybit_market.books.iter().enumerate() {
+                // Get the previous LocalBook for this market, if it exists.
+                let prev_book = prev_books.get(&v.0);
+
+                // Calculate the VOI, if a previous LocalBook exists.
+                let voi_value = match prev_book {
+                    Some(prev_book) => voi(v.1.clone(), prev_book.clone(), Some(5)),
+                    None => 0.0, // Or some other default value.
+                };
+        
                 println!(
-                    "Bybit Imbalance data: \n{:#?}, {:.5} {:#?} {:#?} {:#?}",
+                    "Bybit Imbalance data: \n{:#?}, {:.5} {:.6} {:.5} {:#?}",
                     v.0,
-                    imbalance_ratio_at_depth(v.1.clone(), 5),
+                    imbalance_ratio(v.1.clone(), Some(5)),
                     v.1.mid_price,
-                    trades[k].1.len(),   
-                    trade_imbalance(trades[k].clone()),     
+                    trade_imbalance(trades[k].clone()).1,
+                    voi_value
                 );
+
+                // Store the current LocalBook as the previous LocalBook for the next iteration.
+                prev_books.insert(v.0.clone(), v.1.clone());
             }
         }
     }
