@@ -22,7 +22,6 @@ pub struct SharedState {
     pub symbols: Vec<&'static str>,
 }
 
-
 impl SharedState {
     /// Creates a new instance of `SharedState`.
     ///
@@ -207,10 +206,6 @@ async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Sh
     // Process the received market data and update the shared state
     while let Some(v) = receiver.recv().await {
         let mut state = state.lock().await;
-
-        // Log a debug message
-        state.logging.debug("is it sending?");
-
         // Update the market data in the shared state
         state.markets[0] = MarketMessage::Binance(v);
 
