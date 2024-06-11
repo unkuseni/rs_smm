@@ -23,6 +23,7 @@ impl ExchangeClient {
     }
 }
 
+
 #[derive(Clone, Debug)]
 pub enum PrivateData {
     Bybit(BybitPrivate),

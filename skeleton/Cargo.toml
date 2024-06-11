@@ -7,6 +7,7 @@ edition = "2021"
 
 [dependencies]
 binance = "0.21.0"
+num-traits = "0.2.19"
 ordered-float = "4.2.0"
 rs_bybit = "0.2.1"
 serde = "1.0.197"

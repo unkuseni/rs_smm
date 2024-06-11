@@ -3,12 +3,14 @@ use std::{
     time::{SystemTime, UNIX_EPOCH},
 };
 
+use num_traits::{Float, Signed};
+
 use toml::Value;
 
-pub fn round_step(num: f64, step: f64) -> f64 {
-    let p = (1.0 / step) as i32;
+pub fn round_step<T: Float + Signed + PartialOrd>(num: T, step: T) -> T {
+    let p = (T::one() / step).to_i32().unwrap();
     let p_as_f64 = p as f64;
-    (num * p_as_f64).floor() / p_as_f64
+    (num * T::from(p_as_f64).unwrap()).floor() / T::from(p_as_f64).unwrap()
 }
 
 pub fn generate_timestamp() -> u64 {
@@ -22,6 +24,7 @@ pub fn calculate_exponent(n: f64) -> f64 {
     let exponent = -0.5 * n;
     f64::exp(exponent)
 }
+
 /*
 This function generates a linearly spaced vector of f64 numbers.
 
@@ -33,23 +36,77 @@ Parameters:
 Return:
 - Vec<f64> - A vector containing n numbers, equally spaced between start and end.
 */
-pub fn linspace(start: f64, end: f64, n: usize) -> Vec<f64> {
+pub fn linspace<T: Float + Signed + PartialOrd>(start: T, end: T, n: usize) -> Vec<T> {
     // Calculate the step size between consecutive numbers in the sequence.
     // The step size is calculated as (end - start) divided by the number of elements minus 1.
-    let step = (end - start) / (n - 1) as f64;
+    let step = (end - start) / T::from(n - 1).unwrap();
 
     // Generate the sequence of numbers using the start value, the step size and the number of elements.
-    // The map function applies the formula (start + i as f64 * step) to each element in the range 0..n,
+    // The map function applies the formula (start + i as T * step) to each element in the range 0..n,
     // creating a new vector with the resulting numbers.
-    (0..n).map(|i| start + i as f64 * step).collect()
+    (0..n).map(|i| start + T::from(i).unwrap() * step).collect()
 }
 
-pub trait Round {
-    fn round_to(&self, digit: u8) -> f64;
-    fn clip(&self, min: f64, max: f64) -> f64;
+/// Generates a geometrically spaced vector of f64 numbers.
+///
+/// # Arguments
+///
+/// * `start` - The starting value of the sequence.
+/// * `end` - The ending value of the sequence.
+/// * `n` - The number of elements in the sequence.
+///
+/// # Returns
+///
+/// A vector containing n numbers, equally spaced between start and end.
+///
+/// # Panics
+///
+/// If start or end is zero.
+pub fn geomspace<T: Float + PartialOrd + Signed>(start: T, end: T, n: usize) -> Vec<T> {
+    // Check if the number of elements is zero and return an empty vector if it is.
+    if n == 0 {
+        return Vec::new();
+    }
+
+    // Check if start or end is zero and panic if it is.
+    if start == T::zero() || end == T::zero() {
+        panic!("Start and end must be non-zero for a geometric space.");
+    }
+
+    // Calculate the logarithmic ratio between consecutive numbers in the sequence.
+    let log_ratio = (end / start).log10() / T::from(n - 1).unwrap();
+
+    // Create a vector with pre-allocated capacity for n elements.
+    let mut res = Vec::with_capacity(n);
+
+    // Add the starting value to the vector.
+    res.push(start);
+
+    // Generate the sequence of numbers using the logarithmic ratio and the number of elements.
+    // The map function applies the formula res[i - 1] * 10.0_f64.powf(log_ratio) to each element in the range 1..n,
+    // creating a new vector with the resulting numbers.
+    for i in 1..n {
+        res.push(res[i - 1] * T::from(10.0_f64).unwrap().powf(log_ratio));
+    }
+
+    // Return the generated vector.
+    res
+}
+
+pub fn nbsqrt<T: PartialOrd + Float + Signed>(num: T) -> T {
+    if num >= T::zero() {
+        num.sqrt()
+    } else {
+        -(num.abs().sqrt())
+    }
+}
+
+pub trait Round<T> {
+    fn round_to(&self, digit: u8) -> T;
+    fn clip(&self, min: T, max: T) -> T;
     fn count_decimal_places(&self) -> usize;
 }
-impl Round for f64 {
+impl Round<f64> for f64 {
     fn round_to(&self, digit: u8) -> f64 {
         let pow = 10.0_f64.powi(digit as i32);
         (self * pow).round() / pow
@@ -89,6 +146,14 @@ mod tests {
     fn test_places() {
         let num: f64 = -5.437945;
         println!("{:#?}", num.abs().count_decimal_places());
+    }
+
+    #[test]
+    fn lin() {
+        let num = linspace(0.6243, 0.6532, 14);
+        let num_geom = geomspace(0.01, 1.0, 14);
+        println!("{:#?}", num);
+        println!("{:#?}", num_geom);
     }
 }
 

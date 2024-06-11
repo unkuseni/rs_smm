@@ -21,3 +21,8 @@
 - Add support for multiple currencies
 - Add support for multiple symbols
 - Add support for multiple clients
+
+
+## NOTES 
+
+Should convert the subscriptions to use traits instead
