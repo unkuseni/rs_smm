@@ -4,9 +4,7 @@ use bybit::{
     general::General,
     market::MarketData,
     model::{
-        Category, ExecutionData, InstrumentRequest, KlineData, LinearTickerData, LiquidationData,
-        OrderBookUpdate, OrderData, PositionData, Subscription, Tickers, WalletData,
-        WebsocketEvents, WsTrade,
+        Category, FastExecData, InstrumentRequest, KlineData, LinearTickerData, LiquidationData, OrderBookUpdate, OrderData, PositionData, Subscription, Tickers, WalletData, WebsocketEvents, WsTrade
     },
     ws::Stream as BybitStream,
 };
@@ -36,7 +34,7 @@ pub struct BybitPrivate {
     pub wallet: VecDeque<WalletData>,
     pub orders: VecDeque<OrderData>,
     pub positions: VecDeque<PositionData>,
-    pub executions: VecDeque<ExecutionData>,
+    pub executions: VecDeque<FastExecData>,
 }
 
 unsafe impl Send for BybitPrivate {}
@@ -279,7 +277,7 @@ impl BybitClient {
         let request_args = {
             let mut args = vec![];
             args.push("position.linear".to_string());
-            args.push("execution.linear".to_string());
+            args.push("execution.fast".to_string());
             args.push("order.linear".to_string());
             args.push("wallet".to_string());
             args
@@ -315,7 +313,7 @@ impl BybitClient {
                     }
                     private_data.positions.extend(data.data);
                 }
-                WebsocketEvents::ExecutionEvent(data) => {
+                WebsocketEvents::FastExecEvent(data) => {
                     private_data.time = data.creation_time;
                     if private_data.executions.len() == private_data.executions.capacity()
                         || (private_data.executions.capacity() - private_data.executions.len())

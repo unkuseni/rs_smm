@@ -9,4 +9,4 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1.36.0", features = ["full"] }
 skeleton = { path = "./skeleton" }
-rs_bybit = "0.2.1"
+rs_bybit = "0.2.3"
