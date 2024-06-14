@@ -84,11 +84,11 @@ pub fn voi(book: &LocalBook, prev_book: &LocalBook, depth: Option<usize>) -> f64
                 let mut curr_bid_qty = 0.0;
                 let mut prev_bid_qty = 0.0;
                 // Iterate over the depth bids in the current and previous books
-                for (_, (_, qty)) in book.bids.iter().rev().take(depth).enumerate() {
-                    curr_bid_qty += qty;
+                for (i, (_, qty)) in book.bids.iter().rev().take(depth).enumerate() {
+                    curr_bid_qty += qty * calculate_exponent(i as f64);
                 }
-                for (_, (_, qty)) in prev_book.bids.iter().rev().take(depth).enumerate() {
-                    prev_bid_qty += qty;
+                for (i, (_, qty)) in prev_book.bids.iter().rev().take(depth).enumerate() {
+                    prev_bid_qty += qty * calculate_exponent(i as f64);
                 }
                 curr_bid_qty - prev_bid_qty
             } else {
@@ -99,8 +99,8 @@ pub fn voi(book: &LocalBook, prev_book: &LocalBook, depth: Option<usize>) -> f64
             if let Some(depth) = depth {
                 let mut curr_bid = 0.0;
                 // Iterate over the depth bids in the current book
-                for (_, (_, qty)) in book.bids.iter().rev().take(depth).enumerate() {
-                    curr_bid += qty;
+                for (i, (_, qty)) in book.bids.iter().rev().take(depth).enumerate() {
+                    curr_bid += qty * calculate_exponent(i as f64);
                 }
                 curr_bid
             } else {
@@ -116,8 +116,8 @@ pub fn voi(book: &LocalBook, prev_book: &LocalBook, depth: Option<usize>) -> f64
             if let Some(depth) = depth {
                 let mut curr_ask = 0.0;
                 // Iterate over the depth asks in the current book
-                for (_, (_, qty)) in book.asks.iter().take(depth).enumerate() {
-                    curr_ask += qty;
+                for (i, (_, qty)) in book.asks.iter().take(depth).enumerate() {
+                    curr_ask += qty * calculate_exponent(i as f64);
                 }
                 curr_ask
             } else {
@@ -129,11 +129,11 @@ pub fn voi(book: &LocalBook, prev_book: &LocalBook, depth: Option<usize>) -> f64
                 let mut curr_ask_qty = 0.0;
                 let mut prev_ask_qty = 0.0;
                 // Iterate over the depth asks in the current and previous books
-                for (_, (_, qty)) in book.asks.iter().take(depth).enumerate() {
-                    curr_ask_qty += qty;
+                for (i, (_, qty)) in book.asks.iter().take(depth).enumerate() {
+                    curr_ask_qty += qty * calculate_exponent(i as f64);
                 }
-                for (_, (_, qty)) in prev_book.bids.iter().take(depth).enumerate() {
-                    prev_ask_qty += qty;
+                for (i, (_, qty)) in prev_book.bids.iter().take(depth).enumerate() {
+                    prev_ask_qty += qty * calculate_exponent(i as f64);
                 }
                 curr_ask_qty - prev_ask_qty
             } else {
@@ -145,7 +145,7 @@ pub fn voi(book: &LocalBook, prev_book: &LocalBook, depth: Option<usize>) -> f64
     };
 
     // Calculate the volume at the offset
-    let  diff = bid_v - ask_v;
+    let diff = bid_v - ask_v;
     diff
 }
 
@@ -173,7 +173,6 @@ fn calculate_volumes(trades: &VecDeque<WsTrade>) -> (f64, f64) {
     }
     (total_volume, buy_volume)
 }
-
 
 pub fn map_range(value: f64) -> f64 {
     (value + 1.0) / 2.0

@@ -55,6 +55,7 @@ impl Engine {
         prev_book: &LocalBook,
         curr_trades: &VecDeque<WsTrade>,
         prev_trades: &VecDeque<WsTrade>,
+        prev_avg: &f64,
         depth: Option<usize>,
     ) {
         self.imbalance_ratio = imbalance_ratio(curr_book, depth);
@@ -77,7 +78,7 @@ impl Engine {
             curr_book.get_mid_price(),
             Some(prev_trades),
             curr_trades,
-            self.avg_trade_price,
+            *prev_avg,
             350,
         );
         self.mid_price_basis = mid_price_basis(
