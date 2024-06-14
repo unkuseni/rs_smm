@@ -14,7 +14,7 @@ use skeleton::util::localorderbook::LocalBook;
 /// # Returns
 ///
 /// The price impact of the trade.
-pub fn price_impact(new_book: LocalBook, old_book: LocalBook, depth: Option<usize>) -> f64 {
+pub fn price_impact(new_book: &LocalBook, old_book: &LocalBook, depth: Option<usize>) -> f64 {
     // Calculate the volume at the bid and ask offsets
     let (mut old_bid_vol, mut curr_bid_vol, old_bid_price, curr_bid_price) = (
         old_book.best_bid.qty,

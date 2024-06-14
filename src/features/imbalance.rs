@@ -18,12 +18,12 @@ use skeleton::util::{helpers::calculate_exponent, localorderbook::LocalBook};
 /// # Returns
 ///
 /// The imbalance ratio as a `f64`.
-pub fn imbalance_ratio(book: LocalBook, depth: Option<usize>) -> f64 {
+pub fn imbalance_ratio(book: &LocalBook, depth: Option<usize>) -> f64 {
     // Extract the best ask and bid from the book.
-    let (best_ask, best_bid) = (book.best_ask, book.best_bid);
+    let (best_ask, best_bid) = (book.best_ask.qty, book.best_bid.qty);
 
     // Initialize the weighted bid and ask quantities to the quantities of the best bid and ask.
-    let (mut weighted_bid_qty, mut weighted_ask_qty) = (best_bid.qty, best_ask.qty);
+    let (mut weighted_bid_qty, mut weighted_ask_qty) = (best_bid, best_ask);
 
     // If a depth is specified, calculate the weighted bid and ask quantities using the specified depth.
     if let Some(depth) = depth {
@@ -75,7 +75,7 @@ pub fn imbalance_ratio(book: LocalBook, depth: Option<usize>) -> f64 {
 /// # Returns
 ///
 /// The volume at the offset as a `f64`.
-pub fn voi(book: LocalBook, prev_book: LocalBook, depth: Option<usize>) -> f64 {
+pub fn voi(book: &LocalBook, prev_book: &LocalBook, depth: Option<usize>) -> f64 {
     // Calculate the volume at the bid side
     let bid_v = match book.best_bid.price {
         x if x < prev_book.best_bid.price => 0.0,
@@ -149,9 +149,9 @@ pub fn voi(book: LocalBook, prev_book: LocalBook, depth: Option<usize>) -> f64 {
     diff
 }
 
-pub fn trade_imbalance(trades: (String, VecDeque<WsTrade>)) -> f64 {
+pub fn trade_imbalance(trades: &VecDeque<WsTrade>) -> f64 {
     // Calculate total volume and buy volume
-    let (total_volume, buy_volume) = calculate_volumes(&trades.1);
+    let (total_volume, buy_volume) = calculate_volumes(trades);
     // Handle empty trade history (optional)
     if total_volume == 0.0 {
         // You can either return an empty tuple or a specific value to indicate no trades
