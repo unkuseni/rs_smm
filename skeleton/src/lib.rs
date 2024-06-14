@@ -179,9 +179,9 @@ mod tests {
 
     #[tokio::test]
     async fn test_fee() {
-        let api_key = "Gf00VfhZXp11aGSxoV".to_string();
-        let api_secret = "cnafpFvqeAC2dUPyeFP61QwYeAJiPdbdNgMX".to_string();
-        let rate = task::spawn_blocking(move || {
+        let _api_key = "Gf00VfhZXp11aGSxoV".to_string();
+        let _api_secret = "cnafpFvqeAC2dUPyeFP61QwYeAJiPdbdNgMX".to_string();
+        let _rate = task::spawn_blocking(move || {
             let api_key2 =
                 "BOswZzt8n49xqKhZu2KYxObLLXf6iOVpyjLtUbmNcZhTMIuDam0Jn7AArzOlzVQM".to_string();
             let api_secret2 =

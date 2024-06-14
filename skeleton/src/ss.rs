@@ -20,6 +20,7 @@ pub struct SharedState {
     pub private: HashMap<String, Arc<Mutex<mpsc::UnboundedReceiver<PrivateData>>>>,
     pub markets: Vec<MarketMessage>,
     pub symbols: Vec<&'static str>,
+    
 }
 
 impl SharedState {
@@ -174,7 +175,7 @@ async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Sh
 
     // Iterate over the clients and start the private subscription for each symbol
     for (symbol, client) in clients {
-        let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<PrivateData>();
+        let (private_sender, private_receiver) = mpsc::unbounded_channel::<PrivateData>();
 
         // Insert the private receiver into the shared state
         let _ = &state
@@ -235,7 +236,7 @@ async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<Shar
 
     // Iterate over the clients and start the private subscription for each symbol
     for (symbol, client) in clients {
-        let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<PrivateData>();
+        let (private_sender,  private_receiver) = mpsc::unbounded_channel::<PrivateData>();
 
         // Insert the private receiver into the shared state
         let _ = &state
@@ -310,7 +311,7 @@ async fn load_both(state: SharedState, state_sender: mpsc::UnboundedSender<Share
 
     // Spawn tasks for each client.
     for (symbol, client) in clients {
-        let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<PrivateData>();
+        let (private_sender, private_receiver) = mpsc::unbounded_channel::<PrivateData>();
 
         // Insert the private receiver into the state.
         let _ = &state

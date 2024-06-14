@@ -9,7 +9,7 @@ use skeleton::util::{helpers::calculate_exponent, localorderbook::LocalBook};
 /// divided by their sum.
 ///
 /// If imbalance is negative, increase the bid spread and reduce the opposite.
-/// If imbalance is positive, increase the ask spread and reduce the opposite. 
+/// If imbalance is positive, increase the ask spread and reduce the opposite.
 /// # Arguments
 ///
 /// * `book` - The LocalBook to calculate the imbalance ratio from.
@@ -63,8 +63,6 @@ pub fn imbalance_ratio(book: LocalBook, depth: Option<usize>) -> f64 {
         _ => 0.0,               // Otherwise, return 0.
     }
 }
-
-
 
 /// Calculates the Volume at the Offset (VOI) of a given LocalBook and its previous state.
 ///
@@ -147,21 +145,21 @@ pub fn voi(book: LocalBook, prev_book: LocalBook, depth: Option<usize>) -> f64 {
     };
 
     // Calculate the volume at the offset
-    let diff = bid_v - ask_v;
+    let  diff = bid_v - ask_v;
     diff
 }
 
-pub fn trade_imbalance(trades: (String, VecDeque<WsTrade>)) -> (String, f64) {
+pub fn trade_imbalance(trades: (String, VecDeque<WsTrade>)) -> f64 {
     // Calculate total volume and buy volume
     let (total_volume, buy_volume) = calculate_volumes(&trades.1);
     // Handle empty trade history (optional)
     if total_volume == 0.0 {
         // You can either return an empty tuple or a specific value to indicate no trades
-        return (trades.0, 0.0);
+        return 0.0;
     }
     // Calculate buy-sell ratio (avoid division by zero)
     let ratio = buy_volume / total_volume;
-    (trades.0, ratio)
+    ratio
 }
 
 fn calculate_volumes(trades: &VecDeque<WsTrade>) -> (f64, f64) {
@@ -174,4 +172,9 @@ fn calculate_volumes(trades: &VecDeque<WsTrade>) -> (f64, f64) {
         }
     }
     (total_volume, buy_volume)
+}
+
+
+pub fn map_range(value: f64) -> f64 {
+    (value + 1.0) / 2.0
 }
