@@ -74,8 +74,7 @@ pub fn price_impact(new_book: &LocalBook, old_book: &LocalBook, depth: Option<us
 /// Calculates the expected value of a trade based on the old price, current price, and imbalance.
 ///
 /// # Arguments
-///
-/// * `old_price` - The old price of the trade.
+///.
 /// * `curr_price` - The current price of the trade.
 /// * `imbalance` - The imbalance of the trade.
 ///
@@ -83,11 +82,19 @@ pub fn price_impact(new_book: &LocalBook, old_book: &LocalBook, depth: Option<us
 ///
 /// The expected value of the trade.
 pub fn expected_value(old_price: f64, curr_price: f64, imbalance: f64) -> f64 {
-    // Calculate the difference in price between the old and current prices.
-    let diff = curr_price - old_price;
+    let norm_imb = imbalance.abs() / 100.0;
+    let price_change = if old_price == curr_price {
+        norm_imb * curr_price
+    } else {
+        let diff = curr_price - old_price;
+        diff * norm_imb
+    };
 
-    // Calculate the expected value of the trade by multiplying the imbalance by the price difference.
-    imbalance.abs() * diff
+    if imbalance > 0.0 || (imbalance < 0.0 && curr_price != old_price) {
+        curr_price + price_change
+    } else {
+        curr_price - price_change
+    }
 }
 
 /// Calculates the change in the mid price relative to the average spread.
