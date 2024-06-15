@@ -1,11 +1,15 @@
 use bybit::{
     account::AccountManager,
     api::Bybit,
+    config::Config,
     general::General,
     market::MarketData,
     model::{
-        Category, FastExecData, InstrumentRequest, KlineData, LinearTickerData, LiquidationData, OrderBookUpdate, OrderData, PositionData, Subscription, Tickers, WalletData, WebsocketEvents, WsTrade
+        Category, FastExecData, InstrumentRequest, KlineData, LinearTickerData, LiquidationData,
+        OrderBookUpdate, OrderData, PositionData, Subscription, Tickers, WalletData,
+        WebsocketEvents, WsTrade,
     },
+    trade::Trader,
     ws::Stream as BybitStream,
 };
 use std::{collections::VecDeque, time::Duration};
@@ -106,6 +110,15 @@ impl BybitClient {
             rate = 0.0000_f64;
         }
         rate
+    }
+    pub async fn bybit_trader(&self) -> Trader {
+        let config = {
+            let x = Config::default();
+            x.set_recv_window(2500)
+        };
+        let trader: Trader =
+            Bybit::new_with_config(&config, Some(self.key.clone()), Some(self.secret.clone()));
+        trader
     }
 
     pub async fn market_subscribe(
@@ -341,7 +354,9 @@ impl BybitClient {
                     eprintln!("Unhandled event: {:#?}", event);
                 }
             }
-            sender.send(PrivateData::Bybit(private_data.clone())).unwrap();
+            sender
+                .send(PrivateData::Bybit(private_data.clone()))
+                .unwrap();
             Ok(())
         };
         loop {
