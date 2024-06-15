@@ -8,58 +8,126 @@ use crate::features::engine::Engine;
 
 pub struct MarketMaker {
     pub state: SharedState,
+    pub features: HashMap<String, Engine>,
     pub old_books: HashMap<String, LocalBook>,
     pub old_trades: HashMap<String, VecDeque<WsTrade>>,
-    pub features: HashMap<String, Engine>,
+    pub curr_trades: HashMap<String, VecDeque<WsTrade>>,
+    pub prev_avg_trade_price: HashMap<String, f64>,
+    pub last_feed_letency: Vec<u64>,
 }
 
 impl MarketMaker {
+    
     pub fn new(ss: SharedState) -> Self {
         MarketMaker {
             state: ss,
+            features: HashMap::new(),
             old_books: HashMap::new(),
             old_trades: HashMap::new(),
-            features: HashMap::new(),
+            curr_trades: HashMap::new(),
+            prev_avg_trade_price: HashMap::new(),
+            last_feed_letency: Vec::new(),
         }
     }
 
+    /// Starts a loop that continuously receives and processes shared state updates.
+    ///
+    /// # Arguments
+    ///
+    /// * `receiver` - An unbounded receiver for receiving `SharedState` updates.
+    ///
+    /// # Returns
+    ///
+    /// This function does not return any value.
     pub async fn start_loop(&mut self, mut receiver: UnboundedReceiver<SharedState>) {
+        // Continuously receive and process shared state updates.
         while let Some(data) = receiver.recv().await {
+            // Match the exchange in the received data.
             match data.exchange {
                 "bybit" | "binance" => {
-                    // build features for each symbol here
-                    self.features = self.build_features(data.markets[0].clone());
+                    // Build features for each symbol in the received data.
+                    self.features = self.build_features(data.symbols.clone());
+                    // Update features with the first market data in the received data.
+                    self.update_features(data.markets[0].clone(), 5);
                 }
                 "both" => {}
                 _ => {
-                    // Panic if it dooesnt match
+                    // Panic if the exchange does not match any of the specified options.
+                    panic!("Invalid exchange");
                 }
             }
         }
     }
 
-    fn build_features(&self, market: MarketMessage) -> HashMap<String, Engine> {
-        let mut mock_hash: HashMap<String, Engine> = HashMap::new();
-        match market {
-            MarketMessage::Bybit(bybit_data) => {
-                for (index, (symbol, book)) in bybit_data.books.iter().enumerate() {
-                    let (prev_book, prev_trades) =
-                        (self.old_books.get(symbol), self.old_trades.get(symbol));
-                    let mock_engine = Engine::new();
-                    mock_hash.insert(symbol.to_string(), mock_engine);
-                }
-            }
-            MarketMessage::Binance(binance_data) => {
-                for (index, (symbol, book)) in binance_data.books.iter().enumerate() {
-                    let (prev_book, prev_trades) =
-                        (self.old_books.get(symbol), self.old_trades.get(symbol));
-                    let mock_engine = Engine::new();
-                    mock_hash.insert(symbol.to_string(), mock_engine);
-                }
-            }
+    /// Builds features for each symbol in the received data.
+    ///
+    /// # Arguments
+    ///
+    /// * `symbol` - A vector of symbol names.
+    ///
+    /// # Returns
+    ///
+    /// A `HashMap` containing the symbol names as keys and `Engine` instances as values.
+    fn build_features(&self, symbol: Vec<&str>) -> HashMap<String, Engine> {
+        // Create a new HashMap to store the features.
+        let mut hash: HashMap<String, Engine> = HashMap::new();
+
+        // Iterate over each symbol and insert a new `Engine` instance into the HashMap.
+        for v in symbol {
+            // Convert the symbol name to a string and insert it into the HashMap.
+            hash.insert(v.to_string(), Engine::new());
         }
 
-        mock_hash
+        // Return the populated HashMap.
+        hash
+    }
+
+    fn update_features(&mut self, data: MarketMessage, depth: usize) {
+        // TODO: update features
+        match data {
+            MarketMessage::Bybit(v) => {
+                for (k, t) in v.trades {
+                    self.curr_trades.insert(k, t);
+                }
+                // TODO
+                for (k, b) in v.books {
+                    let feature = self.features.get_mut(&k).unwrap();
+                    let prev_book = self.old_books.get(&k);
+                    let prev_trade = self.old_trades.get(&k);
+                    let prev_avg = self.prev_avg_trade_price.get(&k);
+                    let curr_trade = self.curr_trades.get(&k);
+                    if let (Some(book), Some(p_trades), Some(p_avg), Some(curr_trades)) =
+                        (prev_book, prev_trade, prev_avg, curr_trade)
+                    {
+                        feature.update(&b, book, curr_trades, p_trades, p_avg, Some(depth));
+                    }
+                    self.old_books.insert(k.clone(), b);
+                    self.prev_avg_trade_price.insert(k, feature.avg_trade_price);
+                }
+                self.old_trades = self.curr_trades.clone();
+            }
+            MarketMessage::Binance(v) => {
+                for (k, t) in v.trades {
+                    self.curr_trades.insert(k, t);
+                }
+                // TODO
+                for (k, b) in v.books {
+                    let feature = self.features.get_mut(&k).unwrap();
+                    let prev_book = self.old_books.get(&k);
+                    let prev_trade = self.old_trades.get(&k);
+                    let prev_avg = self.prev_avg_trade_price.get(&k);
+                    let curr_trade = self.curr_trades.get(&k);
+                    if let (Some(book), Some(p_trades), Some(p_avg), Some(curr_trades)) =
+                        (prev_book, prev_trade, prev_avg, curr_trade)
+                    {
+                        feature.update(&b, book, curr_trades, p_trades, p_avg, Some(depth));
+                    }
+                    self.old_books.insert(k.clone(), b);
+                    self.prev_avg_trade_price.insert(k, feature.avg_trade_price);
+                }
+                self.old_trades = self.curr_trades.clone();
+            }
+        }
     }
 }
 

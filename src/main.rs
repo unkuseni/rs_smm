@@ -20,55 +20,45 @@ async fn main() {
 }
 
 async fn dub(mut receiver: mpsc::UnboundedReceiver<SharedState>) {
-    // Initialize a HashMap to store the previous LocalBook for each market.
     let mut prev_books: HashMap<String, LocalBook> = HashMap::new();
     let mut prev_trades = HashMap::new();
     let mut prev_avgs = HashMap::new();
     let mut features_map = HashMap::new();
 
     while let Some(v) = receiver.recv().await {
-        let bybit_market = v.markets[0].clone();
+        let bybit_market = &v.markets[0]; // Use reference
 
-        let trades = match bybit_market.clone() {
-            MarketMessage::Bybit(b) => b.trades,
-            MarketMessage::Binance(b) => b.trades,
+        let trades = match bybit_market {
+            MarketMessage::Bybit(b) => &b.trades,
+            MarketMessage::Binance(b) => &b.trades,
         };
-        let trade_map = {
-            let mut map = HashMap::new();
-            for v in trades.clone() {
-                map.insert(v.0.clone(), v.1.clone());
-            }
-            map
-        };
+        let trade_map: HashMap<_, _> = trades.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
 
-        for k in v.symbols {
-            features_map.insert(k.to_string(), Engine::new());
+        for k in &v.symbols {
+            features_map.entry(k.to_string()).or_insert_with(Engine::new);
         }
         if let MarketMessage::Bybit(bybit_market) = bybit_market {
-            for (_, v) in bybit_market.books.iter().enumerate() {
-                // Get the previous LocalBook for this market, if it exists.
-                let prev_book = prev_books.get(&v.0);
-                let prev_trade = prev_trades.get(&v.0);
-                let trade = trade_map.get(&v.0).unwrap();
-                // Calculate the VOI, if a previous LocalBook exists.
-                let engine = features_map.get_mut(&v.0).unwrap();
-                if let (Some(b), Some(t), Some(avg)) = (prev_book, prev_trade, prev_avgs.get(&v.0))
-                {
-                    engine.update(&v.1, b, trade, t, avg, Some(5));
+            for (symbol, book) in &bybit_market.books {
+                let prev_book = prev_books.get(symbol);
+                let prev_trade = prev_trades.get(symbol);
+                let trade = trade_map.get(symbol).unwrap(); // Consider handling unwrap more gracefully
+                let engine = features_map.get_mut(symbol).unwrap(); // Consider handling unwrap more gracefully
+
+                if let (Some(b), Some(t), Some(avg)) = (prev_book, prev_trade, prev_avgs.get(symbol)) {
+                    engine.update(book, b, trade, t, avg, Some(5));
                 }
 
                 println!(
-                    "Symbol: {:#?}, mid_price: {:.6}, voi: {:#?}, imbalance_ratio: {:#?}, trade_imb: {:#?}",
-                    v.0, v.1.mid_price, engine.voi, engine.imbalance_ratio, engine.trade_imb
+                    "Symbol: {:#?}, mid_price: {:.6}, voi: {:.5}, imbalance_ratio: {:.5}, expected_value: {:.6}",
+                    symbol, book.mid_price, engine.voi, engine.imbalance_ratio, engine.trade_imb
                 );
 
-                // Store the current LocalBook as the previous LocalBook for the next iteration.
-                prev_books.insert(v.0.clone(), v.1.clone());
-                prev_avgs.insert(v.0.clone(), engine.avg_trade_price);
+                prev_books.insert(symbol.clone(), book.clone());
+                prev_avgs.insert(symbol.clone(), engine.avg_trade_price);
             }
         }
-        for v in trades {
-            prev_trades.insert(v.0, v.1);
+        for (symbol, trade) in trades {
+            prev_trades.insert(symbol.clone(), trade.clone());
         }
     }
 }

@@ -17,7 +17,7 @@ pub struct Engine {
     pub voi: f64,
     pub trade_imb: f64,
     pub price_impact: f64,
-    pub expected_value: f64,
+    pub expected_value: (VecDeque<f64>, f64),
     pub mid_price_change: f64,
     pub mid_price_diff: f64,
     pub mid_price_avg: f64,
@@ -36,7 +36,7 @@ impl Engine {
             voi: 0.0,
             trade_imb: 0.0,
             price_impact: 0.0,
-            expected_value: 0.0,
+            expected_value: (VecDeque::new(), 0.0),
             mid_price_change: 0.0,
             mid_price_diff: 0.0,
             mid_price_avg: 0.0,
@@ -62,11 +62,12 @@ impl Engine {
         self.voi = voi(curr_book, prev_book, depth);
         self.trade_imb = trade_imbalance(curr_trades);
         self.price_impact = price_impact(curr_book, prev_book, depth);
-        self.expected_value = expected_value(
+        self.expected_value.0.push_back(expected_value(
             prev_book.get_mid_price(),
             curr_book.get_mid_price(),
             imbalance_ratio(curr_book, depth),
-        );
+        ));
+        self.expected_value.1 = self.avg_exp_value();
         self.mid_price_change = mid_price_change(
             prev_book.get_mid_price(),
             curr_book.get_mid_price(),
@@ -79,7 +80,7 @@ impl Engine {
             Some(prev_trades),
             curr_trades,
             *prev_avg,
-            350,
+            1000,
         );
         self.mid_price_basis = mid_price_basis(
             prev_book.get_mid_price(),
@@ -98,6 +99,17 @@ impl Engine {
                 self.avg_spread.0.pop_front();
             }
             self.avg_spread.0.iter().sum::<f64>() / self.avg_spread.0.len() as f64
+        }
+    }
+
+    fn avg_exp_value(&mut self) -> f64 {
+        if self.expected_value.0.is_empty() {
+            0.0
+        } else {
+            while self.expected_value.0.len() >= 1500 {
+                self.expected_value.0.pop_front();
+            }
+            self.expected_value.0.iter().sum::<f64>() / self.expected_value.0.len() as f64
         }
     }
 
