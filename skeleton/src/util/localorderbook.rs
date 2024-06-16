@@ -288,6 +288,10 @@ impl LocalBook {
         };
         (asks, bids)
     }
+    pub fn get_wmid(&self) -> f64 {
+        let imb = self.best_bid.qty / (self.best_bid.qty + self.best_ask.qty);
+        self.best_bid.price * imb + self.best_ask.price * (1.0 - imb)
+    }
 }
 
 unsafe impl Send for LocalBook {}
