@@ -1,4 +1,7 @@
-use linfa::traits::{Fit, Predict};
+use linfa::{
+    traits::{Fit, Predict},
+    Dataset,
+};
 use linfa_linear::LinearRegression;
 use ndarray::{Array1, Array2};
 
@@ -25,7 +28,7 @@ pub fn mid_price_regression(
     }
 
     // Create a linfa dataset with the features and mid price array
-    let dataset = linfa::Dataset::new(features, mid_price_array);
+    let dataset = Dataset::new(features, mid_price_array);
 
     // Create a new linear regression model
     let lin_reg = LinearRegression::new();
@@ -38,16 +41,25 @@ pub fn mid_price_regression(
 
     // Assuming you want to return some value related to the prediction here
     // Return the mean of the prediction or 0.0 if the prediction is empty
-    prediction.mean().unwrap_or(0.0)
+    if prediction.is_empty() {
+        0.0
+    } else {
+        prediction.mean().unwrap_or(0.0)
+    }
 }
 
 
-    //  // Independent variables
-    // let mut x: Array2<f64> = array![
-    //     [2.0, 6.0, 12.0],
-    //     [4.0, 9.0, 16.0],
-    //     [6.0, 12.0, 20.0]
-    // ];
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ndarray::{array, Array1};
 
-    // // Dependent variable
-    // let y: Array1<f64> = array![6.0, 15.0, 24.0];
+    #[test]
+    fn test_mid_price_regression() {
+        let mid_price = array![1.0, 2.0, 3.0, 4.0, 5.0];
+        let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0], [10.0, 11.0, 12.0], [13.0, 14.0, 15.0]];
+        let curr_spread = 2.0;
+        let result = mid_price_regression(mid_price, features, curr_spread);
+        assert_eq!(result, 3.0);
+    }
+}

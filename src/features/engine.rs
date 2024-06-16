@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use bybit::model::WsTrade;
-use ndarray::{Array1, Array2};
+use ndarray::{Array1, Array2, ShapeError};
 use skeleton::util::localorderbook::LocalBook;
 
 use super::{
@@ -10,6 +10,7 @@ use super::{
         avg_trade_price, expected_value, mid_price_avg, mid_price_basis, mid_price_change,
         mid_price_diff, price_impact,
     },
+    linear_reg::mid_price_regression,
 };
 
 pub struct Engine {
@@ -23,8 +24,8 @@ pub struct Engine {
     pub mid_price_avg: f64,
     pub mid_price_basis: f64,
     pub avg_trade_price: f64,
-    pub target_dataset: Array1<f64>,
-    pub record_dataset: Array2<f64>,
+    pub target_dataset: Vec<f64>,
+    pub record_dataset: Vec<Vec<f64>>,
     pub regression_pred: f64,
     pub avg_spread: (VecDeque<f64>, f64),
 }
@@ -42,8 +43,8 @@ impl Engine {
             mid_price_avg: 0.0,
             avg_trade_price: 0.0,
             mid_price_basis: 0.0,
-            target_dataset: Array1::zeros(0),
-            record_dataset: Array2::zeros((37, 3)),
+            target_dataset: Vec::new(),
+            record_dataset: Vec::new(),
             regression_pred: 0.0,
             avg_spread: (VecDeque::new(), 0.0),
         }
@@ -58,6 +59,7 @@ impl Engine {
         prev_avg: &f64,
         depth: Option<usize>,
     ) {
+        self.target_dataset.push(curr_book.get_mid_price());
         self.imbalance_ratio = imbalance_ratio(curr_book, depth);
         self.voi = voi(curr_book, prev_book, depth);
         self.trade_imb = trade_imbalance(curr_trades);
@@ -80,7 +82,7 @@ impl Engine {
             Some(prev_trades),
             curr_trades,
             *prev_avg,
-            1000,
+            300,
         );
         self.mid_price_basis = mid_price_basis(
             prev_book.get_mid_price(),
@@ -89,6 +91,20 @@ impl Engine {
         );
         self.avg_spread.0.push_back(curr_book.get_spread());
         self.avg_spread.1 = self.avg_spread();
+        
+        // if self.target_dataset.len() >= 1500 {
+        //     remove_elements_at_capacity(&mut self.target_dataset, 1500);
+        // } else {
+        //     self.target_dataset.push(curr_book.get_mid_price());
+        // }
+        // if self.record_dataset.len() >= 1500 {
+        //     remove_elements_at_capacity(&mut self.record_dataset, 1500);
+        // } else {
+        //     self.record_dataset
+        //         .push(vec![self.voi, self.imbalance_ratio, self.mid_price_basis]);
+        // }
+
+        // self.update_regression_data(curr_book.get_spread());
     }
 
     fn avg_spread(&mut self) -> f64 {
@@ -113,9 +129,22 @@ impl Engine {
         }
     }
 
-    pub fn update_regression_data(&mut self) {
-        self.run_prediction();
+    fn update_regression_data(&mut self, avg: f64) {
+        let mut record_arr = vecs_to_array2(self.record_dataset.clone()).unwrap();
+        let target_arr = Array1::from(self.target_dataset.clone());
+        self.regression_pred = mid_price_regression(target_arr, record_arr, avg);
     }
+}
 
-    fn run_prediction(&mut self) {}
+fn remove_elements_at_capacity<T>(data: &mut Vec<T>, capacity: usize) {
+    while data.len() > capacity {
+        data.remove(0);
+    }
+}
+
+fn vecs_to_array2(data: Vec<Vec<f64>>) -> Result<Array2<f64>, ShapeError> {
+    let rows = data.len();
+    let cols = data.get(0).map_or(0, Vec::len); // Assumes all rows have the same number of columns
+    let flat_data: Vec<f64> = data.into_iter().flatten().collect();
+    Array2::from_shape_vec((rows, cols), flat_data)
 }

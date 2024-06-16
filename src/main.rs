@@ -50,7 +50,7 @@ async fn dub(mut receiver: mpsc::UnboundedReceiver<SharedState>) {
 
                 println!(
                     "Symbol: {:#?}, mid_price: {:.6}, voi: {:.5}, imbalance_ratio: {:.5}, expected_value: {:.6}",
-                    symbol, book.mid_price, engine.voi, engine.imbalance_ratio, engine.trade_imb
+                    symbol, book.mid_price, engine.voi, engine.imbalance_ratio, engine.expected_value.1
                 );
 
                 prev_books.insert(symbol.clone(), book.clone());
