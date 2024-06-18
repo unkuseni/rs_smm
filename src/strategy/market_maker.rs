@@ -7,25 +7,24 @@ use tokio::sync::mpsc::UnboundedReceiver;
 use crate::features::engine::Engine;
 
 pub struct MarketMaker {
-    pub state: SharedState,
     pub features: HashMap<String, Engine>,
     pub old_books: HashMap<String, LocalBook>,
     pub old_trades: HashMap<String, VecDeque<WsTrade>>,
     pub curr_trades: HashMap<String, VecDeque<WsTrade>>,
     pub prev_avg_trade_price: HashMap<String, f64>,
+    pub leverage: u32,
     pub last_feed_letency: Vec<u64>,
 }
 
 impl MarketMaker {
-    
-    pub fn new(ss: SharedState) -> Self {
+    pub fn new(ss: SharedState, leverage: u32) -> Self {
         MarketMaker {
-            state: ss,
             features: HashMap::new(),
             old_books: HashMap::new(),
             old_trades: HashMap::new(),
             curr_trades: HashMap::new(),
             prev_avg_trade_price: HashMap::new(),
+            leverage,
             last_feed_letency: Vec::new(),
         }
     }

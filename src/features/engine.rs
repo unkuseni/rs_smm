@@ -11,20 +11,22 @@ use super::{
     },
 };
 
+#[derive(Clone, Debug)]
 pub struct Engine {
     pub imbalance_ratio: f64,
     pub voi: f64,
     pub trade_imb: f64,
     pub price_impact: f64,
-    pub expected_return: f64,
-    pub price_flu: f64,
+    pub expected_return: f64, 
+    pub price_flu: f64, // in bps
     pub expected_value: (VecDeque<f64>, f64),
     pub mid_price_change: f64,
     pub mid_price_diff: f64,
     pub mid_price_avg: f64,
     pub mid_price_basis: f64,
     pub avg_trade_price: f64,
-    pub avg_spread: (VecDeque<f64>, f64),
+    pub avg_spread: (VecDeque<f64>, f64),  // in bps
+    pub skew: f64,
 }
 
 impl Engine {
@@ -43,6 +45,7 @@ impl Engine {
             avg_trade_price: 0.0,
             mid_price_basis: 0.0,
             avg_spread: (VecDeque::new(), 0.0),
+            skew: 0.0,
         }
     }
 
@@ -95,7 +98,7 @@ impl Engine {
             0.0
         } else {
             remove_elements_at_capacity(&mut self.avg_spread.0, 1500);
-            self.avg_spread.0.iter().sum::<f64>() / self.avg_spread.0.len() as f64
+            self.avg_spread.0.iter().sum::<f64>() / self.avg_spread.0.len() as f64 * 10000.0
         }
     }
 
@@ -107,10 +110,19 @@ impl Engine {
             self.expected_value.0.iter().sum::<f64>() / self.expected_value.0.len() as f64
         }
     }
+
+    fn generate_skew(&mut self) {
+
+    }
 }
 
 fn remove_elements_at_capacity<T>(data: &mut VecDeque<T>, capacity: usize) {
     while data.len() > capacity {
         data.pop_front();
     }
+}
+
+
+struct PredWeights  {
+
 }

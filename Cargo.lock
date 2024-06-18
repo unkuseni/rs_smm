@@ -1312,6 +1312,7 @@ dependencies = [
 name = "rs_smm"
 version = "0.1.0"
 dependencies = [
+ "binance",
  "linfa",
  "linfa-linear",
  "ndarray",

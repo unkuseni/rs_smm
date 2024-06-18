@@ -256,7 +256,7 @@ pub fn avg_trade_price(
     // current trades, calculate the average trade price and return it.
     if old_volume != curr_volume {
         let inv_tick = 1.0 / tick_window as f64;
-        ((old_turnover + curr_turnover) / (old_volume + curr_volume)) * inv_tick
+        ((curr_turnover - old_turnover) / (curr_volume - old_volume)) * inv_tick
     } else {
         // Otherwise, return the previous average trade price.
         prev_avg
