@@ -48,16 +48,21 @@ pub fn mid_price_regression(
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ndarray::{array, Array1};
+    use ndarray::array;
 
     #[test]
     fn test_mid_price_regression() {
         let mid_price = array![1.0, 2.0, 3.0, 4.0, 5.0];
-        let features = array![[1.0, 2.0, 3.0], [4.0, 5.0, 6.0], [7.0, 8.0, 9.0], [10.0, 11.0, 12.0], [13.0, 14.0, 15.0]];
+        let features = array![
+            [1.0, 2.0, 3.0],
+            [4.0, 5.0, 6.0],
+            [7.0, 8.0, 9.0],
+            [10.0, 11.0, 12.0],
+            [13.0, 14.0, 15.0]
+        ];
         let curr_spread = 2.0;
         let result = mid_price_regression(mid_price, features, curr_spread);
         assert_eq!(result, 3.0);

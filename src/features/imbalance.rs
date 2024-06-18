@@ -64,6 +64,30 @@ pub fn imbalance_ratio(book: &LocalBook, depth: Option<usize>) -> f64 {
     }
 }
 
+
+/// Calculates the Weighted Mid Price (WMID) of a given LocalBook, based on the given imbalance ratio.
+///
+/// # Arguments
+///
+/// * `book` - The LocalBook to calculate the WMID from.
+/// * `imb` - The imbalance ratio to use in the calculation.
+///
+/// # Returns
+/// The WMID as a `f64`.
+pub fn wmid(book: &LocalBook, imb: f64) -> f64 {
+    // Convert the imbalance ratio to the absolute value, using the map_range function.
+    let abs_imb = map_range(imb);
+
+    // If the absolute imbalance ratio is not zero, calculate the WMID using the formula:
+    // WMID = (best_bid * imb) + (best_ask * (1 - imb))
+    if abs_imb != 0.0 {
+        (book.best_bid.price * imb) + (book.best_ask.price * (1.0 - imb))
+    } else {
+        // Otherwise, return the mid_price of the LocalBook.
+        book.mid_price
+    }
+}
+
 /// Calculates the Volume at the Offset (VOI) of a given LocalBook and its previous state.
 ///
 /// # Arguments
