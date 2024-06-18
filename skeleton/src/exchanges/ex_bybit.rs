@@ -111,7 +111,7 @@ impl BybitClient {
         }
         rate
     }
-    pub async fn bybit_trader(&self) -> Trader {
+    pub fn bybit_trader(&self) -> Trader {
         let config = {
             let x = Config::default();
             x.set_recv_window(2500)

@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time::Duration;
 
+use binance::config::Config;
 use binance::futures::account::FuturesAccount;
 use binance::futures::general::FuturesGeneral;
 use binance::futures::model::Filters::PriceFilter;
@@ -270,6 +271,15 @@ impl BinanceClient {
                 delay *= 2;
             }
         }
+    }
+       pub fn binance_trader(&self) -> FuturesAccount {
+        let config = {
+            let x = Config::default();
+            x.set_recv_window(2500)
+        };
+        let trader: FuturesAccount =
+            Binance::new_with_config(Some(self.key.clone()), Some(self.secret.clone()), &config);
+        trader
     }
 
     pub fn private_subscribe(&self, sender: mpsc::UnboundedSender<PrivateData>) {
