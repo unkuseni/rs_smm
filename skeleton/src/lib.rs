@@ -144,7 +144,7 @@ mod tests {
     #[tokio::test]
     async fn test_user_stream() {
         let bub = BinanceClient::init(
-            "N4qNFLgddNxqwG7tWu4b6VdgCSdIXPzFDyEfu48AkCjN3bLvXCWaRvhEcy8qX6dD".to_string(),
+            "api".to_string(),
             "secret".to_string(),
         );
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -166,8 +166,8 @@ mod tests {
     #[tokio::test]
     async fn test_priv() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let api_key = "Gf00VfhZXp11aGSxoV".to_string();
-        let api_secret = "cnafpFvqeAC2dUPyeFP61QwYeAJiPdbdNgMX".to_string();
+        let api_key = "api".to_string();
+        let api_secret = "secret".to_string();
         let bub = BybitClient::init(api_key, api_secret);
         tokio::spawn(async move {
             bub.private_subscribe(tx).await;
@@ -179,13 +179,13 @@ mod tests {
 
     #[tokio::test]
     async fn test_fee() {
-        let _api_key = "Gf00VfhZXp11aGSxoV".to_string();
-        let _api_secret = "cnafpFvqeAC2dUPyeFP61QwYeAJiPdbdNgMX".to_string();
+        let _api_key = "api".to_string();
+        let _api_secret = "secret".to_string();
         let _rate = task::spawn_blocking(move || {
             let api_key2 =
-                "BOswZzt8n49xqKhZu2KYxObLLXf6iOVpyjLtUbmNcZhTMIuDam0Jn7AArzOlzVQM".to_string();
+                "api".to_string();
             let api_secret2 =
-                "D0JlW0Uf0SBkRgNmGTNMymgwI2BVQylNqkdqzMqpE74dXRE5SAL4o85V7LivGfSx".to_string();
+                "secret".to_string();
             let bub = BinanceClient::init(api_key2, api_secret2);
             bub.fee_rate();
         })
