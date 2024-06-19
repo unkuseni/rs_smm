@@ -121,6 +121,12 @@ impl BinanceClient {
                         _ => 0.0,
                     };
                     b.tick_size = price_filter;
+                    b.min_order_size = {
+                        match &v.filters[1] {
+                            binance::model::Filters::LotSize { min_qty, ..} => min_qty.parse().unwrap_or(0.0),
+                            _ => 0.0,
+                        }
+                    }
                 }
                 Err(_) => {
                     b.tick_size = 0.0;

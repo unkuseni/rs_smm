@@ -144,6 +144,13 @@ impl BybitClient {
             let req = InstrumentRequest::new(category, Some(s), None, None, None);
             if let Ok(res) = cl.get_futures_instrument_info(req).await {
                 b.tick_size = res.result.list[0].price_filter.tick_size;
+                if let Some(v) = &res.result.list[0].lot_size_filter.qty_step {
+                    b.lot_size = v.parse::<f64>().unwrap_or(0.0);
+                }
+                if let Some(v) = &res.result.list[0].lot_size_filter.post_only_max_order_qty {
+                    b.post_only_max = v.parse::<f64>().unwrap_or(0.0);
+                }
+                b.min_order_size = res.result.list[0].lot_size_filter.min_order_qty;
             }
         }
         market_data.klines = symbol

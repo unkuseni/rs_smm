@@ -151,7 +151,7 @@ mod tests {
     #[test]
     fn lin() {
         let num = linspace(0.6243, 0.6532, 14);
-        let num_geom = geomspace(0.01, 1.0, 14);
+        let num_geom = geomspace(1.0, 0.01, 14);
         println!("{:#?}", num);
         println!("{:#?}", num_geom);
     }

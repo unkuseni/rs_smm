@@ -11,6 +11,9 @@ pub struct LocalBook {
     pub best_bid: Bid,
     pub mid_price: f64,
     pub tick_size: f64,
+    pub lot_size: f64,
+    pub min_order_size: f64,
+    pub post_only_max: f64,
     pub last_update: u64,
 }
 
@@ -25,11 +28,14 @@ impl LocalBook {
                 qty: 0.0,
             },
             mid_price: 0.0,
+            lot_size: 0.0,
+            min_order_size: 0.0,
             best_bid: Bid {
                 price: 0.0,
                 qty: 0.0,
             },
             tick_size: 0.0,
+            post_only_max: 0.0,
         }
     }
 
@@ -228,6 +234,18 @@ impl LocalBook {
         // Returns the tick size of the order book. Tick size is the minimum price
         // increment for the market.
         self.tick_size
+    }
+
+    pub fn get_lot_size(&self) -> f64 {
+        self.lot_size
+    }
+
+    pub fn get_min_order_value(&self) -> f64 {
+        self.min_order_size
+    }
+
+    pub fn get_post_only_max(&self) -> f64 {
+        self.post_only_max
     }
 
     /// Get the best ask prices and quantities in the order book.
