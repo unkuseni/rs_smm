@@ -12,20 +12,20 @@ pub struct MarketMaker {
     pub old_trades: HashMap<String, VecDeque<WsTrade>>,
     pub curr_trades: HashMap<String, VecDeque<WsTrade>>,
     pub prev_avg_trade_price: HashMap<String, f64>,
-    pub leverage: u32,
     pub last_feed_letency: Vec<u64>,
+    pub assets: HashMap<String, f64>,
 }
 
 impl MarketMaker {
-    pub fn new(ss: SharedState, leverage: u32) -> Self {
+    pub fn new(ss: SharedState, assets: HashMap<String, f64>) -> Self {
         MarketMaker {
             features: HashMap::new(),
             old_books: HashMap::new(),
             old_trades: HashMap::new(),
             curr_trades: HashMap::new(),
             prev_avg_trade_price: HashMap::new(),
-            leverage,
             last_feed_letency: Vec::new(),
+            assets: HashMap::new(),
         }
     }
 
@@ -47,7 +47,7 @@ impl MarketMaker {
                     // Build features for each symbol in the received data.
                     self.features = self.build_features(data.symbols.clone());
                     // Update features with the first market data in the received data.
-                    self.update_features(data.markets[0].clone(), 5);
+                    self.update_features(data.markets[0].clone(), Vec::new());
                 }
                 "both" => {}
                 _ => {
@@ -81,7 +81,7 @@ impl MarketMaker {
         hash
     }
 
-    fn update_features(&mut self, data: MarketMessage, depth: usize) {
+    fn update_features(&mut self, data: MarketMessage, depth: Vec<usize>) {
         // TODO: update features
         match data {
             MarketMessage::Bybit(v) => {
@@ -98,7 +98,7 @@ impl MarketMaker {
                     if let (Some(book), Some(p_trades), Some(p_avg), Some(curr_trades)) =
                         (prev_book, prev_trade, prev_avg, curr_trade)
                     {
-                        feature.update(&b, book, curr_trades, p_trades, p_avg, Some(depth));
+                        feature.update(&b, book, curr_trades, p_trades, p_avg, depth.clone(), 1000);
                     }
                     self.old_books.insert(k.clone(), b);
                     self.prev_avg_trade_price.insert(k, feature.avg_trade_price);
@@ -119,7 +119,7 @@ impl MarketMaker {
                     if let (Some(book), Some(p_trades), Some(p_avg), Some(curr_trades)) =
                         (prev_book, prev_trade, prev_avg, curr_trade)
                     {
-                        feature.update(&b, book, curr_trades, p_trades, p_avg, Some(depth));
+                        feature.update(&b, book, curr_trades, p_trades, p_avg, depth.clone(), 1000);
                     }
                     self.old_books.insert(k.clone(), b);
                     self.prev_avg_trade_price.insert(k, feature.avg_trade_price);
