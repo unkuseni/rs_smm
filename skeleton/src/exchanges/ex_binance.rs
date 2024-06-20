@@ -505,7 +505,7 @@ pub fn remove_oldest_if_needed<T>(
 impl BinancePrivate {
     pub fn into_fastexec(&self) -> VecDeque<FastExecData> {
         let mut arr = VecDeque::new();
-        for (k, v) in self.executions.iter() {
+        for (_, v) in self.executions.iter() {
             arr.push_back(FastExecData {
                 category: Category::Linear.as_str().to_string(),
                 symbol: v.symbol.clone(),
