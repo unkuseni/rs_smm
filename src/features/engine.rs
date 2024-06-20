@@ -98,7 +98,7 @@ impl Engine {
             imbalance_ratio(curr_book, Some(depth[0])),
         ));
         // Update weighted mid price
-        self.wmid = wmid(curr_book, self.imbalance_ratio);
+        self.wmid = (wmid(curr_book, self.imbalance_ratio) / curr_book.mid_price).ln();
         // Update average expected value
         self.expected_value.1 = self.avg_exp_value();
         // Update mid price change
@@ -196,6 +196,7 @@ impl Engine {
                 0.0
             }
         };
+        let _wmid = self.wmid * EXP_RET_WEIGHT;
         let mid_b = {
             if self.mid_price_basis > 0.0 {
                 1.0 * MID_BASIS_WEIGHT
