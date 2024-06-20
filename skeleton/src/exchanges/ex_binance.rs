@@ -14,7 +14,7 @@ use binance::model::{
     EventBalance, EventPosition, LiquidationOrder,
 };
 use binance::{api::Binance, futures::websockets::*, general::General, model::AggrTradesEvent};
-use bybit::model::WsTrade;
+use bybit::model::{Category, FastExecData, WsTrade};
 use tokio::sync::mpsc;
 
 use crate::util::localorderbook::{LocalBook, ProcessAsks, ProcessBids};
@@ -123,7 +123,9 @@ impl BinanceClient {
                     b.tick_size = price_filter;
                     b.min_order_size = {
                         match &v.filters[1] {
-                            binance::model::Filters::LotSize { min_qty, ..} => min_qty.parse().unwrap_or(0.0),
+                            binance::model::Filters::LotSize { min_qty, .. } => {
+                                min_qty.parse().unwrap_or(0.0)
+                            }
                             _ => 0.0,
                         }
                     }
@@ -278,7 +280,7 @@ impl BinanceClient {
             }
         }
     }
-       pub fn binance_trader(&self) -> FuturesAccount {
+    pub fn binance_trader(&self) -> FuturesAccount {
         let config = {
             let x = Config::default();
             x.set_recv_window(2500)
@@ -497,5 +499,26 @@ pub fn remove_oldest_if_needed<T>(
         if let Some(oldest_key) = keys.pop_front() {
             map.remove(&oldest_key);
         }
+    }
+}
+
+impl BinancePrivate {
+    pub fn into_fastexec(&self) -> VecDeque<FastExecData> {
+        let mut arr = VecDeque::new();
+        for (k, v) in self.executions.iter() {
+            arr.push_back(FastExecData {
+                category: Category::Linear.as_str().to_string(),
+                symbol: v.symbol.clone(),
+                order_id: v.order_id.to_string(),
+                exec_id: v.trade_id.to_string(),
+                exec_price: v.average_price.to_string(),
+                exec_qty: v.accumulated_qty_filled_trades.to_string(),
+                exec_time: v.trade_order_time.to_string(),
+                side: v.side.to_string(),
+                seq: v.trade_id as u64,
+                order_link_id: v.new_client_order_id.to_string(),
+            });
+        }
+        arr
     }
 }
