@@ -7,7 +7,7 @@ use num_traits::{Float, Signed};
 
 use toml::Value;
 
-pub fn round_step(num: f64, step: f64) -> f64 {
+pub fn round_step<T: Float>(num: T, step: T) -> T {
     (num / step).round() * step
 }
 
@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn test_round() {
-        assert_eq!(round_step(1.56432456, 0.0001), 1.5643);
+        assert_eq!(round_step(15643.456, 1.0), 15643.0);
         assert_eq!(round_step(5.6567422344, 0.0005), 5.6565);
     }
 
