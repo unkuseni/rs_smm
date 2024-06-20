@@ -7,10 +7,21 @@ use num_traits::{Float, Signed};
 
 use toml::Value;
 
-pub fn round_step<T: Float + Signed + PartialOrd>(num: T, step: T) -> T {
-    let p = (T::one() / step).to_i32().unwrap();
-    let p_as_f64 = p as f64;
-    (num * T::from(p_as_f64).unwrap()).floor() / T::from(p_as_f64).unwrap()
+pub fn round_step(num: f64, step: f64) -> f64 {
+    (num / step).round() * step
+}
+
+pub fn geometric_weights(ratio: f64, n: usize) -> Vec<f64> {
+    assert!(ratio > 0.0 && ratio < 1.0, "Ratio must be between 0 and 1");
+
+    // Generate the geometric series
+    let weights: Vec<f64> = (0..n).map(|i| ratio.powi(i as i32)).collect();
+
+    // Calculate the sum of the series to normalize
+    let sum: f64 = weights.iter().sum();
+
+    // Normalize the weights so that their sum equals 1
+    weights.iter().map(|w| w / sum).collect()
 }
 
 pub fn generate_timestamp() -> u64 {
@@ -130,8 +141,8 @@ mod tests {
 
     #[test]
     fn test_round() {
-        assert_eq!(round_step(0.1, 0.1), 0.1);
-        assert_eq!(round_step(5.67, 0.2), 5.6);
+        assert_eq!(round_step(1.56432456, 0.0001), 1.5643);
+        assert_eq!(round_step(5.6567422344, 0.0005), 5.6565);
     }
 
     #[test]
