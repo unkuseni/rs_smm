@@ -14,7 +14,6 @@ mod tests {
     use binance::{api::Binance, futures::general::FuturesGeneral};
     use exchanges::exchange::PrivateData;
     use tokio::{sync::mpsc, task, time::Instant};
-    use util::helpers::spread_decimal_bps;
 
     use crate::{
         exchanges::{
@@ -122,39 +121,17 @@ mod tests {
         .await;
     }
 
-    #[tokio::test]
-    async fn test_agg() {
-        let bub = BinanceClient::init("key".to_string(), "secret".to_string());
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        tokio::task::spawn_blocking(move || {
-            let _ = bub.ws_aggtrades(vec!["BTCUSDT", "ETHUSDT", "SKLUSDT", "MATICUSDT"], tx);
-        });
-        while let Some(v) = rx.recv().await {
-            println!("Aggtrade data: {:#?}", v);
-        }
-    }
-
-    #[tokio::test]
-    async fn test_book() {
-        let bub = BinanceClient::init("key".to_string(), "secret".to_string());
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        tokio::task::spawn_blocking(move || {
-            let _ = bub.ws_best_book(vec!["LQTYUSDT"], tx);
-        });
-        while let Some(v) = rx.recv().await {
-            println!("Aggtrade data: {:#?}", v);
-        }
-    }
 
     #[tokio::test]
     async fn test_user_stream() {
         let bub = BinanceClient::init("api".to_string(), "secret".to_string());
         let (tx, mut rx) = mpsc::unbounded_channel();
+        let symbol = "BTCUSDT".to_string();
         tokio::task::spawn_blocking(move || {
-            let _ = bub.private_subscribe(tx);
+            let _ = bub.private_subscribe(tx, symbol);
         });
         while let Some(v) = rx.recv().await {
-            match v {
+            match v.data {
                 PrivateData::Binance(v) => {
                     for (k, d) in v.orders.iter() {
                         println!("Private data: {:#?}, {:#?}", k, d);
@@ -170,12 +147,13 @@ mod tests {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let api_key = "api".to_string();
         let api_secret = "secret".to_string();
+         let symbol = "BTCUSDT".to_string();
         let bub = BybitClient::init(api_key, api_secret);
         tokio::spawn(async move {
-            bub.private_subscribe(tx).await;
+            bub.private_subscribe(tx, symbol).await;
         });
         while let Some(v) = rx.recv().await {
-            println!("Private data: {:#?}", v);
+            println!("Private data: {:#?}", v.data);
         }
     }
 
