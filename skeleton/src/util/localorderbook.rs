@@ -2,7 +2,7 @@ use bybit::model::{Ask, Bid};
 use ordered_float::OrderedFloat;
 use std::collections::BTreeMap;
 
-use super::helpers::Round;
+use super::helpers::{spread_decimal_bps, Round};
 #[derive(Debug, Clone)]
 pub struct LocalBook {
     pub asks: BTreeMap<OrderedFloat<f64>, f64>,
@@ -278,6 +278,11 @@ impl LocalBook {
         // The spread is positive if the best ask price is higher than the best bid price,
         // and negative if the best ask price is lower than the best bid price.
         self.best_ask.price - self.best_bid.price
+    }
+
+    pub fn get_spread_in_bps(&self) -> f64 {
+        let count = self.tick_size.count_decimal_places() + 1;
+        spread_decimal_bps(self.get_spread().round_to(count as u8))
     }
 
     /// Get the bids and asks in the order book at the specified depth.

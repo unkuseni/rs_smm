@@ -14,6 +14,7 @@ mod tests {
     use binance::{api::Binance, futures::general::FuturesGeneral};
     use exchanges::exchange::PrivateData;
     use tokio::{sync::mpsc, task, time::Instant};
+    use util::helpers::spread_decimal_bps;
 
     use crate::{
         exchanges::{
@@ -37,11 +38,11 @@ mod tests {
         let api_key = "key".to_string();
         let api_secret = "secret".to_string();
         let bub = BybitClient::init(api_key.clone(), api_secret.clone());
-        let symbol = vec!["SKLUSDT"];
+        let symbol = vec!["NOTUSDT"];
         let clone_symbol = symbol.clone();
         let (tx2, mut rx2) = mpsc::unbounded_channel::<BinanceMarket>();
         let bub_2 = BinanceClient::init(api_key, api_secret);
-        let symbol_2 = vec!["SKLUSDT"];
+        let symbol_2 = vec!["NOTUSDT"];
         let clone_symbol_2 = symbol_2.clone();
 
         tokio::spawn(async move {
@@ -56,11 +57,15 @@ mod tests {
             tokio::select! {
                 Some(v) = rx.recv() => {
                     let depth = v.books[0].1.get_bba();
-                    println!("Bybit Market data: {:#?}, {:#?}", clone_symbol[0], depth);
+                    let spread = v.books[0].1.get_spread();
+                    let bps_spread = v.books[0].1.get_spread_in_bps();
+                    println!("Bybit Market data: {:#?}, {:#?} {:#?}, {:#?}", clone_symbol[0], depth, spread, bps_spread);
                 }
                 Some(v) = rx2.recv() => {
                     let depth = v.books[0].1.get_bba();
-                    println!("Binance Market data: {:#?}, {:#?}", clone_symbol_2[0], depth);
+                    let spread = v.books[0].1.get_spread();
+                    let bps_spread = v.books[0].1.get_spread_in_bps();
+                    println!("Binance Market data: {:#?}, {:#?} {:#?}, {:#?}", clone_symbol_2[0], depth, spread, bps_spread);
                 }
                 else => break,
             }
@@ -143,10 +148,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_user_stream() {
-        let bub = BinanceClient::init(
-            "api".to_string(),
-            "secret".to_string(),
-        );
+        let bub = BinanceClient::init("api".to_string(), "secret".to_string());
         let (tx, mut rx) = mpsc::unbounded_channel();
         tokio::task::spawn_blocking(move || {
             let _ = bub.private_subscribe(tx);
@@ -182,10 +184,8 @@ mod tests {
         let _api_key = "api".to_string();
         let _api_secret = "secret".to_string();
         let _rate = task::spawn_blocking(move || {
-            let api_key2 =
-                "api".to_string();
-            let api_secret2 =
-                "secret".to_string();
+            let api_key2 = "api".to_string();
+            let api_secret2 = "secret".to_string();
             let bub = BinanceClient::init(api_key2, api_secret2);
             bub.fee_rate();
         })
