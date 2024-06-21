@@ -239,7 +239,7 @@ impl QuoteGenerator {
             if self.preferred_spread > 0.0 {
                 self.preferred_spread
             } else {
-                let diff = (start + (start * 0.00055)) - start;
+                let diff = (start + (start * 0.0007)) - start;
                 let count = book.tick_size.count_decimal_places() + 1;
                 spread_decimal_bps(diff.round_to(count as u8))
             }
@@ -965,15 +965,21 @@ impl OrderManagement {
     }
 }
 
+
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn test_spread_decimal_bps() {
-        let diff = (0.0139175 + (0.0139175 * 0.0007)) - 0.0139175;
-        let unit = 0.000001.count_decimal_places() + 1;
-        let bps = spread_decimal_bps(diff.round_to(unit as u8));
-        println!("Spread decimal bps: {} {}", bps, diff.round_to(unit as u8));
+        let mut value = 0.00065;
+        for _ in 0..10 {
+            let diff: f64 = (0.5793 + (0.5793 * value)) - 0.5793;
+            let unit = 0.0001.count_decimal_places() + 1;
+            let bps = spread_decimal_bps(diff.round_to(unit as u8));
+            println!("Spread decimal bps: {} {} {} ", bps, diff.round(), value);
+            value += 0.0001;
+        }
     }
 }
