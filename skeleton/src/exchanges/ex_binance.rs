@@ -13,13 +13,13 @@ use binance::model::{
     AccountUpdateEvent, Asks, Bids, BookTickerEvent, ContinuousKline, DepthOrderBookEvent,
     EventBalance, EventPosition, LiquidationOrder,
 };
-use binance::{api::Binance, futures::websockets::*, general::General, model::AggrTradesEvent};
+use binance::{api::Binance, futures::websockets::*, general::General};
 use bybit::model::{Category, FastExecData, WsTrade};
 use tokio::sync::mpsc;
 
 use crate::util::localorderbook::{LocalBook, ProcessAsks, ProcessBids};
 
-use super::exchange::{PrivateData, ProcessTrade};
+use super::exchange::{PrivateData, ProcessTrade, TaggedPrivate};
 #[derive(Clone, Debug)]
 pub struct BinanceMarket {
     pub time: u64,
@@ -290,10 +290,11 @@ impl BinanceClient {
         trader
     }
 
-    pub fn private_subscribe(&self, sender: mpsc::UnboundedSender<PrivateData>) {
+    pub fn private_subscribe(&self, sender: mpsc::UnboundedSender<TaggedPrivate>, symbol: String) {
         let mut delay = 600;
         let keep_running = AtomicBool::new(true); // Used to control the event loop
         let user_stream: FuturesUserStream = Binance::new(Some(self.key.clone()), None);
+
         let mut private_data = BinancePrivate::default();
         let mut orders_keys: VecDeque<u64> = VecDeque::new();
         let mut executions_keys: VecDeque<u64> = VecDeque::new();
@@ -354,7 +355,9 @@ impl BinanceClient {
                 }
                 _ => (),
             };
-            let _ = sender.send(PrivateData::Binance(private_data.clone()));
+            let tagged_data =
+                TaggedPrivate::new(symbol.clone(), PrivateData::Binance(private_data.clone()));
+            let _ = sender.send(tagged_data);
             Ok(())
         };
         if let Ok(answer) = user_stream.start() {
@@ -381,67 +384,6 @@ impl BinanceClient {
             Binance::new(Some(self.key.clone()), Some(self.secret.clone()));
         let info = client.account_information().unwrap();
         info
-    }
-
-    pub fn ws_aggtrades(&self, symbol: Vec<&str>, sender: mpsc::UnboundedSender<AggrTradesEvent>) {
-        let keep_running = AtomicBool::new(true); // Used to control the event loop
-        let agg_trades: Vec<String> = symbol
-            .iter()
-            .map(|&sub| sub.to_lowercase())
-            .map(|sub| format!("{}@aggTrade", sub))
-            .collect();
-        let mut web_socket = FuturesWebSockets::new(|event: FuturesWebsocketEvent| {
-            if let FuturesWebsocketEvent::AggrTrades(agg) = event {
-                // println!(
-                //     "Symbol: {}, price: {}, qty: {}",
-                //     agg.symbol, agg.price, agg.qty
-                // );
-                sender.send(agg).unwrap();
-            } else {
-                println!("Unexpected event: {:?}", event);
-            }
-
-            Ok(())
-        });
-        web_socket
-            .connect_multiple_streams(&FuturesMarket::USDM, &agg_trades)
-            .unwrap();
-
-        // check error
-        if let Err(e) = web_socket.event_loop(&keep_running) {
-            println!("Error: {}", e);
-        }
-    }
-
-    pub fn ws_best_book(&self, symbol: Vec<&str>, sender: mpsc::UnboundedSender<AggrTradesEvent>) {
-        let keep_running = AtomicBool::new(true); // Used to control the event loop
-        let best_book: Vec<String> = symbol
-            .iter()
-            .map(|&sub| sub.to_lowercase())
-            .flat_map(|sym| vec![("5", sym.clone()), ("10", sym.clone()), ("20", sym.clone())])
-            .map(|(depth, sub)| format!("{}@depth{}@100ms", sub, depth))
-            .collect();
-        let mut web_socket = FuturesWebSockets::new(|event: FuturesWebsocketEvent| {
-            if let FuturesWebsocketEvent::AggrTrades(agg) = event {
-                // println!(
-                //     "Symbol: {}, price: {}, qty: {}",
-                //     agg.symbol, agg.price, agg.qty
-                // );
-                sender.send(agg).unwrap();
-            } else {
-                println!("Unexpected event: {:?}", event);
-            }
-
-            Ok(())
-        });
-        web_socket
-            .connect_multiple_streams(&FuturesMarket::USDM, &best_book)
-            .unwrap();
-
-        // check error
-        if let Err(e) = web_socket.event_loop(&keep_running) {
-            println!("Error: {}", e);
-        }
     }
 }
 
