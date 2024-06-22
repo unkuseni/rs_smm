@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::VecDeque, sync::Arc};
+use std::{borrow::Cow, collections::VecDeque};
 
 use binance::{
     account::OrderSide,
@@ -18,10 +18,7 @@ use skeleton::{
         localorderbook::LocalBook,
     },
 };
-use tokio::{
-    sync::{mpsc::UnboundedReceiver, Mutex},
-    task,
-};
+use tokio::task;
 
 type BybitTrader = Trader;
 type BinanceTrader = FuturesAccount;
@@ -45,8 +42,8 @@ pub struct QuoteGenerator {
     preferred_spread: f64,
     half_spread: f64,
     positions: f64,
-    live_buys_orders: Arc<Mutex<VecDeque<LiveOrder>>>,
-    live_sells_orders: Arc<Mutex<VecDeque<LiveOrder>>>,
+    live_buys_orders: VecDeque<LiveOrder>,
+    live_sells_orders: VecDeque<LiveOrder>,
     max_position_usd: f64,
     max_position_qty: f64,
     inventory_delta: f64,
@@ -82,9 +79,9 @@ impl QuoteGenerator {
             // Set the positions to 0.0.
             positions: 0.0,
             // Create empty VecDeque for live buy orders with a capacity of 5.
-            live_buys_orders: Arc::new(Mutex::new(VecDeque::with_capacity(5))),
+            live_buys_orders: VecDeque::with_capacity(5),
             // Create empty VecDeque for live sell orders with a capacity of 5.
-            live_sells_orders: Arc::new(Mutex::new(VecDeque::with_capacity(5))),
+            live_sells_orders: VecDeque::with_capacity(5),
             // Set the inventory delta to 0.0.
             inventory_delta: 0.0,
             // Set the maximum position USD to 0.0.
@@ -139,7 +136,7 @@ impl QuoteGenerator {
     /// # Parameters
     ///
     /// * `price`: The price of the asset.
-    fn update_max_qty(&mut self, price: f64) {
+    pub fn update_max_qty(&mut self, price: f64) {
         // Calculate the maximum position quantity by dividing the maximum position USD by the
         // given price.
         // The result is then assigned to the `max_position_qty` field.
@@ -152,15 +149,9 @@ impl QuoteGenerator {
     /// # Returns
     ///
     /// The total number of live orders as a `usize`.
-    ///
-    /// # Note
-    ///
-    /// This function is asynchronous and uses the `lock` method to acquire a lock on the
-    /// `live_buys_orders` and `live_sells_orders` `Mutex`es.
     async fn total_orders(&self) -> usize {
-        // Acquire a lock on the `live_buys_orders` and `live_sells_orders` `Mutex`es.
-        let live_buys_orders_len = self.live_buys_orders.lock().await.len();
-        let live_sells_orders_len = self.live_sells_orders.lock().await.len();
+        let live_buys_orders_len = self.live_buys_orders.len();
+        let live_sells_orders_len = self.live_sells_orders.len();
 
         // Add the length of the live buy orders and live sell orders to get the total number of
         // live orders.
@@ -209,7 +200,7 @@ impl QuoteGenerator {
 
         // Get the spread from the order book and clip it to the minimum spread and a maximum
         // spread of 3.7 times the minimum spread.
-        book.get_spread().clip(min_spread, min_spread * 3.7)
+        book.get_spread().clip(min_spread, min_spread * 2.0)
     }
 
     /// Generates quotes based on the given parameters.
@@ -236,10 +227,10 @@ impl QuoteGenerator {
 
         // Calculate the preferred spread as a percentage of the start price.
         let preferred_spread = {
-            if self.preferred_spread > 0.0 {
+            if self.preferred_spread >= book.get_spread_in_bps() {
                 self.preferred_spread
             } else {
-                let diff = (start + (start * 0.0007)) - start;
+                let diff = (start + (start * 0.0003)) - start;
                 let count = book.tick_size.count_decimal_places() + 1;
                 spread_decimal_bps(diff.round_to(count as u8))
             }
@@ -315,7 +306,7 @@ impl QuoteGenerator {
         let ask_prices = geomspace(best_ask, ask_end, self.total_order / 2);
 
         // Calculate the clipped ratio.
-        let clipped_ratio = 0.5 + skew.clip(0.0, 0.5);
+        let clipped_ratio = 0.5 + skew.clip(0.01, 0.49);
 
         // Generate the bid sizes.
         let bid_sizes = {
@@ -384,7 +375,7 @@ impl QuoteGenerator {
         let ask_prices = geomspace(best_ask, ask_end, self.total_order / 2);
 
         // Calculate the clipped ratio.
-        let clipped_ratio = 0.5 + skew.abs().clip(0.0, 0.5);
+        let clipped_ratio = 0.5 + skew.abs().clip(0.01, 0.49);
 
         // Generate the bid sizes.
         let bid_sizes = {
@@ -426,7 +417,7 @@ impl QuoteGenerator {
     ///
     /// * `orders` - A vector of batch orders to update.
     /// * `book` - The local order book.
-    async fn update_orders(&mut self, orders: Vec<BatchOrder>, book: &LocalBook) {
+    async fn send_orders(&mut self, orders: Vec<BatchOrder>, book: &LocalBook) {
         // If the number of batch orders is less than or equal to 5,
         // place each order individually.
         if orders.len() <= 5 {
@@ -446,7 +437,7 @@ impl QuoteGenerator {
                     match order_response {
                         Ok(v) => {
                             // Push the response to the live buys orders queue.
-                            self.live_buys_orders.lock().await.push_back(v);
+                            self.live_buys_orders.push_back(v);
                         }
                         Err(e) => {
                             // Print the error if there is an error placing the order.
@@ -468,7 +459,7 @@ impl QuoteGenerator {
                     match order_response {
                         Ok(v) => {
                             // Push the response to the live sells orders queue.
-                            self.live_sells_orders.lock().await.push_back(v);
+                            self.live_sells_orders.push_back(v);
                         }
                         Err(e) => {
                             // Print the error if there is an error placing the order.
@@ -485,9 +476,9 @@ impl QuoteGenerator {
                     // Iterate over each response and push it to the appropriate queue.
                     for (i, res) in v.iter().enumerate() {
                         if i == 0 || i % 2 == 0 {
-                            self.live_buys_orders.lock().await.push_back(res.clone());
+                            self.live_buys_orders.push_back(res.clone());
                         } else {
-                            self.live_sells_orders.lock().await.push_back(res.clone());
+                            self.live_sells_orders.push_back(res.clone());
                         }
                     }
                 }
@@ -499,46 +490,49 @@ impl QuoteGenerator {
         }
     }
 
-    pub async fn start_loop(&mut self, mut receiver: UnboundedReceiver<PrivateData>) {
-        let mut live_buys = self.live_buys_orders.clone();
-        let mut live_sells = self.live_sells_orders.clone();
-        let listen_for_fills = task::spawn(async move {
-            while let Some(data) = receiver.recv().await {
-                let fills = match data {
-                    PrivateData::Bybit(v) => v.executions,
-                    PrivateData::Binance(v) => v.into_fastexec(),
-                };
-                for FastExecData {
-                    order_id,
-                    exec_qty,
-                    side,
-                    ..
-                } in fills
-                {
-                    if exec_qty != "0.0" {
-                        if side == "Buy" {
-                            for (i, live_order) in live_buys.lock().await.iter().enumerate() {
-                                if order_id == live_order.order_id {
-                                    live_buys.lock().await.remove(i);
-                                } else {
-                                }
-                            }
-                        } else {
-                            for (i, live_order) in live_sells.lock().await.iter().enumerate() {
-                                if order_id == live_order.order_id {
-                                    live_sells.lock().await.remove(i);
-                                } else {
-                                }
-                            }
+    pub fn check_fills(&mut self, data: PrivateData) {
+        let mut live_buy = self.live_buys_orders.clone();
+        let mut live_sell = self.live_sells_orders.clone();
+        let fills = match data {
+            PrivateData::Bybit(v) => v.executions,
+            PrivateData::Binance(v) => v.into_fastexec(),
+        };
+        for FastExecData {
+            order_id,
+            exec_qty,
+            side,
+            ..
+        } in fills
+        {
+            if exec_qty != "0.0" {
+                if side == "Buy" {
+                    for (i, order) in live_buy.clone().iter().enumerate() {
+                        if order.order_id == order_id {
+                            live_buy.remove(i);
                         }
-                    } else {
+                    }
+                } else {
+                    for (i, order) in live_sell.clone().iter().enumerate() {
+                        if order.order_id == order_id {
+                            live_sell.remove(i);
+                        }
                     }
                 }
             }
-        });
+        }
+        self.live_buys_orders = live_buy;
+        self.live_sells_orders = live_sell;
+    }
+
+    pub fn update_grid(&mut self, wallet: PrivateData, skew: f64, imbalance: f64, book: LocalBook, symbol: String) {
+        if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
+            self.update_max();
+            self.update_max_qty(book.mid_price);
+            let orders = self.generate_quotes(symbol, &book, imbalance, skew);
+            println!("Grid: {:#?} {:#?}", orders, book.get_bba());
+        }
     }
 }
-
 #[derive(Debug, Clone)]
 pub struct LiveOrder {
     pub price: f64,
@@ -964,8 +958,6 @@ impl OrderManagement {
         }
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {

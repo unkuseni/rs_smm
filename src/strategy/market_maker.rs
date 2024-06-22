@@ -1,10 +1,14 @@
 use bybit::model::WsTrade;
+use skeleton::exchanges::exchange::{ExchangeClient, PrivateData};
 use skeleton::util::localorderbook::LocalBook;
 use skeleton::{exchanges::exchange::MarketMessage, ss::SharedState};
+use tokio::time::{self, Duration};
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::features::engine::Engine;
+use crate::features::imbalance::imbalance_ratio;
+use crate::trader::quote_gen::QuoteGenerator;
 
 pub struct MarketMaker {
     pub features: HashMap<String, Engine>,
@@ -12,20 +16,18 @@ pub struct MarketMaker {
     pub old_trades: HashMap<String, VecDeque<WsTrade>>,
     pub curr_trades: HashMap<String, VecDeque<WsTrade>>,
     pub prev_avg_trade_price: HashMap<String, f64>,
-    pub last_feed_letency: Vec<u64>,
-    pub assets: HashMap<String, f64>,
+    pub generators: HashMap<String, QuoteGenerator>,
 }
 
 impl MarketMaker {
     pub fn new(ss: SharedState, assets: HashMap<String, f64>) -> Self {
         MarketMaker {
-            features: HashMap::new(),
+            features: MarketMaker::build_features(ss.symbols.clone()),
             old_books: HashMap::new(),
             old_trades: HashMap::new(),
             curr_trades: HashMap::new(),
             prev_avg_trade_price: HashMap::new(),
-            last_feed_letency: Vec::new(),
-            assets: HashMap::new(),
+            generators: MarketMaker::build_generators(ss.clients, assets),
         }
     }
 
@@ -39,15 +41,22 @@ impl MarketMaker {
     ///
     /// This function does not return any value.
     pub async fn start_loop(&mut self, mut receiver: UnboundedReceiver<SharedState>) {
+        let mut send = 0;
+        let mut interval = time::interval(Duration::from_millis(500));
         // Continuously receive and process shared state updates.
         while let Some(data) = receiver.recv().await {
             // Match the exchange in the received data.
             match data.exchange {
                 "bybit" | "binance" => {
-                    // Build features for each symbol in the received data.
-                    self.features = self.build_features(data.symbols.clone());
                     // Update features with the first market data in the received data.
-                    self.update_features(data.markets[0].clone(), Vec::new());
+                    self.update_features(data.markets[0].clone(), vec![5, 50]);
+                    if send > 200 {
+                        self.potentially_update(data.markets[0].clone(), data.private.clone())
+                            .await;
+                    } else {
+                        interval.tick().await;
+                        send += 1;
+                    }
                 }
                 "both" => {}
                 _ => {
@@ -67,7 +76,7 @@ impl MarketMaker {
     /// # Returns
     ///
     /// A `HashMap` containing the symbol names as keys and `Engine` instances as values.
-    fn build_features(&self, symbol: Vec<&str>) -> HashMap<String, Engine> {
+    fn build_features(symbol: Vec<&str>) -> HashMap<String, Engine> {
         // Create a new HashMap to store the features.
         let mut hash: HashMap<String, Engine> = HashMap::new();
 
@@ -78,6 +87,20 @@ impl MarketMaker {
         }
 
         // Return the populated HashMap.
+        hash
+    }
+
+    fn build_generators(
+        clients: HashMap<String, ExchangeClient>,
+        assets: HashMap<String, f64>,
+    ) -> HashMap<String, QuoteGenerator> {
+        let mut hash: HashMap<String, QuoteGenerator> = HashMap::new();
+        for (k, v) in clients {
+            hash.insert(
+                k.clone(),
+                QuoteGenerator::new(v, assets.get(&k).unwrap().clone(), 15.0),
+            );
+        }
         hash
     }
 
@@ -100,9 +123,11 @@ impl MarketMaker {
                     {
                         feature.update(&b, book, curr_trades, p_trades, p_avg, depth.clone(), 1000);
                     }
-                    self.old_books.insert(k.clone(), b);
-                    self.prev_avg_trade_price.insert(k, feature.avg_trade_price);
+                    self.old_books.insert(k.clone(), b.clone());
+                    self.prev_avg_trade_price
+                        .insert(k.clone(), feature.avg_trade_price);
                 }
+
                 self.old_trades = self.curr_trades.clone();
             }
             MarketMessage::Binance(v) => {
@@ -125,6 +150,44 @@ impl MarketMaker {
                     self.prev_avg_trade_price.insert(k, feature.avg_trade_price);
                 }
                 self.old_trades = self.curr_trades.clone();
+            }
+        }
+    }
+
+    async fn potentially_update(
+        &mut self,
+        data: MarketMessage,
+        private_data: HashMap<String, PrivateData>,
+    ) {
+        // TODO: get book, private, skew, and imbalance
+
+        match data {
+            MarketMessage::Bybit(v) => {
+                // TODO
+                for (symbol, book) in v.books {
+                    let wallet = {
+                        match private_data.get(&symbol) {
+                            Some(v) => v.clone(),
+                            None => {
+                                panic!("Private data for {} not found", symbol);
+                            }
+                        }
+                    };
+                    let skew = self.features.get(&symbol).unwrap().skew;
+                    let imbalance = imbalance_ratio(&book, Some(18));
+                    let symbol_quoter = self.generators.get_mut(&symbol).unwrap();
+                    symbol_quoter.update_grid(wallet.clone(), skew, imbalance, book, symbol);
+                }
+            }
+            MarketMessage::Binance(v) => {
+                // TODO
+                for (symbol, book) in v.books {
+                    let wallet = private_data.get(&symbol).unwrap();
+                    let skew = self.features.get(&symbol).unwrap().skew;
+                    let imbalance = imbalance_ratio(&book, Some(18));
+                    let symbol_quoter = self.generators.get_mut(&symbol).unwrap();
+                    symbol_quoter.update_grid(wallet.clone(), skew, imbalance, book, symbol);
+                }
             }
         }
     }
@@ -164,3 +227,25 @@ impl MarketMaker {
 // - current position
 // - resting bid or ask order
 //- max-deviation before shifting orders
+
+#[cfg(test)]
+mod tests {
+    use skeleton::util::logger::Logger;
+    use tokio::time::Duration;
+
+    use tokio::time;
+
+    use super::*;
+
+    #[tokio::test]
+    async fn test_tick() {
+        let mut interval = time::interval(Duration::from_millis(500));
+        let log = Logger;
+        let arr: VecDeque<f64> = VecDeque::with_capacity(100);
+        loop {
+            interval.tick().await;
+            log.info("Test log");
+            println!("arr.len(): {}", arr.len());
+        }
+    }
+}
