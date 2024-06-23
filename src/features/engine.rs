@@ -5,10 +5,7 @@ use skeleton::util::localorderbook::LocalBook;
 
 use super::{
     imbalance::{imbalance_ratio, trade_imbalance, voi, wmid},
-    impact::{
-        avg_trade_price, expected_return, expected_value, mid_price_basis, mid_price_change,
-        price_flu, price_impact,
-    },
+    impact::{avg_trade_price, expected_return, mid_price_basis, price_flu, price_impact},
 };
 
 const IMB_WEIGHT: f64 = 0.25;
@@ -27,12 +24,9 @@ pub struct Engine {
     pub trade_imb: f64,
     pub price_impact: f64,
     pub expected_return: f64,
-    pub price_flu: f64, // in bps
-    pub expected_value: (VecDeque<f64>, f64),
-    pub mid_price_change: f64,
+    pub price_flu: (VecDeque<f64>, f64), // in bps
     pub mid_price_basis: f64,
     pub avg_trade_price: f64,
-    pub avg_spread: (VecDeque<f64>, f64),
     pub skew: f64,
 }
 
@@ -46,12 +40,9 @@ impl Engine {
             trade_imb: 0.0,
             price_impact: 0.0,
             expected_return: 0.0,
-            price_flu: 0.0,
-            expected_value: (VecDeque::new(), 0.0),
-            mid_price_change: 0.0,
+            price_flu: (VecDeque::new(), 0.0),
             avg_trade_price: 0.0,
             mid_price_basis: 0.0,
-            avg_spread: (VecDeque::new(), 0.0),
             skew: 0.0,
         }
     }
@@ -67,6 +58,7 @@ impl Engine {
     /// * `prev_avg` - The average trade price of the previous order book.
     /// * `depth` - The depths at which to calculate imbalance and spread.
     /// * `tick_window` - The number of ticks to consider when calculating `avg_trade_price`.
+    /// * `use_wmid` - Whether to use the weighted mid price for determining skew or not.
     pub fn update(
         &mut self,
         curr_book: &LocalBook,
@@ -76,6 +68,7 @@ impl Engine {
         prev_avg: &f64,
         depth: Vec<usize>,
         tick_window: usize,
+        use_wmid: bool,
     ) {
         // Update imbalance ratio
         self.imbalance_ratio = imbalance_ratio(curr_book, Some(depth[0]));
@@ -88,25 +81,17 @@ impl Engine {
         // Update price impact
         self.price_impact = price_impact(curr_book, prev_book, Some(depth[0]));
         // Update price flu
-        self.price_flu = price_flu(prev_book.mid_price, curr_book.mid_price);
+        self.price_flu
+            .0
+            .push_back(price_flu(prev_book.mid_price, curr_book.mid_price));
         // Update expected return
         self.expected_return = expected_return(prev_book.mid_price, curr_book.mid_price);
-        // Update expected value
-        self.expected_value.0.push_back(expected_value(
-            prev_book.get_mid_price(),
-            curr_book.get_mid_price(),
-            imbalance_ratio(curr_book, Some(depth[0])),
-        ));
+
+        self.price_flu.1 = self.avg_flu_value();
+
         // Update weighted mid price
         self.wmid = (wmid(curr_book, self.imbalance_ratio) / curr_book.mid_price).ln();
-        // Update average expected value
-        self.expected_value.1 = self.avg_exp_value();
-        // Update mid price change
-        self.mid_price_change = mid_price_change(
-            prev_book.get_mid_price(),
-            curr_book.get_mid_price(),
-            curr_book.tick_size,
-        );
+
         // Update average trade price
         self.avg_trade_price = avg_trade_price(
             curr_book.get_mid_price(),
@@ -121,60 +106,32 @@ impl Engine {
             curr_book.get_mid_price(),
             self.avg_trade_price,
         );
-        // Update average spread
-        self.avg_spread.0.push_back(curr_book.get_spread());
-        self.avg_spread.1 = self.avg_spread();
         // Generate skew
-        self.generate_skew()
+        self.generate_skew(use_wmid);
     }
 
-    /// Calculates the average spread over the last 1500 values.
+    /// Calculates the average value of the price fluctuation values.
     ///
-    /// If the VecDeque is empty, returns 0.0.
-    /// Otherwise, removes elements from the VecDeque until its length is less than or equal to 1500,
-    /// then calculates the average of the remaining elements, but only considering values greater than 0.0.
-    ///
-    /// # Returns
-    /// The average spread over the last 1500 values, or 0.0 if the VecDeque is empty.
-    fn avg_spread(&mut self) -> f64 {
-        // Check if the VecDeque is empty
-        if self.avg_spread.0.is_empty() {
-            // Return 0.0 if the VecDeque is empty
-            0.0
-        } else {
-            // Remove elements from the VecDeque until its length is less than or equal to 1500
-            remove_elements_at_capacity(&mut self.avg_spread.0, 1500);
-
-            // Calculate the average of the remaining elements, but only considering values greater than 0.0
-            self.avg_spread.0.iter().map(|x| x.max(0.0)).sum::<f64>()
-                / self.avg_spread.0.len() as f64
-        }
-    }
-
-    /// Calculates the average value of the expected values.
-    ///
-    /// Removes elements from the `expected_value.0` VecDeque until its length is
+    /// Removes elements from the `price_flu.0` VecDeque until its length is
     /// less than or equal to 1500 and then calculates the average value of the
     /// remaining elements.
     ///
     /// # Returns
-    /// The average value of the expected values.
-    fn avg_exp_value(&mut self) -> f64 {
+    /// The average value of the price_flu values.
+    fn avg_flu_value(&mut self) -> f64 {
         // Check if the VecDeque is empty
-        if self.expected_value.0.is_empty() {
+        if self.price_flu.0.is_empty() {
             // Return 0.0 if the VecDeque is empty
             0.0
         } else {
             // Remove elements from the VecDeque until its length is less than or equal to 1500
-            remove_elements_at_capacity(&mut self.expected_value.0, 1500);
-
+            remove_elements_at_capacity(&mut self.price_flu.0, 37);
             // Calculate the average value of the remaining elements
-            self.expected_value.0.iter().sum::<f64>()
-                / self.expected_value.0.len() as f64
+            self.price_flu.0.iter().sum::<f64>() / self.price_flu.0.len() as f64
         }
     }
     /// Generates a  number between -1 and 1.
-    fn generate_skew(&mut self) {
+    fn generate_skew(&mut self, use_wmid: bool) {
         let imb = self.imbalance_ratio * IMB_WEIGHT; // -1 to 1
         let trade_imb = self.trade_imb * TRADE_IMB_WEIGHT; // 0 to 1
         let deep_imb = self.deep_imbalance_ratio * DEEP_IMB_WEIGHT; // -1 to 1
@@ -196,7 +153,7 @@ impl Engine {
                 0.0
             }
         };
-        let _wmid = self.wmid * EXP_RET_WEIGHT;
+        let wmid = self.wmid * EXP_RET_WEIGHT;
         let mid_b = {
             if self.mid_price_basis > 0.0 {
                 1.0 * MID_BASIS_WEIGHT
@@ -204,7 +161,11 @@ impl Engine {
                 -1.0 * MID_BASIS_WEIGHT
             }
         };
-        self.skew = imb + trade_imb + deep_imb + voi + mid_b + exp_ret;
+        if use_wmid == true {
+            self.skew = imb + trade_imb + deep_imb + voi + mid_b + wmid;
+        } else {
+            self.skew = imb + trade_imb + deep_imb + voi + mid_b + exp_ret;
+        }
     }
 }
 
@@ -216,7 +177,7 @@ impl Engine {
 /// * `capacity` - The maximum number of elements to allow in `data`.
 pub fn remove_elements_at_capacity<T>(data: &mut VecDeque<T>, capacity: usize) {
     // Keep removing elements from the front of the VecDeque until the length is less than or equal to the capacity.
-    while data.len() > capacity {
+    while data.len() >= capacity {
         // Remove the first element of the VecDeque.
         data.pop_front();
     }
