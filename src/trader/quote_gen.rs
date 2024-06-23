@@ -1,20 +1,18 @@
 use std::{borrow::Cow, collections::VecDeque};
 
-use binance::{
-    account::OrderSide,
-    futures::account::{CustomOrderRequest, FuturesAccount},
-};
-use bybit::{
-    model::{
-        AmendOrderRequest, BatchAmendRequest, BatchCancelRequest, BatchPlaceRequest,
-        CancelOrderRequest, CancelallRequest, FastExecData, OrderRequest, Side,
-    },
-    trade::Trader,
+use binance::{account::OrderSide, futures::account::CustomOrderRequest};
+use bybit::model::{
+    AmendOrderRequest, BatchAmendRequest, BatchCancelRequest, BatchPlaceRequest,
+    CancelOrderRequest, CancelallRequest, FastExecData, OrderRequest, Side,
 };
 use skeleton::{
-    exchanges::{ex_binance::BinanceClient, ex_bybit::BybitClient, exchange::{ExchangeClient, PrivateData}},
+    exchanges::{
+        ex_binance::BinanceClient,
+        ex_bybit::BybitClient,
+        exchange::{ExchangeClient, PrivateData},
+    },
     util::{
-        helpers::{geometric_weights, geomspace, nbsqrt, round_step, spread_decimal_bps, Round},
+        helpers::{geometric_weights, geomspace, nbsqrt, round_step, spread_price_in_bps, Round},
         localorderbook::LocalBook,
     },
 };
@@ -38,10 +36,10 @@ pub struct QuoteGenerator {
     asset: f64,
     client: OrderManagement,
     preferred_spread: f64,
-    half_spread: f64,
-    positions: f64,
     live_buys_orders: VecDeque<LiveOrder>,
     live_sells_orders: VecDeque<LiveOrder>,
+    sell_amount: f64,
+    buy_amount: f64,
     max_position_usd: f64,
     max_position_qty: f64,
     inventory_delta: f64,
@@ -70,16 +68,16 @@ impl QuoteGenerator {
         QuoteGenerator {
             // Set the asset value multiplied by the leverage.
             asset: asset * leverage,
-            // Set the rounding value to 0.
-            half_spread: 0.0,
             // Set the client to the created trader.
             client: trader,
-            // Set the positions to 0.0.
-            positions: 0.0,
             // Create empty VecDeque for live buy orders with a capacity of 5.
             live_buys_orders: VecDeque::with_capacity(orders_per_side),
             // Create empty VecDeque for live sell orders with a capacity of 5.
             live_sells_orders: VecDeque::with_capacity(orders_per_side),
+            // Set the sell qty to 0.0.
+            sell_amount: 0.0,
+            // Set the buy qty to 0.0.
+            buy_amount: 0.0,
             // Set the inventory delta to 0.0.
             inventory_delta: 0.0,
             // Set the maximum position USD to 0.0.
@@ -97,7 +95,7 @@ impl QuoteGenerator {
     ///
     /// This function is used to update the maximum position USD, which is the maximum
     /// amount of USD that can be allocated for the trading position.
-    fn update_max(&mut self) {
+    pub fn update_max(&mut self) {
         // Calculate the maximum position USD by multiplying the asset value by 0.95.
         // This leaves 5% of the total asset value as safety margin.
         self.max_position_usd = self.asset * 0.95;
@@ -106,23 +104,6 @@ impl QuoteGenerator {
     /// Set preferred spread based on mid price in the order book.
     pub fn set_spread(&mut self, spread_in_bps: f64) {
         self.preferred_spread = spread_in_bps;
-    }
-
-    /// Updates the inventory delta based on the quantity and price.
-    ///
-    /// This function calculates the inventory delta by dividing the price multiplied by the
-    /// quantity by the maximum position USD. The result is then assigned to the `inventory_delta`
-    /// field.
-    ///
-    /// # Parameters
-    ///
-    /// * `qty`: The quantity of the asset.
-    /// * `price`: The price of the asset.
-    fn inventory_delta(&mut self, qty: f64, price: f64) {
-        // Calculate the inventory delta by dividing the price multiplied by the quantity by the
-        // maximum position USD.
-        // The result is then assigned to the `inventory_delta` field.
-        self.inventory_delta = (price * qty) / self.max_position_usd;
     }
 
     /// Updates the maximum position quantity by dividing the maximum position USD by the price.
@@ -140,6 +121,30 @@ impl QuoteGenerator {
         self.max_position_qty = self.max_position_usd / price;
     }
 
+    /// Updates the inventory delta based on the quantity and price.
+    ///
+    /// This function calculates the inventory delta by dividing the amount by the maximum position qty.
+    /// The result is then assigned to the `inventory_delta` field.
+    ///
+    /// # Parameters
+    ///
+    /// * `mid_price`: The mid price of the asset.
+    ///
+    /// # Details
+    ///
+    /// The inventory delta is a measure of the position's exposure to the market. It is calculated
+    /// by dividing the amount multiplied by the mid price by the maximum position qty. The maximum
+    /// position qty is the maximum amount of qty that can be allocated for the trading position,
+    /// after considering the safety margin of 5%.
+    ///
+    /// The result is then assigned to the `inventory_delta` field, which is a measure of the
+    /// position's exposure to the market.
+    pub fn inventory_delta(&mut self, mid_price: f64) {
+        // Calculate the inventory delta by dividing the price multiplied by the quantity by the
+        // maximum position USD.
+        self.inventory_delta = self.buy_amount - self.sell_amount;
+    }
+
     /// Calculates the total number of live orders by adding the length of the live buy orders
     /// and live sell orders.
     ///
@@ -155,33 +160,12 @@ impl QuoteGenerator {
         live_buys_orders_len + live_sells_orders_len
     }
 
-    /// Adjusts the skew by subtracting the square root of the inventory delta.
-    ///
-    /// This function calculates the amount of adjustment by taking the square root of the
-    /// inventory delta and subtracting it from the skew. The result is then returned as the
-    /// adjusted skew.
-    ///
-    /// # Parameters
-    ///
-    /// * `skew`: The original skew value.
-    ///
-    /// # Returns
-    ///
-    /// The adjusted skew value as a `f64`.
-    fn adjusted_skew(&self, mut skew: f64) -> f64 {
-        // Calculate the amount of adjustment by taking the square root of the inventory delta.
-        let amount = nbsqrt(self.inventory_delta);
-
-        // Subtract the adjustment from the skew.
-        skew += -amount;
-
-        skew
-    }
-
     /// Adjusts the spread by clipping it to a minimum spread and a maximum spread.
     ///
     /// This function calculates the adjusted spread by calling the `get_spread` method on the
     /// `book` parameter and clipping the result to a minimum spread and a maximum spread.
+    /// 1 bps = 0.01% = 0.0001
+    /// Calculate the preferred spread as a percentage of the start price.
     ///
     /// # Parameters
     ///
@@ -193,11 +177,17 @@ impl QuoteGenerator {
     /// The adjusted spread as a `f64`.
     fn adjusted_spread(preferred_spread: f64, book: &LocalBook) -> f64 {
         // Calculate the minimum spread by converting the preferred spread to decimal format.
-        let min_spread = bps_to_decimal(preferred_spread);
+        let min_spread = {
+            if preferred_spread == 0.0 {
+                spread_price_in_bps(book.get_mid_price() * 0.0025, book.get_mid_price())
+            } else {
+                preferred_spread
+            }
+        };
 
         // Get the spread from the order book and clip it to the minimum spread and a maximum
         // spread of 3.7 times the minimum spread.
-        book.get_spread().clip(min_spread, min_spread * 2.0)
+        book.get_spread().clip(min_spread, min_spread * 3.7)
     }
 
     /// Generates quotes based on the given parameters.
@@ -223,28 +213,19 @@ impl QuoteGenerator {
         book: &LocalBook,
         imbalance: f64,
         skew: f64,
+        price_flu: f64,
     ) -> Vec<BatchOrder> {
         // Get the start price from the order book.
         let start = book.get_mid_price();
 
-        // 1 bps = 0.01% = 0.0001
-        // Calculate the preferred spread as a percentage of the start price.
-        let preferred_spread = {
-            if self.preferred_spread >= 0.0 {
-                self.preferred_spread
-            } else {
-                let diff = (start + (start * 0.0004)) - start;
-                let count = book.tick_size.count_decimal_places() + 1;
-                spread_decimal_bps(diff.round_to(count as u8))
-            }
-        };
+        let preferred_spread = self.preferred_spread;
 
         // Calculate the adjusted spread by calling the `adjusted_spread` method.
-        let curr_spread = QuoteGenerator::adjusted_spread(preferred_spread, book);
+        let curr_spread =
+            QuoteGenerator::adjusted_spread(preferred_spread, book) * book.get_tick_size();
 
         // Calculate the half spread by dividing the spread by 2.
         let half_spread = curr_spread / 2.0;
-        self.half_spread = half_spread;
 
         // Calculate the aggression based on the imbalance and skew values.
         let aggression = {
@@ -261,7 +242,11 @@ impl QuoteGenerator {
 
         // Generate the orders based on the skew value.
         let mut orders = if skew >= 0.0 {
-            self.positive_skew_orders(half_spread, curr_spread, skew, start, aggression)
+            if imbalance > 0.7 && price_flu <= -curr_spread * 2.0 {
+                self.negative_skew_orders(half_spread, curr_spread, skew, start, aggression)
+            } else {
+                self.positive_skew_orders(half_spread, curr_spread, skew, start, aggression)
+            }
         } else {
             self.negative_skew_orders(half_spread, curr_spread, skew, start, aggression)
         };
@@ -273,60 +258,84 @@ impl QuoteGenerator {
 
         orders
     }
-    pub fn liquidate_inventory(
+
+    /// rebalances the inventory based on the given parameters.
+    ///
+    /// # Parameters
+    ///
+    /// * `symbol`: The symbol of the quote.
+    /// * `book`: The order book to get the mid price from.
+    /// * `rebalance_threshold`: The amount of inventory to rebalance. 0 to 1 eg 0.6
+    ///
+    /// # Returns
+    ///
+
+    async fn rebalance_inventory(
         &mut self,
         symbol: String,
         book: &LocalBook,
-        imbalance: f64,
-        skew: f64,
-    ) -> Vec<BatchOrder> {
+        rebalance_threshold: f64,
+    ) -> LiveOrder {
         // Get the start price from the order book.
         let start = book.get_mid_price();
 
         // Calculate the preferred spread as a percentage of the start price.
-        let preferred_spread = {
-            if self.preferred_spread >= 0.0 {
-                self.preferred_spread
-            } else {
-                let diff = (start + (start * 0.0004)) - start;
-                let count = book.tick_size.count_decimal_places() + 1;
-                spread_decimal_bps(diff.round_to(count as u8))
-            }
-        };
-
+        let preferred_spread =
+            spread_price_in_bps(book.get_mid_price() * 0.0002, book.get_mid_price());
         // Calculate the adjusted spread by calling the `adjusted_spread` method.
-        let curr_spread = QuoteGenerator::adjusted_spread(preferred_spread, book);
+        let mut count = 0;
+        let curr_spread = preferred_spread * book.get_tick_size();
 
-        // Calculate the half spread by dividing the spread by 2.
-        let half_spread = curr_spread / 2.0;
-        self.half_spread = half_spread;
-
-        // Calculate the aggression based on the imbalance and skew values.
-        let aggression = {
-            let mut d = 0.0;
-            if imbalance > 0.6 || imbalance < -0.6 {
-                d = 0.6;
-            } else if imbalance != 0.0 {
-                d = 0.23;
-            } else {
-                d = 0.1;
+        let mut market_response = LiveOrder::new(0.0, 0.0, "".to_string());
+        loop {
+            if count > 8 {
+                break;
             }
-            d * nbsqrt(skew)
-        };
-
-        // Generate the orders based on the skew value.
-        let mut orders = if skew >= 0.0 {
-            self.positive_skew_orders(half_spread, curr_spread, skew, start, aggression)
-        } else {
-            self.negative_skew_orders(half_spread, curr_spread, skew, start, aggression)
-        };
-
-        // Add the symbol to each order.
-        for mut v in orders.iter_mut() {
-            v.2 = symbol.clone();
+            if (self.buy_amount / self.max_position_usd) >= rebalance_threshold {
+                let price = start + curr_spread;
+                let qty = self.buy_amount - (self.max_position_usd / 2.0);
+                let order_response = self
+                    .client
+                    // Round the size and price to the nearest multiple of the tick size.
+                    .place_sell_limit(round_size(qty, book), round_price(book, price), &symbol)
+                    .await;
+                match order_response {
+                    Ok(v) => {
+                        // return the market response.
+                        market_response = v;
+                        self.buy_amount -= qty;
+                        break;
+                    }
+                    Err(e) => {
+                        // Print the error if there is an error placing the order.
+                        println!("Error placing buy order: {:?}", e);
+                        count += 1;
+                    }
+                }
+            } else if (self.sell_amount / self.max_position_usd) >= rebalance_threshold {
+                let price = start - curr_spread;
+                let qty = self.sell_amount - (self.max_position_usd / 2.0);
+                let order_response = self
+                    .client
+                    // Round the size and price to the nearest multiple of the tick size.
+                    .place_buy_limit(round_size(qty, book), round_price(book, price), &symbol)
+                    .await;
+                match order_response {
+                    Ok(v) => {
+                        // return the market response.
+                        market_response = v;
+                        self.sell_amount -= qty;
+                        break;
+                    }
+                    Err(e) => {
+                        // Print the error if there is an error placing the order.
+                        println!("Error placing sell order: {:?}", e);
+                        count += 1;
+                    }
+                }
+            }
         }
-
-        orders
+        market_response
     }
 
     /// Generates a list of batch orders for positive skew.
@@ -355,7 +364,7 @@ impl QuoteGenerator {
         let best_ask = best_bid + curr_spread;
 
         // Calculate the end prices for bid and ask prices.
-        let end = curr_spread * 3.7;
+        let end = curr_spread * 5.0;
         let bid_end = best_bid - end;
         let ask_end = best_ask + end;
 
@@ -476,79 +485,43 @@ impl QuoteGenerator {
     /// * `orders` - A vector of batch orders to update.
     /// * `book` - The local order book.
     async fn send_orders(&mut self, orders: Vec<BatchOrder>, book: &LocalBook) {
-        // If the number of batch orders is less than or equal to 5,
-        // place each order individually.
-        if orders.len() <= 5 {
-            // Iterate over each batch order.
-            for BatchOrder(qty, price, symbol, side) in orders {
-                // If the order is a buy order, place a buy limit order.
-                if side == 1 {
-                    let order_response = self
-                        .client
-                        // Round the size and price to the nearest multiple of the tick size.
-                        .place_buy_limit(
-                            round_size(qty, book),
-                            round_price(book, price),
-                            symbol.as_str(),
-                        )
-                        .await;
-                    match order_response {
-                        Ok(v) => {
-                            // Push the response to the live buys orders queue.
-                            self.live_buys_orders.push_back(v);
-                        }
-                        Err(e) => {
-                            // Print the error if there is an error placing the order.
-                            println!("Error placing buy order: {:?}", e);
-                        }
-                    }
-                }
-
-                // If the order is a sell order, place a sell limit order.
-                if side == -1 {
-                    let order_response = self
-                        .client
-                        .place_sell_limit(
-                            round_size(qty, book),
-                            round_price(book, price),
-                            symbol.as_str(),
-                        )
-                        .await;
-                    match order_response {
-                        Ok(v) => {
-                            // Push the response to the live sells orders queue.
-                            self.live_sells_orders.push_back(v);
-                        }
-                        Err(e) => {
-                            // Print the error if there is an error placing the order.
-                            println!("Error placing sell order: {:?}", e);
-                        }
+        // If there are more than 5 batch orders, place them as a batch order.
+        let order_response = self.client.batch_place_order(orders).await;
+        match order_response {
+            Ok(v) => {
+                // Iterate over each response and push it to the appropriate queue.
+                for (i, res) in v.iter().enumerate() {
+                    if i == 0 || i % 2 == 0 {
+                        self.live_buys_orders.push_back(res.clone());
+                    } else {
+                        self.live_sells_orders.push_back(res.clone());
                     }
                 }
             }
-        } else {
-            // If there are more than 5 batch orders, place them as a batch order.
-            let order_response = self.client.batch_place_order(orders).await;
-            match order_response {
-                Ok(v) => {
-                    // Iterate over each response and push it to the appropriate queue.
-                    for (i, res) in v.iter().enumerate() {
-                        if i == 0 || i % 2 == 0 {
-                            self.live_buys_orders.push_back(res.clone());
-                        } else {
-                            self.live_sells_orders.push_back(res.clone());
-                        }
-                    }
-                }
-                Err(e) => {
-                    // Print the error if there is an error placing the batch order.
-                    println!("Error placing batch order: {:?}", e);
-                }
+            Err(e) => {
+                // Print the error if there is an error placing the batch order.
+                println!("Error placing batch order: {:?}", e);
             }
         }
     }
 
-    pub fn check_fills(&mut self, data: PrivateData) {
+    async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) {
+        let bounds = spread_price_in_bps(book.mid_price * 0.0002, book.mid_price);
+        let bid_bounds = book.mid_price - (bounds * book.tick_size);
+        let ask_bounds = book.mid_price + (bounds * book.tick_size);
+        for v in self.live_sells_orders {
+            if v.price <= ask_bounds {
+                self.client.cancel_all(symbol.as_str()).await;
+            }
+        }
+        for v in self.live_buys_orders {
+            if v.price >= bid_bounds {
+                self.client.cancel_all(symbol.as_str()).await;
+            }
+        }
+    }
+
+    fn check_for_fills(&mut self, data: PrivateData) {
         let mut live_buy = self.live_buys_orders.clone();
         let mut live_sell = self.live_sells_orders.clone();
         let fills = match data {
@@ -567,12 +540,17 @@ impl QuoteGenerator {
                     for (i, order) in live_buy.clone().iter().enumerate() {
                         if order.order_id == order_id {
                             live_buy.remove(i);
+                        } else {
+                            self.max_position_qty -= order.qty;
+                            self.buy_amount += order.price * order.qty;
                         }
                     }
                 } else {
                     for (i, order) in live_sell.clone().iter().enumerate() {
                         if order.order_id == order_id {
                             live_sell.remove(i);
+                            self.max_position_qty += order.qty;
+                            self.sell_amount += order.price * order.qty;
                         }
                     }
                 }
@@ -582,25 +560,27 @@ impl QuoteGenerator {
         self.live_sells_orders = live_sell;
     }
 
-    pub fn update_grid(
+    pub async fn update_grid(
         &mut self,
         wallet: PrivateData,
         skew: f64,
         imbalance: f64,
         book: LocalBook,
         symbol: String,
+        price_flu_in_bps: f64,
     ) {
         self.update_max();
-        self.update_max_qty(book.mid_price);
         self.set_spread(20.0);
+        self.update_max_qty(book.mid_price);
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
-            let orders = self.generate_quotes(symbol, &book, imbalance, skew);
+            let orders = self.generate_quotes(symbol, &book, imbalance, skew, price_flu_in_bps);
             if imbalance >= 0.6 || imbalance <= -0.6 {
                 println!(
-                    "Grid: {:#?} {:#?} Imbalance: {:#?}",
+                    "Grid: {:#?} {:#?} Ask distance: {:#?} Bid distance: {:#?}",
                     orders,
-                    book.get_bba(),
-                    imbalance
+                    book.mid_price,
+                    (orders[1].1 - book.mid_price) / book.tick_size,
+                    (book.mid_price - orders[0].1) / book.tick_size
                 );
             }
         }
@@ -639,8 +619,8 @@ fn round_price(book: &LocalBook, price: f64) -> f64 {
     price.round_to(val as u8)
 }
 
-fn round_size(price: f64, book: &LocalBook) -> f64 {
-    round_step(price, book.lot_size)
+fn round_size(qty: f64, book: &LocalBook) -> f64 {
+    round_step(qty, book.lot_size)
 }
 
 impl OrderManagement {
@@ -724,6 +704,77 @@ impl OrderManagement {
         }
     }
 
+    async fn market_buy(&self, qty: f64, symbol: &str) -> Result<LiveOrder, ()> {
+        match self {
+            OrderManagement::Bybit(trader) => {
+                let client = trader.clone().bybit_trader();
+                let req = OrderRequest {
+                    category: bybit::model::Category::Linear,
+                    symbol: Cow::Owned(symbol.to_string()),
+                    side: Side::Buy,
+                    order_type: bybit::model::OrderType::Market,
+                    qty,
+                    ..Default::default()
+                };
+                if let Ok(v) = client.place_custom_order(req).await {
+                    Ok(LiveOrder::new(0.0, qty, v.result.order_id))
+                } else {
+                    println!("Could not place market order for {} qty", qty);
+                    Err(())
+                }
+            }
+            OrderManagement::Binance(trader) => {
+                let symbol = symbol.to_owned();
+                let client = trader.clone();
+                let task = tokio::task::spawn_blocking(move || {
+                    if let Ok(v) = client.binance_trader().market_buy(symbol, qty) {
+                        Ok(LiveOrder::new(v.avg_price, qty, v.order_id.to_string()))
+                    } else {
+                        println!("Could not place market order for {} qty", qty);
+                        Err(())
+                    }
+                });
+                task.await.unwrap()
+            }
+        }
+    }
+
+    async fn market_sell(&self, qty: f64, symbol: &str) -> Result<LiveOrder, ()> {
+        match self {
+            OrderManagement::Bybit(trader) => {
+                let client = trader.clone().bybit_trader();
+                let req = OrderRequest {
+                    category: bybit::model::Category::Linear,
+                    symbol: Cow::Owned(symbol.to_string()),
+                    side: Side::Sell,
+                    order_type: bybit::model::OrderType::Market,
+                    qty,
+                    time_in_force: Some(Cow::Borrowed("IOC")),
+                    ..Default::default()
+                };
+                if let Ok(v) = client.place_custom_order(req).await {
+                    Ok(LiveOrder::new(0.0, qty, v.result.order_id))
+                } else {
+                    println!("Could not place market order for {} qty", qty);
+                    Err(())
+                }
+            }
+            OrderManagement::Binance(trader) => {
+                let symbol = symbol.to_owned();
+                let client = trader.clone();
+                let task = tokio::task::spawn_blocking(move || {
+                    if let Ok(v) = client.binance_trader().market_sell(symbol, qty) {
+                        Ok(LiveOrder::new(v.avg_price, qty, v.order_id.to_string()))
+                    } else {
+                        println!("Could not place market order for {} qty", qty);
+                        Err(())
+                    }
+                });
+                task.await.unwrap()
+            }
+        }
+    }
+
     async fn amend_order(
         &self,
         order: LiveOrder,
@@ -756,8 +807,9 @@ impl OrderManagement {
                 let symbol = symbol.to_owned();
                 let client = trader.clone();
                 let task = tokio::task::spawn_blocking(move || {
-                    if let Ok(v) =
-                        client.binance_trader().cancel_order(symbol.clone(), order.order_id.parse::<u64>().unwrap())
+                    if let Ok(v) = client
+                        .binance_trader()
+                        .cancel_order(symbol.clone(), order.order_id.parse::<u64>().unwrap())
                     {
                         if let Ok(v) = client.binance_trader().limit_sell(
                             symbol,
@@ -800,8 +852,9 @@ impl OrderManagement {
                 let symbol = symbol.to_owned();
                 let client = trader.clone();
                 let task = task::spawn_blocking(move || {
-                    if let Ok(v) =
-                        client.binance_trader().cancel_order(symbol, order.order_id.parse::<u64>().unwrap())
+                    if let Ok(v) = client
+                        .binance_trader()
+                        .cancel_order(symbol, order.order_id.parse::<u64>().unwrap())
                     {
                         Ok(LiveOrder::new(
                             order.price,
@@ -973,7 +1026,8 @@ impl OrderManagement {
                 };
                 let task = task::spawn_blocking(move || {
                     if let Ok(v) = client
-                        .binance_trader().custom_batch_orders(order_array.len().try_into().unwrap(), order_requests)
+                        .binance_trader()
+                        .custom_batch_orders(order_array.len().try_into().unwrap(), order_requests)
                     {
                         let arr = vec![];
                         Ok(arr)
@@ -1035,12 +1089,12 @@ mod tests {
 
     #[test]
     fn test_spread_decimal_bps() {
-        let mut value = 0.0002;
-        for _ in 0..10 {
-            let diff: f64 = (0.5793 + (0.5793 * value)) - 0.5793;
-            let unit = 0.0001.count_decimal_places() + 1;
-            let bps = spread_decimal_bps(diff.round_to(unit as u8));
-            println!("Spread decimal bps: {} {} {} ", bps, diff.round(), value);
+        let mut value = 0.0001;
+        let mut book = LocalBook::new();
+        book.lot_size = 0.00001;
+        for _ in 0..25 {
+            let bps = round_size(0.3453556, &book);
+            println!("Spread decimal bps: {} {} ", bps, value);
             value += 0.0001;
         }
     }

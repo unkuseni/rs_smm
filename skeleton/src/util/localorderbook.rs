@@ -2,7 +2,7 @@ use bybit::model::{Ask, Bid};
 use ordered_float::OrderedFloat;
 use std::collections::BTreeMap;
 
-use super::helpers::{spread_price_in_bps, Round};
+use super::helpers::spread_price_in_bps;
 #[derive(Debug, Clone)]
 pub struct LocalBook {
     pub asks: BTreeMap<OrderedFloat<f64>, f64>,
