@@ -734,7 +734,7 @@ impl QuoteGenerator {
         let orders = self.generate_quotes(symbol, &book, imbalance, skew, price_flu);
 
         // Send the generated orders to the book.
-        // self.send_orders(orders.clone(), &book).await;
+        // self.send_orders(orders.clone()).await;
 
         // Print the grid orders along with the mid price, the distance between the
         // ask and mid price, and the distance between the mid price and bid.
@@ -751,12 +751,15 @@ impl QuoteGenerator {
         );
     }
 }
+
+
 #[derive(Debug, Clone)]
 pub struct LiveOrder {
     pub price: f64,
     pub qty: f64,
     pub order_id: String,
 }
+
 impl LiveOrder {
     pub fn new(price: f64, qty: f64, order_id: String) -> Self {
         LiveOrder {
