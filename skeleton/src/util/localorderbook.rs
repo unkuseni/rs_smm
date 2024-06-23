@@ -221,7 +221,7 @@ impl LocalBook {
     }
 
     fn set_mid_price(&mut self) {
-        let units = self.tick_size.count_decimal_places() + 1;
+        let units = self.tick_size.count_decimal_places();
         let avg = (self.best_ask.price + self.best_bid.price) / 2.0;
         self.mid_price = avg.round_to(units as u8);
     }
@@ -281,7 +281,7 @@ impl LocalBook {
     }
 
     pub fn get_spread_in_bps(&self) -> f64 {
-        let count = self.tick_size.count_decimal_places() + 1;
+        let count = self.tick_size.count_decimal_places();
         spread_decimal_bps(self.get_spread().round_to(count as u8))
     }
 

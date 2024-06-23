@@ -156,13 +156,13 @@ mod tests {
     fn test_time() {
         assert_ne!(generate_timestamp(), 0);
         println!("{:#?}", generate_timestamp());
-        let num: f64 = -5.437945;
-        println!("{:#?}", num.abs().round_to(3));
+        let num: f64 = 0.0000016;
+        println!("{:#?}", num.abs().round_to(6));
     }
 
     #[test]
     fn test_places() {
-        let num: f64 = -5.437945;
+        let num: f64 = 0.000001;
         println!("{:#?}", num.abs().count_decimal_places());
     }
 
