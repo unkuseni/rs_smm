@@ -87,7 +87,7 @@ impl Engine {
         // Update expected return
         self.expected_return = expected_return(prev_book.mid_price, curr_book.mid_price);
         
-        self.price_flu.1 = self.avg_flu_value();
+        self.price_flu.1 = self.avg_flu_value(curr_book);
 
         // Update weighted mid price
         self.wmid = (wmid(curr_book, self.imbalance_ratio) / curr_book.mid_price).ln();
@@ -118,16 +118,16 @@ impl Engine {
     ///
     /// # Returns
     /// The average value of the price_flu values.
-    fn avg_flu_value(&mut self) -> f64 {
+    fn avg_flu_value(&mut self, book: &LocalBook) -> f64 {
         // Check if the VecDeque is empty
         if self.price_flu.0.is_empty() {
             // Return 0.0 if the VecDeque is empty
             0.0
         } else {
             // Remove elements from the VecDeque until its length is less than or equal to 1500
-            remove_elements_at_capacity(&mut self.price_flu.0, 37);
-            // Calculate the average value of the remaining elements
-            self.price_flu.0.iter().sum::<f64>() / self.price_flu.0.len() as f64
+            remove_elements_at_capacity(&mut self.price_flu.0, 600);
+            // Calculate the average value of the fluctuations
+            self.price_flu.0.iter().sum::<f64>() * book.tick_size
         }
     }
     /// Generates a  number between -1 and 1.

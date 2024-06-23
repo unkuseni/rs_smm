@@ -6,9 +6,14 @@ use tokio::sync::mpsc;
 #[tokio::main]
 async fn main() {
     let mut state = ss::SharedState::new("bybit");
-    state.add_symbols(["NOTUSDT"].to_vec());
-    state.add_clients("45wk2c8nYInQC6sUSy".to_string(), "QgOdljngpGqyoGUp5AYZOLWG84Prm2T1fJ2n".to_string(), "NOTUSDT".to_string(), Some("bybit"));
-    let mut market_maker = MarketMaker::new(state.clone(), assets());
+    state.add_symbols(["PEOPLEUSDT"].to_vec());
+    state.add_clients(
+        "45wk2c8nYInQC6sUSy".to_string(),
+        "QgOdljngpGqyoGUp5AYZOLWG84Prm2T1fJ2n".to_string(),
+        "PEOPLEUSDT".to_string(),
+        None,
+    );
+    let mut market_maker = MarketMaker::new(state.clone(), assets(), 15.0, 2, 5.0);
     let (sender, receiver) = mpsc::unbounded_channel();
     tokio::spawn(async move {
         ss::load_data(state, sender).await;
@@ -18,6 +23,6 @@ async fn main() {
 
 fn assets() -> HashMap<String, f64> {
     let mut map = HashMap::new();
-    map.insert("NOTUSDT".to_string(), 100.0);
+    map.insert("PEOPLEUSDT".to_string(), 100.0);
     map
 }

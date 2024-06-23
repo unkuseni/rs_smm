@@ -207,7 +207,7 @@ pub fn price_flu(old_price: f64, curr_price: f64) -> f64 {
 
     // Calculate the price fluctuation by dividing the absolute difference by the current price,
     // multiplying by 10,000.
-    (diff / curr_price) * 10_000.0
+    (diff / curr_price) * 10000.0
 }
 
 /// Calculates the average trade price based on the current mid price, the old trades,
