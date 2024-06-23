@@ -112,10 +112,10 @@ pub fn nbsqrt<T: PartialOrd + Float + Signed>(num: T) -> T {
     }
 }
 
-pub fn spread_decimal_bps(spread: f64) -> f64 {
-    let count = spread.count_decimal_places();
-    let factor = 10.0_f64.powi(count as i32);
-    spread * factor
+pub fn spread_price_in_bps(spread: f64, price: f64) -> f64 {
+    let percent = spread / price;
+    let  bps = percent * 10000.0;
+    bps.round()
 }
 
 pub trait Round<T> {
@@ -149,7 +149,7 @@ mod tests {
     fn test_round() {
         assert_eq!(round_step(15643.456, 1.0), 15643.0);
         assert_eq!(round_step(5.6567422344, 0.0005), 5.6565);
-        println!("{:#?}", spread_decimal_bps(0.0000044));
+        println!("{:#?}", spread_price_in_bps(0.00055, 0.5678));
     }
 
     #[test]
