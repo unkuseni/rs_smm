@@ -86,7 +86,7 @@ impl Engine {
             .push_back(price_flu(prev_book.mid_price, curr_book.mid_price));
         // Update expected return
         self.expected_return = expected_return(prev_book.mid_price, curr_book.mid_price);
-
+        
         self.price_flu.1 = self.avg_flu_value();
 
         // Update weighted mid price

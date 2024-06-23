@@ -205,6 +205,7 @@ async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Sh
                 ExchangeClient::Binance(client) => client,
                 _ => panic!("Invalid exchange"),
             };
+
             let _ = subscriber.private_subscribe(sender_clone, symbol);
         });
     }
@@ -215,6 +216,7 @@ async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Sh
         let subscriber = BinanceClient::default();
 
         // Subscribe to the specified symbols and send the received data to the sender channel
+
         let _ = subscriber.market_subscribe(symbols, sender);
     });
 
@@ -291,6 +293,7 @@ async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<Shar
                 ExchangeClient::Bybit(client) => client,
                 _ => panic!("Invalid exchange"),
             };
+
             let _ = subscriber.private_subscribe(sender_clone, symbol).await;
         });
     }
@@ -299,6 +302,7 @@ async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<Shar
     tokio::spawn(async move {
         // Create a new Bybit client and start the market subscription
         let subscriber = BybitClient::default();
+
         let _ = subscriber.market_subscribe(symbols, sender).await;
     });
 
@@ -449,4 +453,3 @@ async fn load_both(state: SharedState, state_sender: mpsc::UnboundedSender<Share
         }
     }
 }
-

@@ -278,7 +278,6 @@ impl BybitClient {
             {
                 Ok(_) => {
                     println!("Subscription successful");
-                    break;
                 }
                 Err(e) => {
                     eprintln!("Subscription error: {}", e);
@@ -376,7 +375,6 @@ impl BybitClient {
             {
                 Ok(_) => {
                     println!("Subscription successful");
-                    break;
                 }
                 Err(e) => {
                     eprintln!("Subscription error: {}", e);
