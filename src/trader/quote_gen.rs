@@ -229,11 +229,11 @@ impl QuoteGenerator {
             // If the imbalance is large or not zero, set the aggression factor to 0.6.
             // Otherwise, set it to 0.1.
             if imbalance >= 0.6 || imbalance <= -0.6 {
-                d = 0.6;
+                d += 0.6;
             } else if imbalance != 0.0 {
-                d = 0.23;
+                d += 0.23;
             } else {
-                d = 0.1;
+                d += 0.1;
             }
             // Multiply the aggression factor by the square root of the skew value.
             d * nbsqrt(skew)
@@ -261,7 +261,7 @@ impl QuoteGenerator {
         };
 
         // Add the symbol to each order.
-        for mut v in orders.iter_mut() {
+        for v in orders.iter_mut() {
             v.2 = symbol.clone();
         }
 
@@ -546,7 +546,7 @@ impl QuoteGenerator {
     /// # Returns
     ///
     /// None
-    async fn send_orders(&mut self, orders: Vec<BatchOrder>, book: &LocalBook) {
+    async fn send_orders(&mut self, orders: Vec<BatchOrder>) {
         let mut new_orders = vec![];
         // If the inventory delta is greater than 0.55, remove half of the orders especially buys.
         if self.inventory_delta > 0.55 {
@@ -588,23 +588,45 @@ impl QuoteGenerator {
         }
     }
 
+    /// Checks if the current orders are out of bounds and cancels them if necessary.
+    ///
+    /// # Arguments
+    ///
+    /// * `book` - The local order book.
+    /// * `symbol` - The symbol of the order book.
+    ///
+    /// # Description
+    ///
+    /// This function checks if the current live orders are out of bounds based on the
+    /// mid price of the order book. If an order is out of bounds, it is cancelled.
+    ///
     async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) {
-        let bounds = bps_to_decimal(3.0) * book.mid_price;
+        // Calculate the bounds based on the mid price and 3 bps.
+        let fees = bps_to_decimal(3.0) * book.mid_price;
+        let bounds = book.get_spread().clip(fees, fees * 2.0);
         let bid_bounds = book.mid_price - bounds;
         let ask_bounds = book.mid_price + bounds;
+
+        // If there are no live orders, return early.
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
             return;
         }
+
+        // Iterate over the live sells orders and check if they are out of bounds.
         for v in self.live_sells_orders.iter() {
             if v.price <= ask_bounds {
+                // If the order is out of bounds, cancel it.
                 if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
                     println!("Cancelling all orders for {}", symbol);
                     break;
                 }
             }
         }
+
+        // Iterate over the live buys orders and check if they are out of bounds.
         for v in self.live_buys_orders.iter() {
             if v.price >= bid_bounds {
+                // If the order is out of bounds, cancel it.
                 if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
                     println!("Cancelling all orders for {}", symbol);
                     break;
@@ -613,13 +635,24 @@ impl QuoteGenerator {
         }
     }
 
+    /// Checks for fills in the provided private data and updates the grid of live orders accordingly.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The private data containing the executions.
+    ///
     fn check_for_fills(&mut self, data: PrivateData) {
+        // Clone the live buys and sells orders.
         let mut live_buy = self.live_buys_orders.clone();
         let mut live_sell = self.live_sells_orders.clone();
+
+        // Get the executions from the private data.
         let fills = match data {
             PrivateData::Bybit(v) => v.executions,
             PrivateData::Binance(v) => v.into_fastexec(),
         };
+
+        // Iterate over the executions and update the grid of live orders.
         for FastExecData {
             order_id,
             exec_qty,
@@ -627,7 +660,9 @@ impl QuoteGenerator {
             ..
         } in fills
         {
+            // If the execution quantity is not zero, update the grid of live orders.
             if exec_qty != "0.0" {
+                // If the side is "Buy", remove the filled order from live buys and update the position.
                 if side == "Buy" {
                     for (i, order) in live_buy.clone().iter().enumerate() {
                         if order.order_id == order_id {
@@ -637,6 +672,7 @@ impl QuoteGenerator {
                             self.position += order.price * order.qty;
                         }
                     }
+                // If the side is not "Buy", remove the filled order from live sells and update the position.
                 } else {
                     for (i, order) in live_sell.clone().iter().enumerate() {
                         if order.order_id == order_id {
@@ -648,6 +684,8 @@ impl QuoteGenerator {
                 }
             }
         }
+
+        // Update the live buys and sells orders with the new values.
         self.live_buys_orders = live_buy;
         self.live_sells_orders = live_sell;
     }
@@ -686,6 +724,10 @@ impl QuoteGenerator {
 
         // Update the maximum quantity of the order book.
         self.update_max_qty(book.mid_price);
+
+        if self.live_buys_orders.len() < self.live_sells_orders.len() {
+            let _ = self.client.cancel_all(symbol.as_str()).await;
+        }
 
         // Generate quotes for the grid based on the order book, symbol, imbalance, skew,
         // and price fluctuation.
@@ -930,7 +972,7 @@ impl OrderManagement {
                 let symbol = symbol.to_owned();
                 let client = trader.clone();
                 let task = tokio::task::spawn_blocking(move || {
-                    if let Ok(v) = client
+                    if let Ok(_) = client
                         .binance_trader()
                         .cancel_order(symbol.clone(), order.order_id.parse::<u64>().unwrap())
                     {
@@ -1017,7 +1059,7 @@ impl OrderManagement {
                 let symbol = symbol.to_owned();
                 let client = trader.clone();
                 let task = task::spawn_blocking(move || {
-                    if let Ok(v) = client.binance_trader().cancel_all_open_orders(symbol) {
+                    if let Ok(_) = client.binance_trader().cancel_all_open_orders(symbol) {
                         Ok(arr)
                     } else {
                         Err(())
@@ -1148,7 +1190,7 @@ impl OrderManagement {
                     arr
                 };
                 let task = task::spawn_blocking(move || {
-                    if let Ok(v) = client
+                    if let Ok(_) = client
                         .binance_trader()
                         .custom_batch_orders(order_array.len().try_into().unwrap(), order_requests)
                     {
