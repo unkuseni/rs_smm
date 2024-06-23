@@ -203,7 +203,7 @@ pub fn expected_return(old_price: f64, curr_price: f64) -> f64 {
 /// The price fluctuation as a logarithmic value.
 pub fn price_flu(old_price: f64, curr_price: f64) -> f64 {
     // Calculate the absolute difference between the current price and the old price.
-    let diff = (curr_price - old_price).abs();
+    let diff = curr_price - old_price;
 
     // Calculate the price fluctuation by dividing the absolute difference by the current price,
     // multiplying by 10,000.
