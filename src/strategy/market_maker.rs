@@ -83,8 +83,6 @@ impl MarketMaker {
     /// This function does not return any value.
     pub async fn start_loop(&mut self, mut receiver: UnboundedReceiver<SharedState>) {
         let mut interval = time::interval(Duration::from_millis(5000));
-        // Let the ws feeds warmup.
-        interval.tick().await;
         // Continuously receive and process shared state updates.
         while let Some(data) = receiver.recv().await {
             // Match the exchange in the received data.
@@ -92,6 +90,9 @@ impl MarketMaker {
                 "bybit" | "binance" => {
                     // Update features with the first market data in the received data.
                     self.update_features(data.markets[0].clone(), self.depths.clone(), false, 610);
+                    // Let the ws feeds warmup.
+                    interval.tick().await;
+                    // Update the strategy with the new market data and private data.
                     self.potentially_update(data.markets[0].clone(), data.private.clone())
                         .await;
                 }
