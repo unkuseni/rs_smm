@@ -7,10 +7,21 @@ use num_traits::{Float, Signed};
 
 use toml::Value;
 
-pub fn round_step<T: Float + Signed + PartialOrd>(num: T, step: T) -> T {
-    let p = (T::one() / step).to_i32().unwrap();
-    let p_as_f64 = p as f64;
-    (num * T::from(p_as_f64).unwrap()).floor() / T::from(p_as_f64).unwrap()
+pub fn round_step<T: Float>(num: T, step: T) -> T {
+    (num / step).round() * step
+}
+
+pub fn geometric_weights(ratio: f64, n: usize) -> Vec<f64> {
+    assert!(ratio > 0.0 && ratio < 1.0, "Ratio must be between 0 and 1");
+
+    // Generate the geometric series
+    let weights: Vec<f64> = (0..n).map(|i| ratio.powi(i as i32)).collect();
+
+    // Calculate the sum of the series to normalize
+    let sum: f64 = weights.iter().sum();
+
+    // Normalize the weights so that their sum equals 1
+    weights.iter().map(|w| w / sum).collect()
 }
 
 pub fn generate_timestamp() -> u64 {
@@ -101,6 +112,12 @@ pub fn nbsqrt<T: PartialOrd + Float + Signed>(num: T) -> T {
     }
 }
 
+pub fn spread_price_in_bps(spread: f64, price: f64) -> f64 {
+    let percent = spread / price;
+    let  bps = percent * 10000.0;
+    bps.round()
+}
+
 pub trait Round<T> {
     fn round_to(&self, digit: u8) -> T;
     fn clip(&self, min: T, max: T) -> T;
@@ -130,28 +147,29 @@ mod tests {
 
     #[test]
     fn test_round() {
-        assert_eq!(round_step(0.1, 0.1), 0.1);
-        assert_eq!(round_step(5.67, 0.2), 5.6);
+        assert_eq!(round_step(15643.456, 1.0), 15643.0);
+        assert_eq!(round_step(5.6567422344, 0.0005), 5.6565);
+        println!("{:#?}", spread_price_in_bps(0.00055, 0.5678));
     }
 
     #[test]
     fn test_time() {
         assert_ne!(generate_timestamp(), 0);
         println!("{:#?}", generate_timestamp());
-        let num: f64 = -5.437945;
-        println!("{:#?}", num.abs().round_to(3));
+        let num: f64 = 0.0000016;
+        println!("{:#?}", num.abs().round_to(6));
     }
 
     #[test]
     fn test_places() {
-        let num: f64 = -5.437945;
+        let num: f64 = 0.000001;
         println!("{:#?}", num.abs().count_decimal_places());
     }
 
     #[test]
     fn lin() {
         let num = linspace(0.6243, 0.6532, 14);
-        let num_geom = geomspace(0.01, 1.0, 14);
+        let num_geom = geomspace(1.0, 0.01, 14);
         println!("{:#?}", num);
         println!("{:#?}", num_geom);
     }

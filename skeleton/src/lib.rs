@@ -37,11 +37,11 @@ mod tests {
         let api_key = "key".to_string();
         let api_secret = "secret".to_string();
         let bub = BybitClient::init(api_key.clone(), api_secret.clone());
-        let symbol = vec!["SKLUSDT"];
+        let symbol = vec!["NOTUSDT"];
         let clone_symbol = symbol.clone();
         let (tx2, mut rx2) = mpsc::unbounded_channel::<BinanceMarket>();
         let bub_2 = BinanceClient::init(api_key, api_secret);
-        let symbol_2 = vec!["SKLUSDT"];
+        let symbol_2 = vec!["NOTUSDT"];
         let clone_symbol_2 = symbol_2.clone();
 
         tokio::spawn(async move {
@@ -56,11 +56,15 @@ mod tests {
             tokio::select! {
                 Some(v) = rx.recv() => {
                     let depth = v.books[0].1.get_bba();
-                    println!("Bybit Market data: {:#?}, {:#?}", clone_symbol[0], depth);
+                    let spread = v.books[0].1.get_spread();
+                    let bps_spread = v.books[0].1.get_spread_in_bps();
+                    println!("Bybit Market data: {:#?}, {:#?} {:#?}, {:#?}", clone_symbol[0], depth, spread, bps_spread);
                 }
                 Some(v) = rx2.recv() => {
                     let depth = v.books[0].1.get_bba();
-                    println!("Binance Market data: {:#?}, {:#?}", clone_symbol_2[0], depth);
+                    let spread = v.books[0].1.get_spread();
+                    let bps_spread = v.books[0].1.get_spread_in_bps();
+                    println!("Binance Market data: {:#?}, {:#?} {:#?}, {:#?}", clone_symbol_2[0], depth, spread, bps_spread);
                 }
                 else => break,
             }
@@ -117,42 +121,17 @@ mod tests {
         .await;
     }
 
-    #[tokio::test]
-    async fn test_agg() {
-        let bub = BinanceClient::init("key".to_string(), "secret".to_string());
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        tokio::task::spawn_blocking(move || {
-            let _ = bub.ws_aggtrades(vec!["BTCUSDT", "ETHUSDT", "SKLUSDT", "MATICUSDT"], tx);
-        });
-        while let Some(v) = rx.recv().await {
-            println!("Aggtrade data: {:#?}", v);
-        }
-    }
-
-    #[tokio::test]
-    async fn test_book() {
-        let bub = BinanceClient::init("key".to_string(), "secret".to_string());
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        tokio::task::spawn_blocking(move || {
-            let _ = bub.ws_best_book(vec!["LQTYUSDT"], tx);
-        });
-        while let Some(v) = rx.recv().await {
-            println!("Aggtrade data: {:#?}", v);
-        }
-    }
 
     #[tokio::test]
     async fn test_user_stream() {
-        let bub = BinanceClient::init(
-            "N4qNFLgddNxqwG7tWu4b6VdgCSdIXPzFDyEfu48AkCjN3bLvXCWaRvhEcy8qX6dD".to_string(),
-            "secret".to_string(),
-        );
+        let bub = BinanceClient::init("api".to_string(), "secret".to_string());
         let (tx, mut rx) = mpsc::unbounded_channel();
+        let symbol = "BTCUSDT".to_string();
         tokio::task::spawn_blocking(move || {
-            let _ = bub.private_subscribe(tx);
+            let _ = bub.private_subscribe(tx, symbol);
         });
         while let Some(v) = rx.recv().await {
-            match v {
+            match v.data {
                 PrivateData::Binance(v) => {
                     for (k, d) in v.orders.iter() {
                         println!("Private data: {:#?}, {:#?}", k, d);
@@ -166,26 +145,25 @@ mod tests {
     #[tokio::test]
     async fn test_priv() {
         let (tx, mut rx) = mpsc::unbounded_channel();
-        let api_key = "Gf00VfhZXp11aGSxoV".to_string();
-        let api_secret = "cnafpFvqeAC2dUPyeFP61QwYeAJiPdbdNgMX".to_string();
+        let api_key = "api".to_string();
+        let api_secret = "secret".to_string();
+         let symbol = "BTCUSDT".to_string();
         let bub = BybitClient::init(api_key, api_secret);
         tokio::spawn(async move {
-            bub.private_subscribe(tx).await;
+            bub.private_subscribe(tx, symbol).await;
         });
         while let Some(v) = rx.recv().await {
-            println!("Private data: {:#?}", v);
+            println!("Private data: {:#?}", v.data);
         }
     }
 
     #[tokio::test]
     async fn test_fee() {
-        let api_key = "Gf00VfhZXp11aGSxoV".to_string();
-        let api_secret = "cnafpFvqeAC2dUPyeFP61QwYeAJiPdbdNgMX".to_string();
-        let rate = task::spawn_blocking(move || {
-            let api_key2 =
-                "BOswZzt8n49xqKhZu2KYxObLLXf6iOVpyjLtUbmNcZhTMIuDam0Jn7AArzOlzVQM".to_string();
-            let api_secret2 =
-                "D0JlW0Uf0SBkRgNmGTNMymgwI2BVQylNqkdqzMqpE74dXRE5SAL4o85V7LivGfSx".to_string();
+        let _api_key = "api".to_string();
+        let _api_secret = "secret".to_string();
+        let _rate = task::spawn_blocking(move || {
+            let api_key2 = "api".to_string();
+            let api_secret2 = "secret".to_string();
             let bub = BinanceClient::init(api_key2, api_secret2);
             bub.fee_rate();
         })

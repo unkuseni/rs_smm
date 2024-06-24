@@ -1,123 +1,43 @@
-use std::collections::HashMap;
-
-use rs_smm::features::imbalance::imbalance_ratio;
-use rs_smm::features::imbalance::trade_imbalance;
-use rs_smm::features::imbalance::voi;
-
-use rs_smm::features::impact::avg_trade_price;
-use rs_smm::features::impact::mid_price_basis;
-use rs_smm::features::impact::price_impact;
-use skeleton::exchanges::exchange::MarketMessage;
+use rs_smm::parameters::parameters::{
+    acct_balance_params, api_key_params, exch_params as ex_input, maker_params,
+    symbol_params as symbol_input, MakerParams,
+};
+use rs_smm::strategy::market_maker::MarketMaker;
 use skeleton::ss;
-use skeleton::util::helpers::Round;
-use skeleton::util::localorderbook::LocalBook;
 use tokio::sync::mpsc;
 
 #[tokio::main]
 async fn main() {
-    let mut state = ss::SharedState::new("bybit");
-    state.add_symbols(["MEWUSDT", "NOTUSDT", "JASMYUSDT"].to_vec());
-    let (sender, mut receiver) = mpsc::unbounded_channel();
+    let mut state = ss::SharedState::new(ex_input());
+    state.add_symbols(symbol_input());
+    let clients = api_key_params();
+    for (k, v) in clients {
+        state.add_clients(v.0, v.1, k, None);
+    }
+    let balance = acct_balance_params();
+    let MakerParams {
+        leverage,
+        orders_per_side,
+        final_order_distance,
+        
+        depths,
+        rebalance_ratio,
+        rate_limit
+    } = maker_params();
+    let mut market_maker = MarketMaker::new(
+        state.clone(),
+        balance,
+        leverage,
+        orders_per_side,
+        final_order_distance,
+        depths,
+        rebalance_ratio,
+        rate_limit
+    );
+    market_maker.set_spread_bps();
+    let (sender, receiver) = mpsc::unbounded_channel();
     tokio::spawn(async move {
         ss::load_data(state, sender).await;
     });
-
-    // Initialize a HashMap to store the previous LocalBook for each market.
-    let mut prev_books: HashMap<String, LocalBook> = HashMap::new();
-    let mut prev_trades = HashMap::new();
-    let mut prev_avgs = HashMap::new();
-
-    while let Some(v) = receiver.recv().await {
-        let bybit_market = v.markets[0].clone();
-
-        let trades = match bybit_market.clone() {
-            MarketMessage::Bybit(b) => b.trades,
-            _ => panic!("Not bybit market"),
-        };
-        let trade_map = {
-            let mut map = HashMap::new();
-            for v in trades.clone() {
-                map.insert(v.0.clone(), v.1.clone());
-            }
-            map
-        };
-
-        if let MarketMessage::Bybit(bybit_market) = bybit_market {
-            for (k, v) in bybit_market.books.iter().enumerate() {
-                // Get the previous LocalBook for this market, if it exists.
-                let prev_book = prev_books.get(&v.0);
-                let prev_trade = prev_trades.get(&v.0);
-                let trade = trade_map.get(&v.0).unwrap();
-                // Calculate the VOI, if a previous LocalBook exists.
-                let voi_value = match prev_book {
-                    Some(prev_book) => voi(v.1.clone(), prev_book.clone(), Some(5)),
-                    None => 0.0, // Or some other default value.
-                };
-                let prev_avg = match prev_avgs.get(&v.0) {
-                    Some(prev_avg) => *prev_avg,
-                    None => 0.0,
-                };
-
-                let avg_trd_price = avg_trade_price(v.1.mid_price, prev_trade, trade, prev_avg, 300);
-                let mid_basis = match prev_book {
-                    Some(prev_book) => {
-                        mid_price_basis(prev_book.mid_price, v.1.mid_price, avg_trd_price)
-                    }
-                    None => 0.0,
-                };
-                let price_impact = match prev_book {
-                    Some(prev_book) => price_impact(v.1.clone(), prev_book.clone(), Some(5)),
-                    None => 0.0, // Or some other default value.
-                };
-
-                println!(
-                    "Bybit Imbalance data: \n{:#?}, {:.5} {:#?} {:#?}",
-                    v.0, v.1.mid_price, price_impact, mid_basis
-                );
-
-                // Store the current LocalBook as the previous LocalBook for the next iteration.
-                prev_books.insert(v.0.clone(), v.1.clone());
-                prev_avgs.insert(v.0.clone(), avg_trd_price);
-            }
-        }
-        for v in trades {
-            prev_trades.insert(v.0, v.1);
-        }
-    }
-}
-
-pub fn handle_markets(
-    markets: Vec<MarketMessage>,
-    old_market: Option<Vec<MarketMessage>>,
-) -> Vec<((String, LocalBook), (String, LocalBook))> {
-    if let Some(v) = old_market {
-        let mut new_bybit_books = Vec::new();
-        let mut new_binance_books = Vec::new();
-        for v in markets {
-            match v {
-                MarketMessage::Bybit(bybit_market) => {
-                    for v in bybit_market.books {
-                        new_bybit_books.push(v);
-                    }
-                }
-                MarketMessage::Binance(binance_market) => {
-                    for v in binance_market.books {
-                        new_binance_books.push(v);
-                    }
-                }
-            }
-        }
-        let mut both_books: Vec<((String, LocalBook), (String, LocalBook))> = Vec::new();
-        for (i, j) in new_bybit_books.iter().zip(new_binance_books.iter()) {
-            println!(
-                "bybit book: {} {}, binance book: {} {}",
-                i.0, i.1.best_bid.price, j.0, j.1.best_bid.price
-            );
-            both_books.push((i.clone(), j.clone()));
-        }
-
-        both_books
-    } else {
-        Vec::new()
-    }
+    market_maker.start_loop(receiver).await;
 }

@@ -23,7 +23,6 @@ impl ExchangeClient {
     }
 }
 
-
 #[derive(Clone, Debug)]
 pub enum PrivateData {
     Bybit(BybitPrivate),
@@ -39,6 +38,20 @@ impl PrivateData {
     }
 }
 
+#[derive(Clone, Debug)]
+pub struct TaggedPrivate {
+    pub symbol: String,
+    pub data: PrivateData,
+}
+
+impl TaggedPrivate {
+    pub fn new(symbol: String, data: PrivateData) -> Self {
+        TaggedPrivate { symbol, data }
+    }
+}
+
+unsafe impl Send for TaggedPrivate {}
+unsafe impl Sync for TaggedPrivate {}
 
 #[derive(Debug)]
 pub enum MarketMessage {

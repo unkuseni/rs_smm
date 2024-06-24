@@ -3,6 +3,9 @@ use std::fmt::Debug;
 use std::{collections::HashMap, sync::Arc};
 use tokio::sync::{mpsc, Mutex};
 
+use crate::exchanges::ex_binance::BinancePrivate;
+use crate::exchanges::ex_bybit::BybitPrivate;
+use crate::exchanges::exchange::TaggedPrivate;
 use crate::{
     exchanges::{
         ex_binance::{BinanceClient, BinanceMarket},
@@ -17,7 +20,7 @@ pub struct SharedState {
     pub exchange: &'static str,
     pub logging: Logger,
     pub clients: HashMap<String, ExchangeClient>,
-    pub private: HashMap<String, Arc<Mutex<mpsc::UnboundedReceiver<PrivateData>>>>,
+    pub private: HashMap<String, PrivateData>,
     pub markets: Vec<MarketMessage>,
     pub symbols: Vec<&'static str>,
 }
@@ -161,6 +164,19 @@ pub async fn load_data(state: SharedState, state_sender: mpsc::UnboundedSender<S
 ///
 /// * `state` - The shared state containing the market data.
 /// * `state_sender` - The unbounded sender used to send updated state to the main thread.
+///
+/// This function creates an Arc and Mutex to allow safe concurrent access to the shared state.
+/// It then clones the symbols and clients from the shared state.
+///
+/// It creates an unbounded channel to receive market data and iterates over the clients,
+/// starting the private subscription for each symbol. The private receiver is inserted into
+/// the shared state.
+///
+/// A blocking task is spawned to handle the market subscription. A loop is used to receive market
+/// data from both exchanges.
+///
+/// When market data is received, it is updated in the shared state and sent to the main thread.
+/// When private data is received, it is inserted into the shared state and sent to the main thread.
 async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<SharedState>) {
     // Create an Arc and Mutex to allow safe concurrent access to the shared state
     let state = Arc::new(Mutex::new(state));
@@ -173,15 +189,14 @@ async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Sh
     let (sender, mut receiver) = mpsc::unbounded_channel::<BinanceMarket>();
 
     // Iterate over the clients and start the private subscription for each symbol
+    let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<TaggedPrivate>();
     for (symbol, client) in clients {
-        let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<PrivateData>();
-
+        let sender_clone = private_sender.clone();
         // Insert the private receiver into the shared state
-        let _ = &state
-            .lock()
-            .await
-            .private
-            .insert(symbol, Arc::new(Mutex::new(private_receiver)));
+        let _ = &state.lock().await.private.insert(
+            symbol.clone(),
+            PrivateData::Binance(BinancePrivate::default()),
+        );
 
         // Spawn a blocking task to handle the private subscription
         tokio::task::spawn_blocking(move || {
@@ -190,7 +205,8 @@ async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Sh
                 ExchangeClient::Binance(client) => client,
                 _ => panic!("Invalid exchange"),
             };
-            let _ = subscriber.private_subscribe(private_sender);
+
+            let _ = subscriber.private_subscribe(sender_clone, symbol);
         });
     }
 
@@ -200,19 +216,37 @@ async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Sh
         let subscriber = BinanceClient::default();
 
         // Subscribe to the specified symbols and send the received data to the sender channel
+
         let _ = subscriber.market_subscribe(symbols, sender);
     });
 
     // Process the received market data and update the shared state
-    while let Some(v) = receiver.recv().await {
-        let mut state = state.lock().await;
-        // Update the market data in the shared state
-        state.markets[0] = MarketMessage::Binance(v);
+    // Loop to receive market data from both exchanges.
+    loop {
+        tokio::select! {
+                // Receive Binance market data.
+                Some(v) = receiver.recv() => {
+            let mut state = state.lock().await;
+            // Update the market data in the shared state
+            state.markets[0] = MarketMessage::Binance(v);
 
-        // Send the updated state to the main thread
-        state_sender
-            .send(state.clone())
-            .expect("Failed to send state to main thread");
+            // Send the updated state to the main thread
+            state_sender
+                .send(state.clone())
+                .expect("Failed to send state to main thread");
+        }
+
+        Some(data) = private_receiver.recv() => {
+            let mut state = state.lock().await;
+            let key = data.symbol;
+            state.private.insert(key, data.data);
+
+            // Send the updated state to the main thread
+            state_sender
+                .send(state.clone())
+                .expect("Failed to send state to main thread");
+        }
+        }
     }
 }
 
@@ -222,6 +256,14 @@ async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Sh
 ///
 /// * `state` - The shared state containing the market data.
 /// * `state_sender` - The unbounded sender used to send updated state to the main thread.
+///
+/// This function creates an Arc and Mutex to allow safe concurrent access to the shared state.
+/// It then clones the symbols and clients from the shared state.
+/// It creates an unbounded channel to receive market data.
+/// It iterates over the clients and starts the private subscription for each symbol.
+/// It spawns a blocking task to handle the private subscription.
+/// It spawns a blocking task to handle the market subscription.
+/// Finally, it enters a loop to receive market data and update the shared state.
 async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<SharedState>) {
     // Create an Arc and Mutex to allow safe concurrent access to the shared state
     let state = Arc::new(Mutex::new(state));
@@ -234,15 +276,15 @@ async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<Shar
     let (sender, mut receiver) = mpsc::unbounded_channel::<BybitMarket>();
 
     // Iterate over the clients and start the private subscription for each symbol
+    let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<TaggedPrivate>();
     for (symbol, client) in clients {
-        let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<PrivateData>();
-
+        let sender_clone = private_sender.clone();
         // Insert the private receiver into the shared state
         let _ = &state
             .lock()
             .await
             .private
-            .insert(symbol, Arc::new(Mutex::new(private_receiver)));
+            .insert(symbol.clone(), PrivateData::Bybit(BybitPrivate::default()));
 
         // Spawn a blocking task to handle the private subscription
         tokio::spawn(async move {
@@ -251,7 +293,8 @@ async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<Shar
                 ExchangeClient::Bybit(client) => client,
                 _ => panic!("Invalid exchange"),
             };
-            let _ = subscriber.private_subscribe(private_sender).await;
+
+            let _ = subscriber.private_subscribe(sender_clone, symbol).await;
         });
     }
 
@@ -259,16 +302,37 @@ async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<Shar
     tokio::spawn(async move {
         // Create a new Bybit client and start the market subscription
         let subscriber = BybitClient::default();
+
         let _ = subscriber.market_subscribe(symbols, sender).await;
     });
 
-    // Receive market data from the channel and update the shared state
-    while let Some(v) = receiver.recv().await {
-        let mut state = state.lock().await;
-        state.markets[0] = MarketMessage::Bybit(v);
-        state_sender
-            .send(state.clone())
-            .expect("Failed to send state to main thread");
+    // Process the received market data and update the shared state
+    // Loop to receive market data from both exchanges.
+    loop {
+        tokio::select! {
+            // Receive Bybit market data.
+            Some(v) = receiver.recv() => {
+                let mut state = state.lock().await;
+                // Update the market data in the shared state
+                state.markets[0] = MarketMessage::Bybit(v);
+
+                // Send the updated state to the main thread
+                state_sender
+                    .send(state.clone())
+                    .expect("Failed to send state to main thread");
+            }
+
+            Some(data) = private_receiver.recv() => {
+                let mut state = state.lock().await;
+                let key = data.symbol;
+                state.private.insert(key, data.data);
+
+                // Send the updated state to the main thread
+                state_sender
+                    .send(state.clone())
+                    .expect("Failed to send state to main thread");
+            }
+        }
     }
 }
 
@@ -309,26 +373,35 @@ async fn load_both(state: SharedState, state_sender: mpsc::UnboundedSender<Share
     }
 
     // Spawn tasks for each client.
+    let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<TaggedPrivate>();
     for (symbol, client) in clients {
-        let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<PrivateData>();
+        let sender_clone = private_sender.clone();
 
         // Insert the private receiver into the state.
-        let _ = &state
-            .lock()
-            .await
-            .private
-            .insert(symbol, Arc::new(Mutex::new(private_receiver)));
-
-        // Spawn a task for each client.
         match client {
             ExchangeClient::Bybit(client) => {
+                // Insert the private receiver for Bybit into the state.
+                let _ = &state
+                    .lock()
+                    .await
+                    .private
+                    .insert(symbol.clone(), PrivateData::Bybit(BybitPrivate::default()));
+
+                // Spawn a task for Bybit private subscription.
                 tokio::spawn(async move {
-                    client.private_subscribe(private_sender).await;
+                    client.private_subscribe(sender_clone, symbol).await;
                 });
             }
             ExchangeClient::Binance(client) => {
+                // Insert the private receiver for Binance into the state.
+                let _ = &state.lock().await.private.insert(
+                    symbol.clone(),
+                    PrivateData::Binance(BinancePrivate::default()),
+                );
+
+                // Spawn a blocking task for Binance private subscription.
                 tokio::task::spawn_blocking(move || {
-                    client.private_subscribe(private_sender);
+                    client.private_subscribe(sender_clone, symbol);
                 });
             }
         }
@@ -361,6 +434,16 @@ async fn load_both(state: SharedState, state_sender: mpsc::UnboundedSender<Share
             Some(v) = binance_receiver.recv() => {
                 let mut state = binance_state_clone.lock().await;
                 state.markets[1] = MarketMessage::Binance(v);
+                state_sender
+                    .send(state.clone())
+                    .expect("Failed to send state to main thread");
+            }
+
+            // Receive private data.
+            Some(data) = private_receiver.recv() => {
+                let mut state = state.lock().await;
+                let key = data.symbol;
+                state.private.insert(key, data.data);
                 state_sender
                     .send(state.clone())
                     .expect("Failed to send state to main thread");

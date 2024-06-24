@@ -10,3 +10,7 @@ edition = "2021"
 tokio = { version = "1.36.0", features = ["full"] }
 skeleton = { path = "./skeleton" }
 rs_bybit = "0.2.3"
+linfa-linear = "0.7.0"
+linfa = "0.7.0"
+ndarray = "0.15.6"
+binance = "0.21.0"

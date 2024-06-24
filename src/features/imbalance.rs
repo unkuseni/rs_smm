@@ -9,7 +9,7 @@ use skeleton::util::{helpers::calculate_exponent, localorderbook::LocalBook};
 /// divided by their sum.
 ///
 /// If imbalance is negative, increase the bid spread and reduce the opposite.
-/// If imbalance is positive, increase the ask spread and reduce the opposite. 
+/// If imbalance is positive, increase the ask spread and reduce the opposite.
 /// # Arguments
 ///
 /// * `book` - The LocalBook to calculate the imbalance ratio from.
@@ -18,12 +18,12 @@ use skeleton::util::{helpers::calculate_exponent, localorderbook::LocalBook};
 /// # Returns
 ///
 /// The imbalance ratio as a `f64`.
-pub fn imbalance_ratio(book: LocalBook, depth: Option<usize>) -> f64 {
+pub fn imbalance_ratio(book: &LocalBook, depth: Option<usize>) -> f64 {
     // Extract the best ask and bid from the book.
-    let (best_ask, best_bid) = (book.best_ask, book.best_bid);
+    let (best_ask, best_bid) = (book.best_ask.qty, book.best_bid.qty);
 
     // Initialize the weighted bid and ask quantities to the quantities of the best bid and ask.
-    let (mut weighted_bid_qty, mut weighted_ask_qty) = (best_bid.qty, best_ask.qty);
+    let (mut weighted_bid_qty, mut weighted_ask_qty) = (best_bid, best_ask);
 
     // If a depth is specified, calculate the weighted bid and ask quantities using the specified depth.
     if let Some(depth) = depth {
@@ -65,6 +65,28 @@ pub fn imbalance_ratio(book: LocalBook, depth: Option<usize>) -> f64 {
 }
 
 
+/// Calculates the Weighted Mid Price (WMID) of a given LocalBook, based on the given imbalance ratio.
+///
+/// # Arguments
+///
+/// * `book` - The LocalBook to calculate the WMID from.
+/// * `imb` - The imbalance ratio to use in the calculation.
+///
+/// # Returns
+/// The WMID as a `f64`.
+pub fn wmid(book: &LocalBook, imb: f64) -> f64 {
+    // Convert the imbalance ratio to the absolute value, using the map_range function.
+    let abs_imb = map_range(imb);
+
+    // If the absolute imbalance ratio is not zero, calculate the WMID using the formula:
+    // WMID = (best_bid * imb) + (best_ask * (1 - imb))
+    if abs_imb != 0.0 {
+        (book.best_bid.price * imb) + (book.best_ask.price * (1.0 - imb))
+    } else {
+        // Otherwise, return the mid_price of the LocalBook.
+        book.mid_price
+    }
+}
 
 /// Calculates the Volume at the Offset (VOI) of a given LocalBook and its previous state.
 ///
@@ -77,7 +99,7 @@ pub fn imbalance_ratio(book: LocalBook, depth: Option<usize>) -> f64 {
 /// # Returns
 ///
 /// The volume at the offset as a `f64`.
-pub fn voi(book: LocalBook, prev_book: LocalBook, depth: Option<usize>) -> f64 {
+pub fn voi(book: &LocalBook, prev_book: &LocalBook, depth: Option<usize>) -> f64 {
     // Calculate the volume at the bid side
     let bid_v = match book.best_bid.price {
         x if x < prev_book.best_bid.price => 0.0,
@@ -86,11 +108,11 @@ pub fn voi(book: LocalBook, prev_book: LocalBook, depth: Option<usize>) -> f64 {
                 let mut curr_bid_qty = 0.0;
                 let mut prev_bid_qty = 0.0;
                 // Iterate over the depth bids in the current and previous books
-                for (_, (_, qty)) in book.bids.iter().rev().take(depth).enumerate() {
-                    curr_bid_qty += qty;
+                for (i, (_, qty)) in book.bids.iter().rev().take(depth).enumerate() {
+                    curr_bid_qty += qty * calculate_exponent(i as f64);
                 }
-                for (_, (_, qty)) in prev_book.bids.iter().rev().take(depth).enumerate() {
-                    prev_bid_qty += qty;
+                for (i, (_, qty)) in prev_book.bids.iter().rev().take(depth).enumerate() {
+                    prev_bid_qty += qty * calculate_exponent(i as f64);
                 }
                 curr_bid_qty - prev_bid_qty
             } else {
@@ -101,8 +123,8 @@ pub fn voi(book: LocalBook, prev_book: LocalBook, depth: Option<usize>) -> f64 {
             if let Some(depth) = depth {
                 let mut curr_bid = 0.0;
                 // Iterate over the depth bids in the current book
-                for (_, (_, qty)) in book.bids.iter().rev().take(depth).enumerate() {
-                    curr_bid += qty;
+                for (i, (_, qty)) in book.bids.iter().rev().take(depth).enumerate() {
+                    curr_bid += qty * calculate_exponent(i as f64);
                 }
                 curr_bid
             } else {
@@ -118,8 +140,8 @@ pub fn voi(book: LocalBook, prev_book: LocalBook, depth: Option<usize>) -> f64 {
             if let Some(depth) = depth {
                 let mut curr_ask = 0.0;
                 // Iterate over the depth asks in the current book
-                for (_, (_, qty)) in book.asks.iter().take(depth).enumerate() {
-                    curr_ask += qty;
+                for (i, (_, qty)) in book.asks.iter().take(depth).enumerate() {
+                    curr_ask += qty * calculate_exponent(i as f64);
                 }
                 curr_ask
             } else {
@@ -131,11 +153,11 @@ pub fn voi(book: LocalBook, prev_book: LocalBook, depth: Option<usize>) -> f64 {
                 let mut curr_ask_qty = 0.0;
                 let mut prev_ask_qty = 0.0;
                 // Iterate over the depth asks in the current and previous books
-                for (_, (_, qty)) in book.asks.iter().take(depth).enumerate() {
-                    curr_ask_qty += qty;
+                for (i, (_, qty)) in book.asks.iter().take(depth).enumerate() {
+                    curr_ask_qty += qty * calculate_exponent(i as f64);
                 }
-                for (_, (_, qty)) in prev_book.bids.iter().take(depth).enumerate() {
-                    prev_ask_qty += qty;
+                for (i, (_, qty)) in prev_book.bids.iter().take(depth).enumerate() {
+                    prev_ask_qty += qty * calculate_exponent(i as f64);
                 }
                 curr_ask_qty - prev_ask_qty
             } else {
@@ -151,17 +173,17 @@ pub fn voi(book: LocalBook, prev_book: LocalBook, depth: Option<usize>) -> f64 {
     diff
 }
 
-pub fn trade_imbalance(trades: (String, VecDeque<WsTrade>)) -> (String, f64) {
+pub fn trade_imbalance(trades: &VecDeque<WsTrade>) -> f64 {
     // Calculate total volume and buy volume
-    let (total_volume, buy_volume) = calculate_volumes(&trades.1);
+    let (total_volume, buy_volume) = calculate_volumes(trades);
     // Handle empty trade history (optional)
     if total_volume == 0.0 {
         // You can either return an empty tuple or a specific value to indicate no trades
-        return (trades.0, 0.0);
+        return 0.0;
     }
     // Calculate buy-sell ratio (avoid division by zero)
     let ratio = buy_volume / total_volume;
-    (trades.0, ratio)
+    ratio
 }
 
 fn calculate_volumes(trades: &VecDeque<WsTrade>) -> (f64, f64) {
@@ -174,4 +196,8 @@ fn calculate_volumes(trades: &VecDeque<WsTrade>) -> (f64, f64) {
         }
     }
     (total_volume, buy_volume)
+}
+
+pub fn map_range(value: f64) -> f64 {
+    (value + 1.0) / 2.0
 }

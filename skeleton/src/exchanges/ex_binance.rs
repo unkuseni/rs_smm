@@ -3,6 +3,7 @@ use std::sync::atomic::AtomicBool;
 use std::thread;
 use std::time::Duration;
 
+use binance::config::Config;
 use binance::futures::account::FuturesAccount;
 use binance::futures::general::FuturesGeneral;
 use binance::futures::model::Filters::PriceFilter;
@@ -12,13 +13,13 @@ use binance::model::{
     AccountUpdateEvent, Asks, Bids, BookTickerEvent, ContinuousKline, DepthOrderBookEvent,
     EventBalance, EventPosition, LiquidationOrder,
 };
-use binance::{api::Binance, futures::websockets::*, general::General, model::AggrTradesEvent};
-use bybit::model::WsTrade;
+use binance::{api::Binance, futures::websockets::*, general::General};
+use bybit::model::{Category, FastExecData, WsTrade};
 use tokio::sync::mpsc;
 
 use crate::util::localorderbook::{LocalBook, ProcessAsks, ProcessBids};
 
-use super::exchange::{PrivateData, ProcessTrade};
+use super::exchange::{PrivateData, ProcessTrade, TaggedPrivate};
 #[derive(Clone, Debug)]
 pub struct BinanceMarket {
     pub time: u64,
@@ -120,6 +121,20 @@ impl BinanceClient {
                         _ => 0.0,
                     };
                     b.tick_size = price_filter;
+                    b.min_order_size = {
+                        match &v.filters[1] {
+                            binance::model::Filters::LotSize { min_qty, .. } => {
+                                min_qty.parse().unwrap_or(0.0)
+                            }
+                            _ => 0.0,
+                        }
+                    };
+                    b.min_notional = match &v.filters[5] {
+                        binance::model::Filters::MinNotional { notional, .. } => {
+                            notional.clone().unwrap().parse().unwrap_or(0.0)
+                        }
+                        _ => 0.0,
+                    };
                 }
                 Err(_) => {
                     b.tick_size = 0.0;
@@ -271,11 +286,21 @@ impl BinanceClient {
             }
         }
     }
+    pub fn binance_trader(&self) -> FuturesAccount {
+        let config = {
+            let x = Config::default();
+            x.set_recv_window(2500)
+        };
+        let trader: FuturesAccount =
+            Binance::new_with_config(Some(self.key.clone()), Some(self.secret.clone()), &config);
+        trader
+    }
 
-    pub fn private_subscribe(&self, sender: mpsc::UnboundedSender<PrivateData>) {
+    pub fn private_subscribe(&self, sender: mpsc::UnboundedSender<TaggedPrivate>, symbol: String) {
         let mut delay = 600;
         let keep_running = AtomicBool::new(true); // Used to control the event loop
         let user_stream: FuturesUserStream = Binance::new(Some(self.key.clone()), None);
+
         let mut private_data = BinancePrivate::default();
         let mut orders_keys: VecDeque<u64> = VecDeque::new();
         let mut executions_keys: VecDeque<u64> = VecDeque::new();
@@ -336,7 +361,9 @@ impl BinanceClient {
                 }
                 _ => (),
             };
-            let _ = sender.send(PrivateData::Binance(private_data.clone()));
+            let tagged_data =
+                TaggedPrivate::new(symbol.clone(), PrivateData::Binance(private_data.clone()));
+            let _ = sender.send(tagged_data);
             Ok(())
         };
         if let Ok(answer) = user_stream.start() {
@@ -363,67 +390,6 @@ impl BinanceClient {
             Binance::new(Some(self.key.clone()), Some(self.secret.clone()));
         let info = client.account_information().unwrap();
         info
-    }
-
-    pub fn ws_aggtrades(&self, symbol: Vec<&str>, sender: mpsc::UnboundedSender<AggrTradesEvent>) {
-        let keep_running = AtomicBool::new(true); // Used to control the event loop
-        let agg_trades: Vec<String> = symbol
-            .iter()
-            .map(|&sub| sub.to_lowercase())
-            .map(|sub| format!("{}@aggTrade", sub))
-            .collect();
-        let mut web_socket = FuturesWebSockets::new(|event: FuturesWebsocketEvent| {
-            if let FuturesWebsocketEvent::AggrTrades(agg) = event {
-                // println!(
-                //     "Symbol: {}, price: {}, qty: {}",
-                //     agg.symbol, agg.price, agg.qty
-                // );
-                sender.send(agg).unwrap();
-            } else {
-                println!("Unexpected event: {:?}", event);
-            }
-
-            Ok(())
-        });
-        web_socket
-            .connect_multiple_streams(&FuturesMarket::USDM, &agg_trades)
-            .unwrap();
-
-        // check error
-        if let Err(e) = web_socket.event_loop(&keep_running) {
-            println!("Error: {}", e);
-        }
-    }
-
-    pub fn ws_best_book(&self, symbol: Vec<&str>, sender: mpsc::UnboundedSender<AggrTradesEvent>) {
-        let keep_running = AtomicBool::new(true); // Used to control the event loop
-        let best_book: Vec<String> = symbol
-            .iter()
-            .map(|&sub| sub.to_lowercase())
-            .flat_map(|sym| vec![("5", sym.clone()), ("10", sym.clone()), ("20", sym.clone())])
-            .map(|(depth, sub)| format!("{}@depth{}@100ms", sub, depth))
-            .collect();
-        let mut web_socket = FuturesWebSockets::new(|event: FuturesWebsocketEvent| {
-            if let FuturesWebsocketEvent::AggrTrades(agg) = event {
-                // println!(
-                //     "Symbol: {}, price: {}, qty: {}",
-                //     agg.symbol, agg.price, agg.qty
-                // );
-                sender.send(agg).unwrap();
-            } else {
-                println!("Unexpected event: {:?}", event);
-            }
-
-            Ok(())
-        });
-        web_socket
-            .connect_multiple_streams(&FuturesMarket::USDM, &best_book)
-            .unwrap();
-
-        // check error
-        if let Err(e) = web_socket.event_loop(&keep_running) {
-            println!("Error: {}", e);
-        }
     }
 }
 
@@ -481,5 +447,26 @@ pub fn remove_oldest_if_needed<T>(
         if let Some(oldest_key) = keys.pop_front() {
             map.remove(&oldest_key);
         }
+    }
+}
+
+impl BinancePrivate {
+    pub fn into_fastexec(&self) -> VecDeque<FastExecData> {
+        let mut arr = VecDeque::new();
+        for (_, v) in self.executions.iter() {
+            arr.push_back(FastExecData {
+                category: Category::Linear.as_str().to_string(),
+                symbol: v.symbol.clone(),
+                order_id: v.order_id.to_string(),
+                exec_id: v.trade_id.to_string(),
+                exec_price: v.average_price.to_string(),
+                exec_qty: v.accumulated_qty_filled_trades.to_string(),
+                exec_time: v.trade_order_time.to_string(),
+                side: v.side.to_string(),
+                seq: v.trade_id as u64,
+                order_link_id: v.new_client_order_id.to_string(),
+            });
+        }
+        arr
     }
 }

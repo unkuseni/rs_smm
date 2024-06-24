@@ -2,7 +2,7 @@ use bybit::model::{Ask, Bid};
 use ordered_float::OrderedFloat;
 use std::collections::BTreeMap;
 
-use super::helpers::Round;
+use super::helpers::spread_price_in_bps;
 #[derive(Debug, Clone)]
 pub struct LocalBook {
     pub asks: BTreeMap<OrderedFloat<f64>, f64>,
@@ -11,6 +11,10 @@ pub struct LocalBook {
     pub best_bid: Bid,
     pub mid_price: f64,
     pub tick_size: f64,
+    pub lot_size: f64,
+    pub min_order_size: f64,
+    pub min_notional: f64,
+    pub post_only_max: f64,
     pub last_update: u64,
 }
 
@@ -25,11 +29,15 @@ impl LocalBook {
                 qty: 0.0,
             },
             mid_price: 0.0,
+            lot_size: 0.0,
+            min_order_size: 0.0,
             best_bid: Bid {
                 price: 0.0,
                 qty: 0.0,
             },
             tick_size: 0.0,
+            post_only_max: 0.0,
+            min_notional: 0.0,
         }
     }
 
@@ -215,9 +223,8 @@ impl LocalBook {
     }
 
     fn set_mid_price(&mut self) {
-        let units = self.tick_size.count_decimal_places() + 1;
         let avg = (self.best_ask.price + self.best_bid.price) / 2.0;
-        self.mid_price = avg.round_to(units as u8);
+        self.mid_price = avg;
     }
     /// Get the tick size of the order book.
     ///
@@ -228,6 +235,18 @@ impl LocalBook {
         // Returns the tick size of the order book. Tick size is the minimum price
         // increment for the market.
         self.tick_size
+    }
+
+    pub fn get_lot_size(&self) -> f64 {
+        self.lot_size
+    }
+
+    pub fn get_min_order_value(&self) -> f64 {
+        self.min_order_size
+    }
+
+    pub fn get_post_only_max(&self) -> f64 {
+        self.post_only_max
     }
 
     /// Get the best ask prices and quantities in the order book.
@@ -262,6 +281,10 @@ impl LocalBook {
         self.best_ask.price - self.best_bid.price
     }
 
+    pub fn get_spread_in_bps(&self) -> f64 {
+        spread_price_in_bps(self.get_spread(), self.mid_price)
+    }
+
     /// Get the bids and asks in the order book at the specified depth.
     pub fn get_book_depth(&self, depth: usize) -> (Vec<Ask>, Vec<Bid>) {
         let asks: Vec<Ask> = {
@@ -287,6 +310,10 @@ impl LocalBook {
             bid_vec
         };
         (asks, bids)
+    }
+    pub fn get_wmid(&self) -> f64 {
+        let imb = self.best_bid.qty / (self.best_bid.qty + self.best_ask.qty);
+        self.best_bid.price * imb + self.best_ask.price * (1.0 - imb)
     }
 }
 

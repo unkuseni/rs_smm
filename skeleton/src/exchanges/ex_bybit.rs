@@ -1,11 +1,15 @@
 use bybit::{
     account::AccountManager,
     api::Bybit,
+    config::Config,
     general::General,
     market::MarketData,
     model::{
-        Category, FastExecData, InstrumentRequest, KlineData, LinearTickerData, LiquidationData, OrderBookUpdate, OrderData, PositionData, Subscription, Tickers, WalletData, WebsocketEvents, WsTrade
+        Category, FastExecData, InstrumentRequest, KlineData, LinearTickerData, LiquidationData,
+        OrderBookUpdate, OrderData, PositionData, Subscription, Tickers, WalletData,
+        WebsocketEvents, WsTrade,
     },
+    trade::Trader,
     ws::Stream as BybitStream,
 };
 use std::{collections::VecDeque, time::Duration};
@@ -13,7 +17,7 @@ use tokio::sync::mpsc;
 
 use crate::util::localorderbook::LocalBook;
 
-use super::exchange::PrivateData;
+use super::exchange::{PrivateData, TaggedPrivate};
 
 #[derive(Clone, Debug)]
 pub struct BybitMarket {
@@ -107,6 +111,15 @@ impl BybitClient {
         }
         rate
     }
+    pub fn bybit_trader(&self) -> Trader {
+        let config = {
+            let x = Config::default();
+            x.set_recv_window(2500)
+        };
+        let trader: Trader =
+            Bybit::new_with_config(&config, Some(self.key.clone()), Some(self.secret.clone()));
+        trader
+    }
 
     pub async fn market_subscribe(
         &self,
@@ -131,6 +144,16 @@ impl BybitClient {
             let req = InstrumentRequest::new(category, Some(s), None, None, None);
             if let Ok(res) = cl.get_futures_instrument_info(req).await {
                 b.tick_size = res.result.list[0].price_filter.tick_size;
+                if let Some(v) = &res.result.list[0].lot_size_filter.qty_step {
+                    b.lot_size = v.parse::<f64>().unwrap_or(0.0);
+                }
+                if let Some(v) = &res.result.list[0].lot_size_filter.post_only_max_order_qty {
+                    b.post_only_max = v.parse::<f64>().unwrap_or(0.0);
+                }
+                b.min_order_size = res.result.list[0].lot_size_filter.min_order_qty;
+                if let Some(v) = &res.result.list[0].lot_size_filter.min_order_amt {
+                    b.min_notional = v.parse::<f64>().unwrap_or(0.0);
+                }
             }
         }
         market_data.klines = symbol
@@ -258,7 +281,6 @@ impl BybitClient {
             {
                 Ok(_) => {
                     println!("Subscription successful");
-                    break;
                 }
                 Err(e) => {
                     eprintln!("Subscription error: {}", e);
@@ -268,7 +290,8 @@ impl BybitClient {
             }
         }
     }
-    pub async fn private_subscribe(&self, sender: mpsc::UnboundedSender<PrivateData>) {
+    
+    pub async fn private_subscribe(&self, sender: mpsc::UnboundedSender<TaggedPrivate>, symbol: String) {
         let mut delay = 600;
         let user_stream: BybitStream = BybitStream::new(
             Some(self.key.clone()),    // API key
@@ -341,7 +364,11 @@ impl BybitClient {
                     eprintln!("Unhandled event: {:#?}", event);
                 }
             }
-            sender.send(PrivateData::Bybit(private_data.clone())).unwrap();
+            let tagged_data =
+                TaggedPrivate::new(symbol.clone(), PrivateData::Bybit(private_data.clone()));
+            sender
+                .send(tagged_data)
+                .unwrap();
             Ok(())
         };
         loop {
@@ -351,7 +378,6 @@ impl BybitClient {
             {
                 Ok(_) => {
                     println!("Subscription successful");
-                    break;
                 }
                 Err(e) => {
                     eprintln!("Subscription error: {}", e);
