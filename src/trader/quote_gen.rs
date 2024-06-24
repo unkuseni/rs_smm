@@ -711,7 +711,7 @@ impl QuoteGenerator {
         price_flu: f64,
     ) {
         // Set spread to a default value.
-        self.set_spread(26.0);
+        // self.set_spread(26.0);
 
         // Check for fills in the wallet data.
         self.check_for_fills(wallet);
@@ -741,7 +741,7 @@ impl QuoteGenerator {
         println!(
             "Grid: {:#?} {:#?} Ask distance: {:#?} {:#?} Bid distance: {:#?} {:#?}",
             orders,
-            book.mid_price,
+            self.minimum_spread,
             // Calculate the distance between the ask price and the mid price.
             ((orders[1].1 - book.mid_price) / (book.mid_price / 10000.0)).round(),
             orders[1].1 - book.mid_price,

@@ -17,22 +17,48 @@ pub struct MarketMaker {
     pub curr_trades: HashMap<String, VecDeque<WsTrade>>,
     pub prev_avg_trade_price: HashMap<String, f64>,
     pub generators: HashMap<String, QuoteGenerator>,
+    pub interval: Duration,
+    pub depths: Vec<usize>
 }
 
 impl MarketMaker {
+    /// Constructs a new `MarketMaker` instance.
+    ///
+    /// # Arguments
+    ///
+    /// * `ss` - The shared state containing information about the markets.
+    /// * `assets` - The assets and their corresponding leverage.
+    /// * `leverage` - The leverage for each asset.
+    /// * `orders_per_side` - The number of orders to place on each side of the order book.
+    /// * `final_order_distance` - The distance of the final order from the mid price.
+    /// * `interval` - The interval at which to process shared state updates, in milliseconds.
+    /// * `depths` - The depths at which to calculate imbalance ratios it uses vec![5, 50]. 
+    ///
+    /// # Returns
+    ///
+    /// A new `MarketMaker` instance.
     pub fn new(
         ss: SharedState,
         assets: HashMap<String, f64>,
         leverage: f64,
         orders_per_side: usize,
-        final_order_distance: f64
+        final_order_distance: f64,
+        interval: u64,
+        depths: Vec<usize>
     ) -> Self {
+        // Construct the `MarketMaker` instance with the provided arguments.
         MarketMaker {
+            // Initialize the `features` field with the features for each symbol.
             features: MarketMaker::build_features(ss.symbols.clone()),
+            // Initialize the `old_books` field with an empty hashmap.
             old_books: HashMap::new(),
+            // Initialize the `old_trades` field with an empty hashmap.
             old_trades: HashMap::new(),
+            // Initialize the `curr_trades` field with an empty hashmap.
             curr_trades: HashMap::new(),
+            // Initialize the `prev_avg_trade_price` field with an empty hashmap.
             prev_avg_trade_price: HashMap::new(),
+            // Initialize the `generators` field with quote generators for each symbol.
             generators: MarketMaker::build_generators(
                 ss.clients,
                 assets,
@@ -40,6 +66,10 @@ impl MarketMaker {
                 leverage,
                 final_order_distance
             ),
+            // Initialize the `interval` field with the provided interval.
+            interval: Duration::from_millis(interval),
+            // Initialize the `depths` field with the provided depths.
+            depths
         }
     }
 
@@ -54,14 +84,14 @@ impl MarketMaker {
     /// This function does not return any value.
     pub async fn start_loop(&mut self, mut receiver: UnboundedReceiver<SharedState>) {
         let mut send = 0;
-        let mut interval = time::interval(Duration::from_millis(400));
+        let mut interval = time::interval(self.interval);
         // Continuously receive and process shared state updates.
         while let Some(data) = receiver.recv().await {
             // Match the exchange in the received data.
             match data.exchange {
                 "bybit" | "binance" => {
                     // Update features with the first market data in the received data.
-                    self.update_features(data.markets[0].clone(), vec![5, 50], false, 610);
+                    self.update_features(data.markets[0].clone(), self.depths.clone(), false, 610);
                     if send > 10 {
                         self.potentially_update(data.markets[0].clone(), data.private.clone())
                             .await;
@@ -102,29 +132,60 @@ impl MarketMaker {
         hash
     }
 
+    /// Builds generators for each symbol in the received data.
+    ///
+    /// # Arguments
+    ///
+    /// * `clients` - A `HashMap` containing the symbol names as keys and `ExchangeClient` instances as values.
+    /// * `assets` - A `HashMap` containing the symbol names as keys and asset values as floats.
+    /// * `orders_per_side` - The number of orders to place on each side of the order book.
+    /// * `leverage` - The leverage to use for trading.
+    /// * `final_order_distance` - The distance between the final order and the mid price.
+    ///
+    /// # Returns
+    ///
+    /// A `HashMap` containing the symbol names as keys and `QuoteGenerator` instances as values.
     fn build_generators(
         clients: HashMap<String, ExchangeClient>,
         assets: HashMap<String, f64>,
         orders_per_side: usize,
         leverage: f64,
-        final_order_distance: f64
+        final_order_distance: f64,
     ) -> HashMap<String, QuoteGenerator> {
+        // Create a new HashMap to store the generators.
         let mut hash: HashMap<String, QuoteGenerator> = HashMap::new();
+
+        // Iterate over each client and insert a new `QuoteGenerator` instance into the HashMap.
         for (k, v) in clients {
+            // Get the asset value for the current symbol.
+            let asset = assets.get(&k).unwrap().clone();
+
+            // Insert a new `QuoteGenerator` instance into the HashMap.
             hash.insert(
                 k.clone(),
                 QuoteGenerator::new(
                     v,
-                    assets.get(&k).unwrap().clone(),
+                    asset,
                     leverage,
                     orders_per_side,
-                    final_order_distance
+                    final_order_distance,
                 ),
             );
         }
+
+        // Return the populated HashMap.
         hash
     }
 
+
+    /// Updates the features of the market maker based on the provided data.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The market data containing the trades and order books.
+    /// * `depth` - The depths at which to calculate imbalance and spread.
+    /// * `use_wmid` - Whether to use the weighted mid price for determining skew or not.
+    /// * `tick_window` - The number of ticks to consider when calculating `avg_trade_price`.
     fn update_features(
         &mut self,
         data: MarketMessage,
@@ -132,19 +193,27 @@ impl MarketMaker {
         use_wmid: bool,
         tick_window: usize,
     ) {
-        // TODO: update features
+        // Iterate over each market message and update the features.
         match data {
+            // Update features for Bybit messages.
             MarketMessage::Bybit(v) => {
+                // Update the current trades with the received trades.
                 for (k, t) in v.trades {
                     self.curr_trades.insert(k, t);
                 }
-                // TODO
+
+                // Update the features for each order book.
                 for (k, b) in v.books {
+                    // Get the feature for the current symbol.
                     let feature = self.features.get_mut(&k).unwrap();
+
+                    // Get the previous book, trades, and average trade price.
                     let prev_book = self.old_books.get(&k);
                     let prev_trade = self.old_trades.get(&k);
                     let prev_avg = self.prev_avg_trade_price.get(&k);
                     let curr_trade = self.curr_trades.get(&k);
+
+                    // Update the feature if all previous data is available.
                     if let (Some(book), Some(p_trades), Some(p_avg), Some(curr_trades)) =
                         (prev_book, prev_trade, prev_avg, curr_trade)
                     {
@@ -159,24 +228,36 @@ impl MarketMaker {
                             use_wmid,
                         );
                     }
+
+                    // Update the old books and average trade prices.
                     self.old_books.insert(k.clone(), b.clone());
                     self.prev_avg_trade_price
                         .insert(k.clone(), feature.avg_trade_price);
                 }
 
+                // Update the old trades.
                 self.old_trades = self.curr_trades.clone();
             }
+
+            // Update features for Binance messages.
             MarketMessage::Binance(v) => {
+                // Update the current trades with the received trades.
                 for (k, t) in v.trades {
                     self.curr_trades.insert(k, t);
                 }
-                // TODO
+
+                // Update the features for each order book.
                 for (k, b) in v.books {
+                    // Get the feature for the current symbol.
                     let feature = self.features.get_mut(&k).unwrap();
+
+                    // Get the previous book, trades, and average trade price.
                     let prev_book = self.old_books.get(&k);
                     let prev_trade = self.old_trades.get(&k);
                     let prev_avg = self.prev_avg_trade_price.get(&k);
                     let curr_trade = self.curr_trades.get(&k);
+
+                    // Update the feature if all previous data is available.
                     if let (Some(book), Some(p_trades), Some(p_avg), Some(curr_trades)) =
                         (prev_book, prev_trade, prev_avg, curr_trade)
                     {
@@ -191,52 +272,82 @@ impl MarketMaker {
                             use_wmid,
                         );
                     }
+
+                    // Update the old books and average trade prices.
                     self.old_books.insert(k.clone(), b);
                     self.prev_avg_trade_price.insert(k, feature.avg_trade_price);
                 }
+
+                // Update the old trades.
                 self.old_trades = self.curr_trades.clone();
             }
         }
     }
 
+    /// Update the strategy with new market data and private data.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The new market data.
+    /// * `private_data` - The private data for each symbol.
     async fn potentially_update(
         &mut self,
         data: MarketMessage,
         private_data: HashMap<String, PrivateData>,
     ) {
-        // TODO: get book, private, skew, and imbalance
-
+        // Get the book, private data, skew, and imbalance for each symbol
         match data {
+            // If the market data is from Bybit
             MarketMessage::Bybit(v) => {
-                // TODO
+                // Update the strategy for each symbol
                 for (symbol, book) in v.books {
-                    let wallet = {
-                        match private_data.get(&symbol) {
-                            Some(v) => v.clone(),
-                            None => {
-                                panic!("Private data for {} not found", symbol);
-                            }
-                        }
+                    // Get the private data for the current symbol
+                    let wallet = match private_data.get(&symbol) {
+                        Some(v) => v.clone(),
+                        None => panic!("Private data for {} not found", symbol),
                     };
+
+                    // Get the skew and imbalance for the current symbol
                     let skew = self.features.get(&symbol).unwrap().skew;
-                    let imbalance = imbalance_ratio(&book, Some(18));
+                    let imbalance = imbalance_ratio(&book, Some(self.depths[0] * 3));
+
+                    // Get the symbol quoter for the current symbol
                     let symbol_quoter = self.generators.get_mut(&symbol).unwrap();
+
+                    // Get the price fluctuation for the current symbol
                     let price_flu = self.features.get(&symbol).unwrap().price_flu.1;
-                    symbol_quoter.update_max();
-                    symbol_quoter.inventory_delta();
+
+                    // Update the symbol quoter
+                    symbol_quoter
+                        .update_max();
+                    symbol_quoter
+                        .inventory_delta();
                     symbol_quoter
                         .update_grid(wallet.clone(), skew, imbalance, book, symbol, price_flu)
                         .await;
                 }
             }
+            // If the market data is from Binance
             MarketMessage::Binance(v) => {
-                // TODO
+                // Update the strategy for each symbol
                 for (symbol, book) in v.books {
-                    let wallet = private_data.get(&symbol).unwrap();
+                    // Get the private data for the current symbol
+                    let wallet = match private_data.get(&symbol) {
+                        Some(v) => v.clone(),
+                        None => panic!("Private data for {} not found", symbol),
+                    };
+
+                    // Get the skew and imbalance for the current symbol
                     let skew = self.features.get(&symbol).unwrap().skew;
-                    let imbalance = imbalance_ratio(&book, Some(18));
-                    let price_flu = self.features.get(&symbol).unwrap().price_flu.1;
+                    let imbalance = imbalance_ratio(&book, Some(self.depths[0] * 3));
+
+                    // Get the symbol quoter for the current symbol
                     let symbol_quoter = self.generators.get_mut(&symbol).unwrap();
+
+                    // Get the price fluctuation for the current symbol
+                    let price_flu = self.features.get(&symbol).unwrap().price_flu.1;
+
+                    // Update the symbol quoter
                     symbol_quoter
                         .update_grid(wallet.clone(), skew, imbalance, book, symbol, price_flu)
                         .await;
@@ -246,40 +357,7 @@ impl MarketMaker {
     }
 }
 
-// pub struct MarketMakerInput {
-//     pub asset: String,
-//     pub target_liquidity: f64, // Amount of liquidity on both sides to target
-//     pub half_spread: u16,      // Half of the spread for our market making (in BPS)
-//     pub max_bps_diff: u16, // Max deviation before we cancel and put new orders on the book (in BPS)
-//     pub max_absolute_position_size: f64, // Absolute value of the max position we can take on
-//     pub decimals: u32,     // Decimals to round to for pricing
-//     pub wallet: LocalWallet, // Wallet containing private key
-// }
 
-// pub struct MarketMaker {
-//     pub asset: String,
-//     pub target_liquidity: f64,
-//     pub half_spread: u16,
-//     pub max_bps_diff: u16,
-//     pub max_absolute_position_size: f64,
-//     pub decimals: u32,
-//     pub lower_resting: MarketMakerRestingOrder,
-//     pub upper_resting: MarketMakerRestingOrder,
-//     pub cur_position: f64,
-//     pub latest_mid_price: f64,
-//     pub info_client: InfoClient,
-//     pub exchange_client: ExchangeClient,
-//     pub user_address: H160,
-// }
-
-// Things for my market maker to track
-// - Assets for each client
-// - Target liquidity
-// - base spread: Account for profit, volatility and symbol spread
-// - max_position for each side 0.5
-// - current position
-// - resting bid or ask order
-//- max-deviation before shifting orders
 
 #[cfg(test)]
 mod tests {
