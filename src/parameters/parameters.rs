@@ -43,7 +43,10 @@ pub fn symbol_params() -> Vec<&'static str> {
             break;
         }
         symbol_arr.push(symbol);
-        println!("Added Symbol: {:#?} To stop the loop leave symbol blank", symbol_arr);
+        println!(
+            "Added Symbol: {:#?} To stop the loop leave symbol blank",
+            symbol_arr
+        );
     }
     symbol_arr
 }
@@ -52,7 +55,7 @@ pub fn api_key_params() -> HashMap<String, (String, String)> {
     let mut api_keys = HashMap::new();
     loop {
         let prompt = "Please enter a symbol for Account Keys:";
-        let symbol = watch(prompt);
+        let symbol = watch(prompt).to_uppercase();
         if symbol == "" {
             break;
         }
@@ -79,7 +82,7 @@ pub fn acct_balance_params() -> HashMap<String, f64> {
     let mut balances = HashMap::new();
     loop {
         let prompt = "Please enter a symbol for account balances:";
-        let symbol = watch(prompt);
+        let symbol = watch(prompt).to_uppercase();
         if symbol == "" {
             break;
         }
@@ -105,28 +108,28 @@ pub fn maker_params() -> MakerParams {
         .parse::<usize>()
         .unwrap();
     let final_order_distance = watch("This is a multiplier for the quote spread Eg 10 or 7.5. Please enter final order distance: ").parse::<f64>().unwrap();
-    let interval = watch("Example: 1000. \n Converts to milliseconds. Please enter interval: ")
-        .parse::<u64>()
-        .unwrap();
     let depths = watch("Example: 5,50. \n Please enter depths: ")
         .split(',')
         .map(|x| x.parse::<usize>().unwrap())
         .collect();
     let rebalance_ratio = watch("Parameter for rebalancing book if inventory is greater than that. Please enter rebalance ratio: ").parse::<f64>().unwrap();
+    let rate_limit = watch("Parameter for rate limit. Please enter rate limit: ")
+        .parse::<u32>()
+        .unwrap();
     let params = MakerParams::new(
         leverage,
         orders_per_side,
         final_order_distance,
-        interval,
         depths,
-        rebalance_ratio
+        rebalance_ratio,
+        rate_limit,
     );
     params
 }
 impl MarketMaker {
     pub fn set_spread_bps(&mut self) {
         for (k, v) in self.generators.iter_mut() {
-            let prompt = format!("Please enter spread for {} in bps: ", k);
+            let prompt = format!("Note: This is also used a max. deviation before replacement. \n Please enter spread for {} in bps: ", k);
             let spread = watch(&prompt).parse::<f64>().unwrap();
             v.set_spread(spread);
         }
@@ -148,9 +151,9 @@ pub struct MakerParams {
     pub leverage: f64,
     pub orders_per_side: usize,
     pub final_order_distance: f64,
-    pub interval: u64,
     pub depths: Vec<usize>,
-    pub rebalance_ratio: f64
+    pub rebalance_ratio: f64,
+    pub rate_limit: u32,
 }
 
 impl MakerParams {
@@ -158,17 +161,17 @@ impl MakerParams {
         leverage: f64,
         orders_per_side: usize,
         final_order_distance: f64,
-        interval: u64,
         depths: Vec<usize>,
-        rebalance_ratio: f64
+        rebalance_ratio: f64,
+        rate_limit: u32,
     ) -> Self {
         Self {
             leverage,
             orders_per_side,
             final_order_distance,
-            interval,
             depths,
-            rebalance_ratio
+            rebalance_ratio,
+            rate_limit,
         }
     }
 }

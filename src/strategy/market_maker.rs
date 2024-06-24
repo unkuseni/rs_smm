@@ -17,8 +17,7 @@ pub struct MarketMaker {
     pub curr_trades: HashMap<String, VecDeque<WsTrade>>,
     pub prev_avg_trade_price: HashMap<String, f64>,
     pub generators: HashMap<String, QuoteGenerator>,
-    pub interval: Duration,
-    pub depths: Vec<usize>
+    pub depths: Vec<usize>,
 }
 
 impl MarketMaker {
@@ -31,8 +30,7 @@ impl MarketMaker {
     /// * `leverage` - The leverage for each asset.
     /// * `orders_per_side` - The number of orders to place on each side of the order book.
     /// * `final_order_distance` - The distance of the final order from the mid price.
-    /// * `interval` - The interval at which to process shared state updates, in milliseconds.
-    /// * `depths` - The depths at which to calculate imbalance ratios it uses vec![5, 50]. 
+    /// * `depths` - The depths at which to calculate imbalance ratios it uses vec![5, 50].
     ///
     /// # Returns
     ///
@@ -43,9 +41,9 @@ impl MarketMaker {
         leverage: f64,
         orders_per_side: usize,
         final_order_distance: f64,
-        interval: u64,
         depths: Vec<usize>,
-        rebalance_ratio: f64
+        rebalance_ratio: f64,
+        rate_limit: u32,
     ) -> Self {
         // Construct the `MarketMaker` instance with the provided arguments.
         MarketMaker {
@@ -66,12 +64,11 @@ impl MarketMaker {
                 orders_per_side,
                 leverage,
                 final_order_distance,
-                rebalance_ratio
+                rebalance_ratio,
+                rate_limit,
             ),
-            // Initialize the `interval` field with the provided interval.
-            interval: Duration::from_millis(interval),
             // Initialize the `depths` field with the provided depths.
-            depths
+            depths,
         }
     }
 
@@ -85,8 +82,9 @@ impl MarketMaker {
     ///
     /// This function does not return any value.
     pub async fn start_loop(&mut self, mut receiver: UnboundedReceiver<SharedState>) {
-        let mut send = 0;
-        let mut interval = time::interval(self.interval);
+        let mut interval = time::interval(Duration::from_millis(5000));
+        // Let the ws feeds warmup.
+        interval.tick().await;
         // Continuously receive and process shared state updates.
         while let Some(data) = receiver.recv().await {
             // Match the exchange in the received data.
@@ -94,14 +92,10 @@ impl MarketMaker {
                 "bybit" | "binance" => {
                     // Update features with the first market data in the received data.
                     self.update_features(data.markets[0].clone(), self.depths.clone(), false, 610);
-                    if send > 10 {
-                        self.potentially_update(data.markets[0].clone(), data.private.clone())
-                            .await;
-                    } else {
-                        interval.tick().await;
-                        send += 1;
-                    }
+                    self.potentially_update(data.markets[0].clone(), data.private.clone())
+                        .await;
                 }
+
                 "both" => {}
                 _ => {
                     // Panic if the exchange does not match any of the specified options.
@@ -153,7 +147,8 @@ impl MarketMaker {
         orders_per_side: usize,
         leverage: f64,
         final_order_distance: f64,
-        rebalance_ratio: f64
+        rebalance_ratio: f64,
+        rate_limit: u32,
     ) -> HashMap<String, QuoteGenerator> {
         // Create a new HashMap to store the generators.
         let mut hash: HashMap<String, QuoteGenerator> = HashMap::new();
@@ -172,7 +167,8 @@ impl MarketMaker {
                     leverage,
                     orders_per_side,
                     final_order_distance,
-                    rebalance_ratio
+                    rebalance_ratio,
+                    rate_limit,
                 ),
             );
         }
@@ -180,7 +176,6 @@ impl MarketMaker {
         // Return the populated HashMap.
         hash
     }
-
 
     /// Updates the features of the market maker based on the provided data.
     ///
@@ -322,10 +317,8 @@ impl MarketMaker {
                     let price_flu = self.features.get(&symbol).unwrap().price_flu.1;
 
                     // Update the symbol quoter
-                    symbol_quoter
-                        .update_max();
-                    symbol_quoter
-                        .inventory_delta();
+                    symbol_quoter.update_max();
+                    symbol_quoter.inventory_delta();
                     symbol_quoter
                         .update_grid(wallet.clone(), skew, imbalance, book, symbol, price_flu)
                         .await;
@@ -360,8 +353,6 @@ impl MarketMaker {
         }
     }
 }
-
-
 
 #[cfg(test)]
 mod tests {

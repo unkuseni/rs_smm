@@ -45,6 +45,9 @@ pub struct QuoteGenerator {
     total_order: usize,
     final_order_distance: f64,
     rebalance_ratio: f64,
+    last_update_price: f64,
+    rate_limit: u32,
+    time_limit: u64,
 }
 
 impl QuoteGenerator {
@@ -66,6 +69,7 @@ impl QuoteGenerator {
         orders_per_side: usize,
         final_order_distance: f64,
         rebalance_ratio: f64,
+        rate_limit: u32,
     ) -> Self {
         // Create the appropriate trader based on the exchange client.
         let trader = match client {
@@ -98,6 +102,11 @@ impl QuoteGenerator {
             final_order_distance,
             // rebalance ratio
             rebalance_ratio,
+
+            last_update_price: 0.0,
+
+            rate_limit,
+            time_limit: 0,
         }
     }
 
@@ -251,17 +260,45 @@ impl QuoteGenerator {
             // If the imbalance is large and the price fluctuation is negative, generate negative
             // skew orders. Otherwise, generate positive skew orders.
             if imbalance > 0.7 && volatility <= -curr_spread * 2.0 {
-                self.negative_skew_orders(half_spread, curr_spread, skew, start, aggression, notional)
+                self.negative_skew_orders(
+                    half_spread,
+                    curr_spread,
+                    skew,
+                    start,
+                    aggression,
+                    notional,
+                )
             } else {
-                self.positive_skew_orders(half_spread, curr_spread, skew, start, aggression, notional)
+                self.positive_skew_orders(
+                    half_spread,
+                    curr_spread,
+                    skew,
+                    start,
+                    aggression,
+                    notional,
+                )
             }
         } else {
             // If the imbalance is large and the price fluctuation is negative, generate positive
             // skew orders. Otherwise, generate negative skew orders.
             if imbalance > 0.7 && volatility <= -curr_spread * 2.0 {
-                self.positive_skew_orders(half_spread, curr_spread, skew, start, aggression, notional)
+                self.positive_skew_orders(
+                    half_spread,
+                    curr_spread,
+                    skew,
+                    start,
+                    aggression,
+                    notional,
+                )
             } else {
-                self.negative_skew_orders(half_spread, curr_spread, skew, start, aggression, notional)
+                self.negative_skew_orders(
+                    half_spread,
+                    curr_spread,
+                    skew,
+                    start,
+                    aggression,
+                    notional,
+                )
             }
         };
 
@@ -299,7 +336,7 @@ impl QuoteGenerator {
         let start = book.get_mid_price();
 
         // Calculate the preferred spread as a percentage of the start price.
-        let preferred_spread = bps_to_decimal(5.5) * start;
+        let preferred_spread = bps_to_decimal(3.0) * start;
         // Calculate the adjusted spread by calling the `adjusted_spread` method.
         let mut count = 0;
         let curr_spread = preferred_spread;
@@ -454,7 +491,7 @@ impl QuoteGenerator {
         }
 
         // filter orders  based on notional
-        orders.retain(|o| (o.0  * o.1) > notional);
+        orders.retain(|o| (o.0 * o.1) > notional);
 
         orders
     }
@@ -479,7 +516,7 @@ impl QuoteGenerator {
         skew: f64,
         start: f64,
         aggression: f64,
-        notional: f64
+        notional: f64,
     ) -> Vec<BatchOrder> {
         // Calculate the best bid and ask prices.
         let best_ask = start + (half_spread * (1.0 - aggression));
@@ -533,7 +570,7 @@ impl QuoteGenerator {
         }
 
         // filter orders  based on notional      // filter orders  based on notional
-        orders.retain(|o| (o.0  * o.1) > notional);
+        orders.retain(|o| (o.0 * o.1) > notional);
 
         orders
     }
@@ -559,7 +596,7 @@ impl QuoteGenerator {
     /// # Returns
     ///
     /// None
-    async fn send_orders(&mut self, orders: Vec<BatchOrder>) {
+    async fn send_batch_orders(&mut self, orders: Vec<BatchOrder>) {
         let mut new_orders = vec![];
         // If the inventory delta is greater than 0.55, remove half of the orders especially buys.
         if self.inventory_delta > 0.55 {
@@ -601,34 +638,30 @@ impl QuoteGenerator {
         }
     }
 
-    /// Checks if the current orders are out of bounds and cancels them if necessary.
+    /// Checks if the order book is out of bounds and cancels all live orders if it is.
     ///
     /// # Arguments
     ///
-    /// * `book` - The local order book.
-    /// * `symbol` - The symbol of the order book.
-    ///
-    /// # Description
-    ///
-    /// This function checks if the current live orders are out of bounds based on the
-    /// mid price of the order book. If an order is out of bounds, it is cancelled.
+    /// * `book` - The order book to check.
+    /// * `symbol` - The symbol to cancel orders for.
     ///
     async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) {
-        // Calculate the bounds based on the mid price and 3 bps.
-        let fees = bps_to_decimal(2.0) * book.mid_price;
-        let bounds = book.get_spread().clip(fees, fees * 2.0);
-        let bid_bounds = book.mid_price - bounds;
-        let ask_bounds = book.mid_price + bounds;
+        // Calculate the bounds based on the spread and mid price.
+        let fees = bps_to_decimal(self.minimum_spread + 2.0);
+        let bounds = book.get_spread().clip(fees, fees * 2.0) * self.last_update_price;
+        let bid_bounds = self.last_update_price - bounds;
+        let ask_bounds = self.last_update_price + bounds;
 
-        // If there are no live orders, return early.
+        // If there are no live orders, return.
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
             return;
         }
 
-        // Iterate over the live sells orders and check if they are out of bounds.
+        // Iterate over live sell orders and cancel if out of bounds.
         for v in self.live_sells_orders.iter() {
-            if v.price <= ask_bounds {
-                // If the order is out of bounds, cancel it.
+            // If the ask bounds are less than the mid price and the last update price is not 0.0,
+            // cancel all orders for the given symbol.
+            if book.mid_price > ask_bounds && self.last_update_price != 0.0 {
                 if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
                     self.live_sells_orders.clear();
                     println!("Cancelling all orders for {}", symbol);
@@ -637,10 +670,11 @@ impl QuoteGenerator {
             }
         }
 
-        // Iterate over the live buys orders and check if they are out of bounds.
+        // Iterate over live buy orders and cancel if out of bounds.
         for v in self.live_buys_orders.iter() {
-            if v.price >= bid_bounds {
-                // If the order is out of bounds, cancel it.
+            // If the bid bounds are greater than the mid price and the last update price is not 0.0,
+            // cancel all orders for the given symbol.
+            if book.mid_price < bid_bounds && self.last_update_price != 0.0 {
                 if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
                     self.live_buys_orders.clear();
                     println!("Cancelling all orders for {}", symbol);
@@ -672,7 +706,6 @@ impl QuoteGenerator {
             order_id,
             exec_qty,
             side,
-
             ..
         } in fills
         {
@@ -753,15 +786,45 @@ impl QuoteGenerator {
 
             // Generate quotes for the grid based on the order book, symbol, imbalance, skew,
             // and price fluctuation.
-            let orders = self.generate_quotes(symbol.clone(), &book, imbalance, skew, price_flu);
+            // let orders = self.generate_quotes(symbol.clone(), &book, imbalance, skew, price_flu);
 
             // Send the generated orders to the book.
             // self.send_orders(orders.clone()).await;
+
+            // self.rate_limit -= 1;
+
+            // if self.rate_limit == 0 {
+            //     for BatchOrder(qty, price, order_symbol, side ) in orders  {
+            //         if side == -1 {
+            //             let live_order =  match self.client.place_sell_limit(qty, price, &order_symbol).await {
+            //                 Ok(v) => v,
+            //                 Err(_) => continue
+            //             };
+            //             self.live_sells_orders.push_back(live_order);
+            //         } else {
+            //             let live_order =  match self.client.place_buy_limit(qty, price, &order_symbol).await {
+            //                 Ok(v) => v,
+            //                 Err(_) => continue
+            //             };
+            //             self.live_buys_orders.push_back(live_order);
+            //         }
+            //     }
+            // }
+
+            // if (book.last_update - self.time_limit) > 1000 {
+            //     self.rate_limit = 10;
+            // }
+
+            // Update bounds
+            self.last_update_price = book.mid_price;
         }
 
         // Generate quotes for the grid based on the order book, symbol, imbalance, skew,
         // and price fluctuation.
         let orders = self.generate_quotes(symbol, &book, imbalance, skew, price_flu);
+
+        //Updates the time limit
+        self.time_limit = book.last_update;
 
         // Print the grid orders along with the mid price, the distance between the
         // ask and mid price, and the distance between the mid price and bid.
