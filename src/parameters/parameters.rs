@@ -112,12 +112,14 @@ pub fn maker_params() -> MakerParams {
         .split(',')
         .map(|x| x.parse::<usize>().unwrap())
         .collect();
+    let rebalance_ratio = watch("Parameter for rebalancing book if inventory is greater than that. Please enter rebalance ratio: ").parse::<f64>().unwrap();
     let params = MakerParams::new(
         leverage,
         orders_per_side,
         final_order_distance,
         interval,
         depths,
+        rebalance_ratio
     );
     params
 }
@@ -148,6 +150,7 @@ pub struct MakerParams {
     pub final_order_distance: f64,
     pub interval: u64,
     pub depths: Vec<usize>,
+    pub rebalance_ratio: f64
 }
 
 impl MakerParams {
@@ -157,6 +160,7 @@ impl MakerParams {
         final_order_distance: f64,
         interval: u64,
         depths: Vec<usize>,
+        rebalance_ratio: f64
     ) -> Self {
         Self {
             leverage,
@@ -164,6 +168,7 @@ impl MakerParams {
             final_order_distance,
             interval,
             depths,
+            rebalance_ratio
         }
     }
 }

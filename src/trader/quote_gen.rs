@@ -36,14 +36,15 @@ pub struct QuoteGenerator {
     asset: f64,
     client: OrderManagement,
     minimum_spread: f64,
-    live_buys_orders: VecDeque<LiveOrder>,
-    live_sells_orders: VecDeque<LiveOrder>,
-    position: f64,
+    pub live_buys_orders: VecDeque<LiveOrder>,
+    pub live_sells_orders: VecDeque<LiveOrder>,
+    pub position: f64,
     max_position_usd: f64,
     max_position_qty: f64,
-    inventory_delta: f64,
+    pub inventory_delta: f64,
     total_order: usize,
     final_order_distance: f64,
+    rebalance_ratio: f64,
 }
 
 impl QuoteGenerator {
@@ -64,6 +65,7 @@ impl QuoteGenerator {
         leverage: f64,
         orders_per_side: usize,
         final_order_distance: f64,
+        rebalance_ratio: f64,
     ) -> Self {
         // Create the appropriate trader based on the exchange client.
         let trader = match client {
@@ -94,6 +96,8 @@ impl QuoteGenerator {
             minimum_spread: 0.0,
             // final order distance
             final_order_distance,
+            // rebalance ratio
+            rebalance_ratio,
         }
     }
 
@@ -289,12 +293,7 @@ impl QuoteGenerator {
     /// It calculates the price and quantity for the order based on the inventory delta and the maximum position USD.
     /// It rounds the size and price to the nearest multiple of the tick size.
     /// It awaits the response from placing the order and handles the success or error cases accordingly.
-    async fn rebalance_inventory(
-        &mut self,
-        symbol: String,
-        book: &LocalBook,
-        rebalance_threshold: f64, // eg 0.55
-    ) -> LiveOrder {
+    async fn rebalance_inventory(&mut self, symbol: String, book: &LocalBook) -> LiveOrder {
         // Get the start price from the order book.
         let start = book.get_mid_price();
 
@@ -313,9 +312,9 @@ impl QuoteGenerator {
             }
 
             // Place a sell order if the inventory delta is greater than the rebalance threshold.
-            if self.inventory_delta > rebalance_threshold {
+            if self.inventory_delta > self.rebalance_ratio {
                 let price = start + curr_spread;
-                let qty = ((self.inventory_delta - rebalance_threshold).abs()
+                let qty = ((self.inventory_delta - self.rebalance_ratio).abs()
                     * self.max_position_usd)
                     / price;
                 let order_response = self
@@ -338,9 +337,9 @@ impl QuoteGenerator {
                 }
             }
             // Place a buy order if the inventory delta is less than the rebalance threshold.
-            else if self.inventory_delta < -rebalance_threshold {
+            else if self.inventory_delta < -self.rebalance_ratio {
                 let price = start - curr_spread;
-                let qty = ((self.inventory_delta - rebalance_threshold).abs()
+                let qty = ((self.inventory_delta - self.rebalance_ratio).abs()
                     * self.max_position_usd)
                     / price;
                 let order_response = self
@@ -602,7 +601,7 @@ impl QuoteGenerator {
     ///
     async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) {
         // Calculate the bounds based on the mid price and 3 bps.
-        let fees = bps_to_decimal(3.0) * book.mid_price;
+        let fees = bps_to_decimal(2.0) * book.mid_price;
         let bounds = book.get_spread().clip(fees, fees * 2.0);
         let bid_bounds = book.mid_price - bounds;
         let ask_bounds = book.mid_price + bounds;
@@ -719,6 +718,9 @@ impl QuoteGenerator {
         // Update the inventory delta.
         self.inventory_delta();
 
+        // check if delta is greater than 55% of inventory
+        self.rebalance_inventory(symbol.clone(), &book).await;
+
         // Check if the order book is out of bounds with the given symbol.
         self.out_of_bounds(&book, symbol.clone()).await;
 
@@ -751,7 +753,6 @@ impl QuoteGenerator {
         );
     }
 }
-
 
 #[derive(Debug, Clone)]
 pub struct LiveOrder {

@@ -44,7 +44,8 @@ impl MarketMaker {
         orders_per_side: usize,
         final_order_distance: f64,
         interval: u64,
-        depths: Vec<usize>
+        depths: Vec<usize>,
+        rebalance_ratio: f64
     ) -> Self {
         // Construct the `MarketMaker` instance with the provided arguments.
         MarketMaker {
@@ -64,7 +65,8 @@ impl MarketMaker {
                 assets,
                 orders_per_side,
                 leverage,
-                final_order_distance
+                final_order_distance,
+                rebalance_ratio
             ),
             // Initialize the `interval` field with the provided interval.
             interval: Duration::from_millis(interval),
@@ -151,6 +153,7 @@ impl MarketMaker {
         orders_per_side: usize,
         leverage: f64,
         final_order_distance: f64,
+        rebalance_ratio: f64
     ) -> HashMap<String, QuoteGenerator> {
         // Create a new HashMap to store the generators.
         let mut hash: HashMap<String, QuoteGenerator> = HashMap::new();
@@ -169,6 +172,7 @@ impl MarketMaker {
                     leverage,
                     orders_per_side,
                     final_order_distance,
+                    rebalance_ratio
                 ),
             );
         }

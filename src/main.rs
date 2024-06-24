@@ -21,6 +21,7 @@ async fn main() {
         final_order_distance,
         interval,
         depths,
+        rebalance_ratio,
     } = maker_params();
     let mut market_maker = MarketMaker::new(
         state.clone(),
@@ -30,6 +31,7 @@ async fn main() {
         final_order_distance,
         interval,
         depths,
+        rebalance_ratio,
     );
     market_maker.set_spread_bps();
     let (sender, receiver) = mpsc::unbounded_channel();
