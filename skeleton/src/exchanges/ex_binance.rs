@@ -197,7 +197,7 @@ impl BinanceClient {
                         // Process when the lengths are not equal or not equal to 5, 10, or 20
                         book.update(new_bids.clone(), new_asks.clone(), event_time);
                     }
-                    let _ = sender.send(market_data.clone());
+
                     market_data.time = event_time;
                 }
                 FuturesWebsocketEvent::AggrTrades(agg) => {
@@ -270,6 +270,7 @@ impl BinanceClient {
                 }
                 _ => {}
             }
+            let _ = sender.send(market_data.clone());
             Ok(())
         };
 

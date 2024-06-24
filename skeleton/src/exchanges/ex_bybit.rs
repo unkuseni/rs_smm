@@ -192,7 +192,6 @@ impl BybitClient {
                     if topic == format!("orderbook.1.{}", sym) {
                         book.update_bba(data.bids, data.asks, timestamp);
                         market_data.time = timestamp;
-                        let _ = sender.send(market_data.clone());
                     } else {
                         book.update(data.bids, data.asks, timestamp);
                     }
@@ -272,6 +271,7 @@ impl BybitClient {
                     eprintln!("Unhandled event: {:#?}", event);
                 }
             }
+            let _ = sender.send(market_data.clone());
             Ok(())
         };
         loop {
@@ -290,8 +290,12 @@ impl BybitClient {
             }
         }
     }
-    
-    pub async fn private_subscribe(&self, sender: mpsc::UnboundedSender<TaggedPrivate>, symbol: String) {
+
+    pub async fn private_subscribe(
+        &self,
+        sender: mpsc::UnboundedSender<TaggedPrivate>,
+        symbol: String,
+    ) {
         let mut delay = 600;
         let user_stream: BybitStream = BybitStream::new(
             Some(self.key.clone()),    // API key
@@ -366,9 +370,7 @@ impl BybitClient {
             }
             let tagged_data =
                 TaggedPrivate::new(symbol.clone(), PrivateData::Bybit(private_data.clone()));
-            sender
-                .send(tagged_data)
-                .unwrap();
+            sender.send(tagged_data).unwrap();
             Ok(())
         };
         loop {
