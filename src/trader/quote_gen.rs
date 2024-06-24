@@ -244,23 +244,24 @@ impl QuoteGenerator {
         };
 
         let volatility = bps_to_decimal(price_flu) * start;
+        let notional = book.min_notional;
 
         // Generate the orders based on the skew value.
         let mut orders = if skew >= 0.0 {
             // If the imbalance is large and the price fluctuation is negative, generate negative
             // skew orders. Otherwise, generate positive skew orders.
             if imbalance > 0.7 && volatility <= -curr_spread * 2.0 {
-                self.negative_skew_orders(half_spread, curr_spread, skew, start, aggression)
+                self.negative_skew_orders(half_spread, curr_spread, skew, start, aggression, notional)
             } else {
-                self.positive_skew_orders(half_spread, curr_spread, skew, start, aggression)
+                self.positive_skew_orders(half_spread, curr_spread, skew, start, aggression, notional)
             }
         } else {
             // If the imbalance is large and the price fluctuation is negative, generate positive
             // skew orders. Otherwise, generate negative skew orders.
             if imbalance > 0.7 && volatility <= -curr_spread * 2.0 {
-                self.positive_skew_orders(half_spread, curr_spread, skew, start, aggression)
+                self.positive_skew_orders(half_spread, curr_spread, skew, start, aggression, notional)
             } else {
-                self.negative_skew_orders(half_spread, curr_spread, skew, start, aggression)
+                self.negative_skew_orders(half_spread, curr_spread, skew, start, aggression, notional)
             }
         };
 
@@ -317,22 +318,25 @@ impl QuoteGenerator {
                 let qty = ((self.inventory_delta - self.rebalance_ratio).abs()
                     * self.max_position_usd)
                     / price;
-                let order_response = self
-                    .client
-                    // Round the size and price to the nearest multiple of the tick size.
-                    .place_sell_limit(round_size(qty, book), round_price(book, price), &symbol)
-                    .await;
-                match order_response {
-                    Ok(v) => {
-                        // Return the market response.
-                        market_response = v;
-                        self.position -= qty * price;
-                        break;
-                    }
-                    Err(e) => {
-                        // Print the error if there is an error placing the order.
-                        println!("Error placing buy order: {:?}", e);
-                        count += 1;
+
+                if (qty * price) > book.min_notional {
+                    let order_response = self
+                        .client
+                        // Round the size and price to the nearest multiple of the tick size.
+                        .place_sell_limit(round_size(qty, book), round_price(book, price), &symbol)
+                        .await;
+                    match order_response {
+                        Ok(v) => {
+                            // Return the market response.
+                            market_response = v;
+                            self.position -= qty * price;
+                            break;
+                        }
+                        Err(e) => {
+                            // Print the error if there is an error placing the order.
+                            println!("Error placing buy order: {:?}", e);
+                            count += 1;
+                        }
                     }
                 }
             }
@@ -342,22 +346,24 @@ impl QuoteGenerator {
                 let qty = ((self.inventory_delta - self.rebalance_ratio).abs()
                     * self.max_position_usd)
                     / price;
-                let order_response = self
-                    .client
-                    // Round the size and price to the nearest multiple of the tick size.
-                    .place_buy_limit(round_size(qty, book), round_price(book, price), &symbol)
-                    .await;
-                match order_response {
-                    Ok(v) => {
-                        // Return the market response.
-                        market_response = v;
-                        self.position += qty * price;
-                        break;
-                    }
-                    Err(e) => {
-                        // Print the error if there is an error placing the order.
-                        println!("Error placing sell order: {:?}", e);
-                        count += 1;
+                if (qty * price) > book.min_notional {
+                    let order_response = self
+                        .client
+                        // Round the size and price to the nearest multiple of the tick size.
+                        .place_buy_limit(round_size(qty, book), round_price(book, price), &symbol)
+                        .await;
+                    match order_response {
+                        Ok(v) => {
+                            // Return the market response.
+                            market_response = v;
+                            self.position += qty * price;
+                            break;
+                        }
+                        Err(e) => {
+                            // Print the error if there is an error placing the order.
+                            println!("Error placing sell order: {:?}", e);
+                            count += 1;
+                        }
                     }
                 }
             }
@@ -385,6 +391,7 @@ impl QuoteGenerator {
         skew: f64,
         start: f64,
         aggression: f64,
+        notional: f64,
     ) -> Vec<BatchOrder> {
         // Calculate the best bid and ask prices.
         let best_bid = start - (half_spread * (1.0 - aggression));
@@ -446,6 +453,9 @@ impl QuoteGenerator {
             orders.push(BatchOrder::new(ask_sizes[i], ask_prices[i], -1));
         }
 
+        // filter orders  based on notional
+        orders.retain(|o| (o.0  * o.1) > notional);
+
         orders
     }
 
@@ -469,6 +479,7 @@ impl QuoteGenerator {
         skew: f64,
         start: f64,
         aggression: f64,
+        notional: f64
     ) -> Vec<BatchOrder> {
         // Calculate the best bid and ask prices.
         let best_ask = start + (half_spread * (1.0 - aggression));
@@ -520,6 +531,9 @@ impl QuoteGenerator {
             // Place ask orders.
             orders.push(BatchOrder::new(ask_sizes[i], *ask, -1));
         }
+
+        // filter orders  based on notional      // filter orders  based on notional
+        orders.retain(|o| (o.0  * o.1) > notional);
 
         orders
     }
@@ -616,6 +630,7 @@ impl QuoteGenerator {
             if v.price <= ask_bounds {
                 // If the order is out of bounds, cancel it.
                 if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                    self.live_sells_orders.clear();
                     println!("Cancelling all orders for {}", symbol);
                     break;
                 }
@@ -627,6 +642,7 @@ impl QuoteGenerator {
             if v.price >= bid_bounds {
                 // If the order is out of bounds, cancel it.
                 if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                    self.live_buys_orders.clear();
                     println!("Cancelling all orders for {}", symbol);
                     break;
                 }
@@ -656,6 +672,7 @@ impl QuoteGenerator {
             order_id,
             exec_qty,
             side,
+
             ..
         } in fills
         {
@@ -718,25 +735,33 @@ impl QuoteGenerator {
         // Update the inventory delta.
         self.inventory_delta();
 
-        // check if delta is greater than 55% of inventory
-        self.rebalance_inventory(symbol.clone(), &book).await;
-
         // Check if the order book is out of bounds with the given symbol.
         self.out_of_bounds(&book, symbol.clone()).await;
+
+        // check if delta is greater than 55% of inventory
+        self.rebalance_inventory(symbol.clone(), &book).await;
 
         // Update the maximum quantity of the order book.
         self.update_max_qty(book.mid_price);
 
-        if self.live_buys_orders.len() < self.live_sells_orders.len() {
+        if self.live_buys_orders.len() < self.live_sells_orders.len()
+            || self.live_sells_orders.len() < self.live_buys_orders.len()
+            || self.live_buys_orders.len() == 0
+            || self.live_sells_orders.len() == 0
+        {
             let _ = self.client.cancel_all(symbol.as_str()).await;
+
+            // Generate quotes for the grid based on the order book, symbol, imbalance, skew,
+            // and price fluctuation.
+            let orders = self.generate_quotes(symbol.clone(), &book, imbalance, skew, price_flu);
+
+            // Send the generated orders to the book.
+            // self.send_orders(orders.clone()).await;
         }
 
         // Generate quotes for the grid based on the order book, symbol, imbalance, skew,
         // and price fluctuation.
         let orders = self.generate_quotes(symbol, &book, imbalance, skew, price_flu);
-
-        // Send the generated orders to the book.
-        // self.send_orders(orders.clone()).await;
 
         // Print the grid orders along with the mid price, the distance between the
         // ask and mid price, and the distance between the mid price and bid.
