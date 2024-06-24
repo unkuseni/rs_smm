@@ -1,3 +1,13 @@
 ### A SIMPLE MARKETMAKER IN RUST
 
-This an implementation of  a simple marketmaker in rust
+This is a simple implementation of a market_maker in rust
+
+### Table of Contents
+
+ - Shared state
+ - Market maker
+ - Feature Engine
+ - Quote Generator
+ - Parameters
+
+
