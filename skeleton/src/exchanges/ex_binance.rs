@@ -128,7 +128,13 @@ impl BinanceClient {
                             }
                             _ => 0.0,
                         }
-                    }
+                    };
+                    b.min_notional = match &v.filters[5] {
+                        binance::model::Filters::MinNotional { notional, .. } => {
+                            notional.clone().unwrap().parse().unwrap_or(0.0)
+                        }
+                        _ => 0.0,
+                    };
                 }
                 Err(_) => {
                     b.tick_size = 0.0;

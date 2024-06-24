@@ -151,6 +151,9 @@ impl BybitClient {
                     b.post_only_max = v.parse::<f64>().unwrap_or(0.0);
                 }
                 b.min_order_size = res.result.list[0].lot_size_filter.min_order_qty;
+                if let Some(v) = &res.result.list[0].lot_size_filter.min_order_amt {
+                    b.min_notional = v.parse::<f64>().unwrap_or(0.0);
+                }
             }
         }
         market_data.klines = symbol

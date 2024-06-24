@@ -13,6 +13,7 @@ pub struct LocalBook {
     pub tick_size: f64,
     pub lot_size: f64,
     pub min_order_size: f64,
+    pub min_notional: f64,
     pub post_only_max: f64,
     pub last_update: u64,
 }
@@ -36,6 +37,7 @@ impl LocalBook {
             },
             tick_size: 0.0,
             post_only_max: 0.0,
+            min_notional: 0.0,
         }
     }
 
