@@ -1,28 +1,41 @@
-# SMM EXCHANGE HANDLER
+## SKELETON
 
-   Build a shared state handler for exchange data.
+   This is a crate for handling multiple exchange data
 
-- Bybit
-- Binance
+### SHARED STATE
 
-## OBJECTIVES
- - Built in support for Bybit and Binance Market and Private data.
- - Built in support for Bybit and Binance Websockets.
- // TODO: Streamline all websockets into one struct
+   The shared state contains the market data, clients and private data.
 
+#### Initializing the shared state
+  
+  ss::SharedState::new(exchange)
 
-## FEATURES 
-
-- Support for Bybit Websockets
-- Support for Binance Websockets
-- Support for making one exchange at a time.
-
-- Normalize the order requests for each exchange in one request
-- Add support for multiple currencies
-- Add support for multiple symbols
-- Add support for multiple clients
+  exchange is &'static str which can be bybit or binance or both
 
 
-## NOTES 
+#### Adding clients to the shared state
 
-Should convert the subscriptions to use traits instead
+  The add_clients takes a key, secret, symbol and exchange(Option al: only to be use when exchange type is both) and updates shared state.
+
+  ss::SharedState::add_clients(key, secret, symbol, exchange)
+
+
+#### Adding symbols to the shared state
+
+  The add_symbols takes a vector of &'_ static str and updates shared state.
+
+  ss::SharedState::add_symbols(symbols)
+
+#### Loading data from the shared state
+
+  The load_data associated function takes in the shared state and a unbounded sender.
+
+  ss::SharedState::load_data(&self, sender)
+
+#### CLIENTS AND MARKET DATA
+
+   Market_data returns a struct containing time, books, klines, trades, tickers and liquidations.
+
+   Private_data returns a struct containing time, wallet, orders, positions and executions.
+
+   
