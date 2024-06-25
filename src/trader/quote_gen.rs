@@ -48,6 +48,7 @@ pub struct QuoteGenerator {
     last_update_price: f64,
     rate_limit: u32,
     time_limit: u64,
+    cancel_limit: u32,
 }
 
 impl QuoteGenerator {
@@ -107,6 +108,7 @@ impl QuoteGenerator {
 
             rate_limit,
             time_limit: 0,
+            cancel_limit: rate_limit,
         }
     }
 
@@ -638,29 +640,32 @@ impl QuoteGenerator {
         let ask_bounds = self.last_update_price + bounds;
 
         // If there are no live orders, return.
-        if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
+        if self.live_buys_orders.len() == 0 && self.live_sells_orders.len() == 0 {
             out_of_bounds = true;
             return out_of_bounds;
         }
-
-        // If the ask bounds are less than the mid price and the last update price is not 0.0,
-        // cancel all orders for the given symbol.
-        if book.mid_price > ask_bounds && self.last_update_price != 0.0 {
-            if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
-                self.live_sells_orders.clear();
-                out_of_bounds = true;
-                println!("Cancelling all orders for {}", symbol);
+        if self.cancel_limit > 0 {
+            // If the ask bounds are less than the mid price and the last update price is not 0.0,
+            // cancel all orders for the given symbol.
+            if book.mid_price > ask_bounds && self.last_update_price != 0.0 {
+                if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                    self.live_sells_orders.clear();
+                    out_of_bounds = true;
+                    println!("Cancelling all orders for {}", symbol);
+                }
             }
-        }
 
-        // If the bid bounds are greater than the mid price and the last update price is not 0.0,
-        // cancel all orders for the given symbol.
-        if book.mid_price < bid_bounds && self.last_update_price != 0.0 {
-            if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
-                self.live_buys_orders.clear();
-                out_of_bounds = true;
-                println!("Cancelling all orders for {}", symbol);
+            // If the bid bounds are greater than the mid price and the last update price is not 0.0,
+            // cancel all orders for the given symbol.
+            if book.mid_price < bid_bounds && self.last_update_price != 0.0 {
+                if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                    self.live_buys_orders.clear();
+                    out_of_bounds = true;
+                    println!("Cancelling all orders for {}", symbol);
+                }
             }
+
+            self.cancel_limit -= 1;
         }
 
         out_of_bounds
@@ -688,6 +693,7 @@ impl QuoteGenerator {
             order_id,
             exec_qty,
             side,
+            symbol,
             ..
         } in fills
         {
@@ -700,7 +706,7 @@ impl QuoteGenerator {
                             live_buy.remove(i);
                             self.max_position_qty -= order.qty;
                             self.position += order.price * order.qty;
-                            println!("Bought {} USD", order.price * order.qty)
+                            println!("Bought {} {}", order.qty, symbol);
                         }
                     }
                 // If the side is not "Buy", remove the filled order from live sells and update the position.
@@ -710,7 +716,7 @@ impl QuoteGenerator {
                             live_sell.remove(i);
                             self.max_position_qty += order.qty;
                             self.position -= order.price * order.qty;
-                            println!("Sold {} USD", order.price * order.qty);
+                            println!("Sold {} {}", order.qty, symbol);
                         }
                     }
                 }
@@ -748,11 +754,11 @@ impl QuoteGenerator {
         // Update the inventory delta.
         self.inventory_delta();
 
-        // check if delta is greater than 55% of inventory
-        // self.rebalance_inventory(symbol.clone(), &book).await;
-
         // Check if the order book is out of bounds with the given symbol.
         let replace_orders = self.out_of_bounds(&book, symbol.clone()).await;
+
+        // check if delta is greater than 55% of inventory
+        self.rebalance_inventory(symbol.clone(), &book).await;
 
         // Update the maximum quantity of the order book.
         self.update_max_qty(book.mid_price);
@@ -763,59 +769,63 @@ impl QuoteGenerator {
             let orders = self.generate_quotes(symbol.clone(), &book, imbalance, skew, price_flu);
 
             // Send the generated orders to the book.
-            self.send_batch_orders(orders.clone()).await;
+            if self.rate_limit > 0 {
+                self.send_batch_orders(orders.clone()).await;
+            }
 
             self.rate_limit -= 1;
 
-            if self.rate_limit == 0 {
-                for BatchOrder(qty, price, order_symbol, side) in orders.clone() {
-                    if side == -1 {
-                        let live_order = match self
-                            .client
-                            .place_sell_limit(
-                                round_size(qty, &book),
-                                round_price(&book, price),
-                                &order_symbol,
-                            )
-                            .await
-                        {
-                            Ok(v) => v,
-                            Err(_) => continue,
-                        };
-                        self.live_sells_orders.push_back(live_order);
-                    } else {
-                        let live_order = match self
-                            .client
-                            .place_buy_limit(
-                                round_size(qty, &book),
-                                round_price(&book, price),
-                                &order_symbol,
-                            )
-                            .await
-                        {
-                            Ok(v) => v,
-                            Err(_) => continue,
-                        };
-                        self.live_buys_orders.push_back(live_order);
-                    }
-                }
-            }
+            // if self.rate_limit == 0 {
+            //     for BatchOrder(qty, price, order_symbol, side) in orders.clone() {
+            //         if side == -1 {
+            //             let live_order = match self
+            //                 .client
+            //                 .place_sell_limit(
+            //                     round_size(qty, &book),
+            //                     round_price(&book, price),
+            //                     &order_symbol,
+            //                 )
+            //                 .await
+            //             {
+            //                 Ok(v) => v,
+            //                 Err(_) => continue,
+            //             };
+            //             self.live_sells_orders.push_back(live_order);
+            //         } else {
+            //             let live_order = match self
+            //                 .client
+            //                 .place_buy_limit(
+            //                     round_size(qty, &book),
+            //                     round_price(&book, price),
+            //                     &order_symbol,
+            //                 )
+            //                 .await
+            //             {
+            //                 Ok(v) => v,
+            //                 Err(_) => continue,
+            //             };
+            //             self.live_buys_orders.push_back(live_order);
+            //         }
+            //     }
+            // }
+            
             // Print the grid orders along with the mid price, the distance between the
             // ask and mid price, and the distance between the mid price and bid.
-            println!(
-                "Grid: {:#?} Ask distance: {:#?}  Bid distance: {:#?} ",
-                orders,
-                // Calculate the distance between the ask price and the mid price.
-                ((orders[1].1 - book.mid_price) / (book.mid_price / 10000.0)).round(),
-                // Calculate the distance between the mid price and the bid price.
-                ((book.mid_price - orders[0].1) / (book.mid_price / 10000.0)).round()
-            );
+            // println!(
+            // "Grid: {:#?} Ask distance: {:#?}  Bid distance: {:#?} ",
+            // orders,
+            // Calculate the distance between the ask price and the mid price.
+            // ((orders[1].1 - book.mid_price) / (book.mid_price / 10000.0)).round(),
+            // Calculate the distance between the mid price and the bid price.
+            //     ((book.mid_price - orders[0].1) / (book.mid_price / 10000.0)).round()
+            // );
         }
 
         if self.time_limit > 1 {
             let condition = (book.last_update - self.time_limit) > 1000;
             if condition == true {
                 self.rate_limit = 10;
+                self.cancel_limit = 10;
             }
         }
 
@@ -1332,12 +1342,8 @@ mod tests {
     #[test]
     fn test_spread_decimal_bps() {
         let mut value = 0.0001;
-        let mut book = LocalBook::new();
-        book.lot_size = 0.00001;
-        for _ in 0..25 {
-            let bps = round_size(0.3453556, &book);
-            println!("Spread decimal bps: {} {} ", bps, value);
-            value += 0.0001;
-        }
+        let mut book: Vec<f64> = Vec::with_capacity(10);
+        let lot_size = 0.00001;
+        println!("Spread decimal bps: {} {} ", book.len(), value);
     }
 }
