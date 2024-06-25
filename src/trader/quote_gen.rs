@@ -757,9 +757,6 @@ impl QuoteGenerator {
         // Check if the order book is out of bounds with the given symbol.
         let replace_orders = self.out_of_bounds(&book, symbol.clone()).await;
 
-        // check if delta is greater than 55% of inventory
-        self.rebalance_inventory(symbol.clone(), &book).await;
-
         // Update the maximum quantity of the order book.
         self.update_max_qty(book.mid_price);
 
@@ -770,6 +767,8 @@ impl QuoteGenerator {
 
             // Send the generated orders to the book.
             if self.rate_limit > 0 {
+                // check if delta is greater than 55% of inventory
+                self.rebalance_inventory(symbol.clone(), &book).await;
                 self.send_batch_orders(orders.clone()).await;
             }
 
@@ -808,7 +807,7 @@ impl QuoteGenerator {
             //         }
             //     }
             // }
-            
+
             // Print the grid orders along with the mid price, the distance between the
             // ask and mid price, and the distance between the mid price and bid.
             // println!(
@@ -1335,15 +1334,3 @@ impl OrderManagement {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_spread_decimal_bps() {
-        let mut value = 0.0001;
-        let mut book: Vec<f64> = Vec::with_capacity(10);
-        let lot_size = 0.00001;
-        println!("Spread decimal bps: {} {} ", book.len(), value);
-    }
-}
