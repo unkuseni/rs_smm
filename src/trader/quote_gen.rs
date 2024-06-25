@@ -267,6 +267,7 @@ impl QuoteGenerator {
                     start,
                     aggression,
                     notional,
+                    book,
                 )
             } else {
                 self.positive_skew_orders(
@@ -276,6 +277,7 @@ impl QuoteGenerator {
                     start,
                     aggression,
                     notional,
+                    book,
                 )
             }
         } else {
@@ -289,6 +291,7 @@ impl QuoteGenerator {
                     start,
                     aggression,
                     notional,
+                    book,
                 )
             } else {
                 self.negative_skew_orders(
@@ -298,6 +301,7 @@ impl QuoteGenerator {
                     start,
                     aggression,
                     notional,
+                    book,
                 )
             }
         };
@@ -417,6 +421,7 @@ impl QuoteGenerator {
         start: f64,
         aggression: f64,
         notional: f64,
+        book: &LocalBook,
     ) -> Vec<BatchOrder> {
         // Calculate the best bid and ask prices.
         let best_bid = start - (half_spread * (1.0 - aggression));
@@ -473,9 +478,17 @@ impl QuoteGenerator {
         let mut orders = vec![];
         for (i, bid) in bid_prices.iter().enumerate() {
             // Create a new batch order with the bid size, price, and quantity.
-            orders.push(BatchOrder::new(bid_sizes[i], *bid, 1));
+            orders.push(BatchOrder::new(
+                round_size(bid_sizes[i], book),
+                round_price(book, *bid),
+                1,
+            ));
             // Create a new batch order with the ask size, price, and quantity.
-            orders.push(BatchOrder::new(ask_sizes[i], ask_prices[i], -1));
+            orders.push(BatchOrder::new(
+                round_size(ask_sizes[i], book),
+                round_price(book, ask_prices[i]),
+                -1,
+            ));
         }
 
         // filter orders  based on notional
@@ -505,6 +518,7 @@ impl QuoteGenerator {
         start: f64,
         aggression: f64,
         notional: f64,
+        book: &LocalBook,
     ) -> Vec<BatchOrder> {
         // Calculate the best bid and ask prices.
         let best_ask = start + (half_spread * (1.0 - aggression));
@@ -552,7 +566,11 @@ impl QuoteGenerator {
         let mut orders = vec![];
         for (i, ask) in ask_prices.iter().enumerate() {
             // Place bid orders.
-            orders.push(BatchOrder::new(bid_sizes[i], bid_prices[i], 1));
+            orders.push(BatchOrder::new(
+                round_size(bid_sizes[i], book),
+                round_price(book, bid_prices[i]),
+                1,
+            ));
             // Place ask orders.
             orders.push(BatchOrder::new(ask_sizes[i], *ask, -1));
         }
@@ -754,7 +772,7 @@ impl QuoteGenerator {
                     if side == -1 {
                         let live_order = match self
                             .client
-                            .place_sell_limit(qty, price, &order_symbol)
+                            .place_sell_limit(round_size(qty, &book), round_price(&book, price), &order_symbol)
                             .await
                         {
                             Ok(v) => v,
@@ -763,7 +781,7 @@ impl QuoteGenerator {
                         self.live_sells_orders.push_back(live_order);
                     } else {
                         let live_order =
-                            match self.client.place_buy_limit(qty, price, &order_symbol).await {
+                            match self.client.place_buy_limit(round_size(qty, &book), round_price(&book, price), &order_symbol).await {
                                 Ok(v) => v,
                                 Err(_) => continue,
                             };

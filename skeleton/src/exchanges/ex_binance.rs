@@ -290,7 +290,7 @@ impl BinanceClient {
     pub fn binance_trader(&self) -> FuturesAccount {
         let config = {
             let x = Config::default();
-            x.set_recv_window(100)
+            x.set_recv_window(600)
         };
         let trader: FuturesAccount =
             Binance::new_with_config(Some(self.key.clone()), Some(self.secret.clone()), &config);
