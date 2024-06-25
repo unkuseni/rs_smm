@@ -4,7 +4,6 @@ use skeleton::util::localorderbook::LocalBook;
 use skeleton::{exchanges::exchange::MarketMessage, ss::SharedState};
 use std::collections::{HashMap, VecDeque};
 use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::time::{self, Duration};
 
 use crate::features::engine::Engine;
 use crate::features::imbalance::imbalance_ratio;
@@ -82,7 +81,6 @@ impl MarketMaker {
     ///
     /// This function does not return any value.
     pub async fn start_loop(&mut self, mut receiver: UnboundedReceiver<SharedState>) {
-
         // Continuously receive and process shared state updates.
         while let Some(data) = receiver.recv().await {
             // Match the exchange in the received data.

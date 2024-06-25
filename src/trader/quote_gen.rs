@@ -338,69 +338,57 @@ impl QuoteGenerator {
         // Calculate the preferred spread as a percentage of the start price.
         let preferred_spread = bps_to_decimal(3.0) * start;
         // Calculate the adjusted spread by calling the `adjusted_spread` method.
-        let mut count = 0;
         let curr_spread = preferred_spread;
 
         let mut market_response = LiveOrder::new(0.0, 0.0, "".to_string());
 
-        loop {
-            // Break the loop if the maximum number of retries is reached.
-            if count > 8 {
-                break;
-            }
+        // Place a sell order if the inventory delta is greater than the rebalance threshold.
+        if self.inventory_delta > self.rebalance_ratio {
+            let price = start + curr_spread;
+            let qty = ((self.inventory_delta - self.rebalance_ratio).abs() * self.max_position_usd)
+                / price;
 
-            // Place a sell order if the inventory delta is greater than the rebalance threshold.
-            if self.inventory_delta > self.rebalance_ratio {
-                let price = start + curr_spread;
-                let qty = ((self.inventory_delta - self.rebalance_ratio).abs()
-                    * self.max_position_usd)
-                    / price;
-
-                if (qty * price) > book.min_notional {
-                    let order_response = self
-                        .client
-                        // Round the size and price to the nearest multiple of the tick size.
-                        .place_sell_limit(round_size(qty, book), round_price(book, price), &symbol)
-                        .await;
-                    match order_response {
-                        Ok(v) => {
-                            // Return the market response.
-                            market_response = v;
-                            self.position -= qty * price;
-                            break;
-                        }
-                        Err(e) => {
-                            // Print the error if there is an error placing the order.
-                            println!("Error placing buy order: {:?}", e);
-                            count += 1;
-                        }
+            if (qty * price) > book.min_notional {
+                let order_response = self
+                    .client
+                    // Round the size and price to the nearest multiple of the tick size.
+                    .place_sell_limit(round_size(qty, book), round_price(book, price), &symbol)
+                    .await;
+                match order_response {
+                    Ok(v) => {
+                        // Return the market response.
+                        market_response = v;
+                        self.position -= qty * price;
+                        self.inventory_delta = 0.55;
+                    }
+                    Err(e) => {
+                        // Print the error if there is an error placing the order.
+                        println!("Error placing sell order: {:?}", e);
                     }
                 }
             }
-            // Place a buy order if the inventory delta is less than the rebalance threshold.
-            else if self.inventory_delta < -self.rebalance_ratio {
-                let price = start - curr_spread;
-                let qty = ((self.inventory_delta - self.rebalance_ratio).abs()
-                    * self.max_position_usd)
-                    / price;
-                if (qty * price) > book.min_notional {
-                    let order_response = self
-                        .client
-                        // Round the size and price to the nearest multiple of the tick size.
-                        .place_buy_limit(round_size(qty, book), round_price(book, price), &symbol)
-                        .await;
-                    match order_response {
-                        Ok(v) => {
-                            // Return the market response.
-                            market_response = v;
-                            self.position += qty * price;
-                            break;
-                        }
-                        Err(e) => {
-                            // Print the error if there is an error placing the order.
-                            println!("Error placing sell order: {:?}", e);
-                            count += 1;
-                        }
+        }
+        // Place a buy order if the inventory delta is less than the rebalance threshold.
+        else if self.inventory_delta < -self.rebalance_ratio {
+            let price = start - curr_spread;
+            let qty = ((self.inventory_delta - self.rebalance_ratio).abs() * self.max_position_usd)
+                / price;
+            if (qty * price) > book.min_notional {
+                let order_response = self
+                    .client
+                    // Round the size and price to the nearest multiple of the tick size.
+                    .place_buy_limit(round_size(qty, book), round_price(book, price), &symbol)
+                    .await;
+                match order_response {
+                    Ok(v) => {
+                        // Return the market response.
+                        market_response = v;
+                        self.position += qty * price;
+                        self.inventory_delta = -0.55;
+                    }
+                    Err(e) => {
+                        // Print the error if there is an error placing the order.
+                        println!("Error placing buy order: {:?}", e);
                     }
                 }
             }
@@ -694,7 +682,6 @@ impl QuoteGenerator {
                     for (i, order) in live_buy.clone().iter().enumerate() {
                         if order.order_id == order_id {
                             live_buy.remove(i);
-                        } else {
                             self.max_position_qty -= order.qty;
                             self.position += order.price * order.qty;
                         }
@@ -747,7 +734,7 @@ impl QuoteGenerator {
         self.out_of_bounds(&book, symbol.clone()).await;
 
         // check if delta is greater than 55% of inventory
-        self.rebalance_inventory(symbol.clone(), &book).await;
+        // self.rebalance_inventory(symbol.clone(), &book).await;
 
         // Update the maximum quantity of the order book.
         self.update_max_qty(book.mid_price);
@@ -796,14 +783,14 @@ impl QuoteGenerator {
 
         // Print the grid orders along with the mid price, the distance between the
         // ask and mid price, and the distance between the mid price and bid.
-        println!(
-            "Grid: {:#?} Ask distance: {:#?}  Bid distance: {:#?} ",
-            orders,
+        // println!(
+        //     "Grid: {:#?} Ask distance: {:#?}  Bid distance: {:#?} ",
+        //     orders,
             // Calculate the distance between the ask price and the mid price.
-            ((orders[1].1 - book.mid_price) / (book.mid_price / 10000.0)).round(),
+            // ((orders[1].1 - book.mid_price) / (book.mid_price / 10000.0)).round(),
             // Calculate the distance between the mid price and the bid price.
-            ((book.mid_price - orders[0].1) / (book.mid_price / 10000.0)).round()
-        );
+        //     ((book.mid_price - orders[0].1) / (book.mid_price / 10000.0)).round()
+        // );
     }
 }
 
