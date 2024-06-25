@@ -3,12 +3,11 @@ use std::{
     io::{self, Write},
 };
 
-use crate::strategy::market_maker::MarketMaker;
+use skeleton::util::helpers::{read_toml, Config};
 
-//  On next update
-// NOTE: Use a watch function instead to listen for changes in file called config.toml
 
-fn watch(prompt: &str) -> String {
+
+pub fn watch(prompt: &str) -> String {
     println!("{}", prompt);
     io::stdout().flush().unwrap();
     let mut input = String::new();
@@ -129,14 +128,12 @@ pub fn maker_params() -> MakerParams {
     );
     params
 }
-impl MarketMaker {
-    pub fn set_spread_bps(&mut self) {
-        for (k, v) in self.generators.iter_mut() {
-            let prompt = format!("Note: This is also used a max. deviation before replacement. \n Please enter spread for {} in bps: ", k);
-            let spread = watch(&prompt).parse::<f64>().unwrap();
-            v.set_spread(spread);
-        }
-    }
+
+
+pub fn  use_toml() -> Config {
+    let path = "./config.toml";
+    let result = read_toml(path);
+    result
 }
 
 #[cfg(test)]
@@ -148,7 +145,17 @@ mod tests {
         let exch = exch_params();
         assert_eq!(exch, "bybit");
     }
+
+    #[test]
+    fn test_toml() {
+        let config = use_toml();
+        assert_eq!(config.exchange, "bybit");
+        println!("{:#?}", config);
+    }
 }
+
+
+
 
 pub struct MakerParams {
     pub leverage: f64,

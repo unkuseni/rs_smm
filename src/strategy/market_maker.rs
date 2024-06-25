@@ -7,6 +7,7 @@ use tokio::sync::mpsc::UnboundedReceiver;
 
 use crate::features::engine::Engine;
 use crate::features::imbalance::imbalance_ratio;
+use crate::parameters::parameters::watch;
 use crate::trader::quote_gen::QuoteGenerator;
 
 pub struct MarketMaker {
@@ -347,6 +348,22 @@ impl MarketMaker {
                         .await;
                 }
             }
+        }
+    }
+    
+    pub fn set_spread_bps_input(&mut self) {
+        for (k, v) in self.generators.iter_mut() {
+            let prompt = format!("Note: This is also used a max. deviation before replacement. \n Please enter spread for {} in bps: ", k);
+            let spread = watch(&prompt).parse::<f64>().unwrap();
+            v.set_spread(spread);
+        }
+    }
+
+    pub fn set_spread_toml(&mut self, bps: Vec<f64>) {
+        let mut index = 0;
+        for (_, v) in self.generators.iter_mut() { 
+            v.set_spread(bps[index]);
+            index += 1;
         }
     }
 }

@@ -768,7 +768,7 @@ impl QuoteGenerator {
             // Send the generated orders to the book.
             if self.rate_limit > 0 {
                 // check if delta is greater than 55% of inventory
-                self.rebalance_inventory(symbol.clone(), &book).await;
+                // self.rebalance_inventory(symbol.clone(), &book).await;
                 self.send_batch_orders(orders.clone()).await;
             }
 
@@ -825,7 +825,7 @@ impl QuoteGenerator {
             //Updates the time limit
             self.time_limit = book.last_update;
         }
-
+        
         // Update the time limit
         if self.time_limit > 1 {
             let condition = (book.last_update - self.time_limit) > 1000;
