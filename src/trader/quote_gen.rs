@@ -818,8 +818,15 @@ impl QuoteGenerator {
             // Calculate the distance between the mid price and the bid price.
             //     ((book.mid_price - orders[0].1) / (book.mid_price / 10000.0)).round()
             // );
+            
+            // Update bounds
+            self.last_update_price = book.mid_price;
+            
+            //Updates the time limit
+            self.time_limit = book.last_update;
         }
 
+        // Update the time limit
         if self.time_limit > 1 {
             let condition = (book.last_update - self.time_limit) > 1000;
             if condition == true {
@@ -828,11 +835,6 @@ impl QuoteGenerator {
             }
         }
 
-        // Update bounds
-        self.last_update_price = book.mid_price;
-
-        //Updates the time limit
-        self.time_limit = book.last_update;
     }
 }
 
