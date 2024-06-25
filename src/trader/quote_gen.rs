@@ -676,6 +676,7 @@ impl QuoteGenerator {
                             live_buy.remove(i);
                             self.max_position_qty -= order.qty;
                             self.position += order.price * order.qty;
+                            println!("Bought {} USD", order.price * order.qty)
                         }
                     }
                 // If the side is not "Buy", remove the filled order from live sells and update the position.
@@ -685,6 +686,7 @@ impl QuoteGenerator {
                             live_sell.remove(i);
                             self.max_position_qty += order.qty;
                             self.position -= order.price * order.qty;
+                            println!("Sold {} USD", order.price * order.qty);
                         }
                     }
                 }
