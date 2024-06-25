@@ -171,8 +171,15 @@ impl MarketMaker {
             );
         }
 
-        // Return the populated HashMap.
+        for  (_, v) in hash.iter_mut() {
+            v.update_max(); 
+        }
+
         hash
+
+        // Return the populated HashMap.
+        
+
     }
 
     /// Updates the features of the market maker based on the provided data.
@@ -315,8 +322,6 @@ impl MarketMaker {
                     let price_flu = self.features.get(&symbol).unwrap().price_flu.1;
 
                     // Update the symbol quoter
-                    symbol_quoter.update_max();
-                    symbol_quoter.inventory_delta();
                     symbol_quoter
                         .update_grid(wallet.clone(), skew, imbalance, book, symbol, price_flu)
                         .await;
