@@ -201,7 +201,6 @@ pub struct Config {
     pub orders_per_side: usize,
     pub final_order_distance: f64,
     pub depths: Vec<usize>,
-    pub rebalance_ratio: f64,
     pub rate_limit: u32,
     pub bps: Vec<f64>,
 }

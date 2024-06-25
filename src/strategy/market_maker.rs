@@ -42,7 +42,6 @@ impl MarketMaker {
         orders_per_side: usize,
         final_order_distance: f64,
         depths: Vec<usize>,
-        rebalance_ratio: f64,
         rate_limit: u32,
     ) -> Self {
         // Construct the `MarketMaker` instance with the provided arguments.
@@ -64,7 +63,6 @@ impl MarketMaker {
                 orders_per_side,
                 leverage,
                 final_order_distance,
-                rebalance_ratio,
                 rate_limit,
             ),
             // Initialize the `depths` field with the provided depths.
@@ -145,7 +143,6 @@ impl MarketMaker {
         orders_per_side: usize,
         leverage: f64,
         final_order_distance: f64,
-        rebalance_ratio: f64,
         rate_limit: u32,
     ) -> HashMap<String, QuoteGenerator> {
         // Create a new HashMap to store the generators.
@@ -165,7 +162,6 @@ impl MarketMaker {
                     leverage,
                     orders_per_side,
                     final_order_distance,
-                    rebalance_ratio,
                     rate_limit,
                 ),
             );

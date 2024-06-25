@@ -296,7 +296,7 @@ impl BybitClient {
         sender: mpsc::UnboundedSender<TaggedPrivate>,
         symbol: String,
     ) {
-        let mut delay = 600;
+        let mut delay = 100;
         let user_stream: BybitStream = BybitStream::new(
             Some(self.key.clone()),    // API key
             Some(self.secret.clone()), // Secret Key

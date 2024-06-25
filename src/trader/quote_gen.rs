@@ -43,7 +43,6 @@ pub struct QuoteGenerator {
     pub inventory_delta: f64,
     total_order: usize,
     final_order_distance: f64,
-    rebalance_ratio: f64,
     last_update_price: f64,
     rate_limit: u32,
     time_limit: u64,
@@ -68,7 +67,6 @@ impl QuoteGenerator {
         leverage: f64,
         orders_per_side: usize,
         final_order_distance: f64,
-        rebalance_ratio: f64,
         rate_limit: u32,
     ) -> Self {
         // Create the appropriate trader based on the exchange client.
@@ -99,8 +97,7 @@ impl QuoteGenerator {
             minimum_spread: 0.0,
             // final order distance
             final_order_distance,
-            // rebalance ratio
-            rebalance_ratio,
+            
 
             last_update_price: 0.0,
 
@@ -245,7 +242,7 @@ impl QuoteGenerator {
         let mut orders = if skew >= 0.0 {
             // If the imbalance is large and the price fluctuation is negative, generate negative
             // skew orders. Otherwise, generate positive skew orders.
-            if imbalance > 0.7 && volatility <= -curr_spread * 2.0 {
+            if imbalance > 0.95 && volatility <= -curr_spread * 2.0 {
                 self.negative_skew_orders(
                     half_spread,
                     curr_spread,
@@ -269,7 +266,7 @@ impl QuoteGenerator {
         } else {
             // If the imbalance is large and the price fluctuation is negative, generate positive
             // skew orders. Otherwise, generate negative skew orders.
-            if imbalance > 0.7 && volatility <= -curr_spread * 2.0 {
+            if imbalance > 0.95 && volatility <= -curr_spread * 2.0 {
                 self.positive_skew_orders(
                     half_spread,
                     curr_spread,
@@ -300,91 +297,6 @@ impl QuoteGenerator {
         orders
     }
 
-    /// Rebalances the inventory based on the given parameters.
-    ///
-    /// # Arguments
-    ///
-    /// * `symbol` - The symbol of the quote.
-    /// * `book` - The order book to get the mid price from.
-    /// * `rebalance_threshold` - The amount of inventory to rebalance. -1 to 1 eg 0.6 for 60% sell orders or 60% buy orders
-    ///
-    /// # Returns
-    ///
-    /// The market response from placing the order.
-    ///
-    /// # Description
-    ///
-    /// This function rebalances the inventory by placing buy or sell orders based on the calculated values.
-    /// It iterates over a loop until the inventory is rebalanced or the maximum number of retries is reached.
-    /// If the inventory delta is greater than the rebalance threshold, it places a sell order.
-    /// If the inventory delta is less than the rebalance threshold, it places a buy order.
-    /// It calculates the price and quantity for the order based on the inventory delta and the maximum position USD.
-    /// It rounds the size and price to the nearest multiple of the tick size.
-    /// It awaits the response from placing the order and handles the success or error cases accordingly.
-    async fn rebalance_inventory(&mut self, symbol: String, book: &LocalBook) -> LiveOrder {
-        // Get the start price from the order book.
-        let start = book.get_mid_price();
-
-        // Calculate the preferred spread as a percentage of the start price.
-        let preferred_spread = bps_to_decimal(3.0) * start;
-        // Calculate the adjusted spread by calling the `adjusted_spread` method.
-        let curr_spread = preferred_spread;
-
-        let mut market_response = LiveOrder::new(0.0, 0.0, "".to_string());
-
-        // Place a sell order if the inventory delta is greater than the rebalance threshold.
-        if self.inventory_delta > self.rebalance_ratio {
-            let price = start + curr_spread;
-            let qty = ((self.inventory_delta - self.rebalance_ratio).abs() * self.max_position_usd)
-                / price;
-
-            if (qty * price) > book.min_notional {
-                let order_response = self
-                    .client
-                    // Round the size and price to the nearest multiple of the tick size.
-                    .place_sell_limit(round_size(qty, book), round_price(book, price), &symbol)
-                    .await;
-                match order_response {
-                    Ok(v) => {
-                        // Return the market response.
-                        market_response = v;
-                        self.position -= qty * price;
-                        self.inventory_delta = self.rebalance_ratio;
-                    }
-                    Err(e) => {
-                        // Print the error if there is an error placing the order.
-                        println!("Error placing sell order: {:?}", e);
-                    }
-                }
-            }
-        }
-        // Place a buy order if the inventory delta is less than the rebalance threshold.
-        else if self.inventory_delta < -self.rebalance_ratio {
-            let price = start - curr_spread;
-            let qty = ((self.inventory_delta - self.rebalance_ratio).abs() * self.max_position_usd)
-                / price;
-            if (qty * price) > book.min_notional {
-                let order_response = self
-                    .client
-                    // Round the size and price to the nearest multiple of the tick size.
-                    .place_buy_limit(round_size(qty, book), round_price(book, price), &symbol)
-                    .await;
-                match order_response {
-                    Ok(v) => {
-                        // Return the market response.
-                        market_response = v;
-                        self.position += qty * price;
-                        self.inventory_delta = -self.rebalance_ratio;
-                    }
-                    Err(e) => {
-                        // Print the error if there is an error placing the order.
-                        println!("Error placing buy order: {:?}", e);
-                    }
-                }
-            }
-        }
-        market_response
-    }
 
     /// Generates a list of batch orders for positive skew.
     ///
@@ -736,6 +648,7 @@ impl QuoteGenerator {
 
 
         if replace_orders == true {
+
             // Generate quotes for the grid based on the order book, symbol, imbalance, skew,
             // and price fluctuation.
             let orders = self.generate_quotes(symbol.clone(), &book, imbalance, skew, price_flu);

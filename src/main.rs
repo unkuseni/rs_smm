@@ -35,7 +35,6 @@ async fn main() {
         config.orders_per_side,
         config.final_order_distance,
         config.depths,
-        config.rebalance_ratio,
         config.rate_limit,
     );
     market_maker.set_spread_toml(config.bps);
