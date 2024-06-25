@@ -609,13 +609,8 @@ impl QuoteGenerator {
         match order_response {
             Ok(v) => {
                 // Iterate over each response and push it to the appropriate queue.
-                for (i, res) in v.iter().enumerate() {
-                    if i == 0 || i % 2 == 0 {
-                        self.live_buys_orders.push_back(res.clone());
-                    } else {
-                        self.live_sells_orders.push_back(res.clone());
-                    }
-                }
+                self.live_buys_orders = v[0].clone();
+                self.live_sells_orders = v[1].clone();
             }
             Err(e) => {
                 // Print the error if there is an error placing the batch order.
@@ -888,7 +883,8 @@ impl OrderManagement {
                         Side::Buy,
                         qty,
                         price,
-                        1,
+                        0,
+
                     )
                     .await
                 {
@@ -1201,8 +1197,10 @@ impl OrderManagement {
         }
     }
 
-    async fn batch_place_order(&self, order_array: Vec<BatchOrder>) -> Result<Vec<LiveOrder>, ()> {
+    async fn batch_place_order(&self, order_array: Vec<BatchOrder>) -> Result<Vec<VecDeque<LiveOrder>>, ()> {
         let order_array_clone = order_array.clone();
+        let mut tracking_sells = vec![];
+        let mut index = 0;
         let order_arr = {
             let mut arr = vec![];
             for BatchOrder(qty, price, symbol, side) in order_array_clone {
@@ -1212,9 +1210,12 @@ impl OrderManagement {
                     order_type: bybit::model::OrderType::Limit,
                     side: {
                         if side < 0 {
+                            tracking_sells.push(index);
+                            index += 1;
                             bybit::model::Side::Sell
                         } else {
                             bybit::model::Side::Buy
+
                         }
                     },
                     qty,
@@ -1235,13 +1236,27 @@ impl OrderManagement {
                 };
                 if let Ok(v) = client.batch_place_order(req).await {
                     let mut arr = vec![];
+                    let mut buy_array = VecDeque::new();
+                    let mut sell_array = VecDeque::new();
                     for (i, d) in v.result.list.iter().enumerate() {
-                        arr.push(LiveOrder::new(
-                            od_clone[i].1.clone(),
-                            od_clone[i].0.clone(),
-                            d.order_id.to_string(),
-                        ));
+                        for pos in tracking_sells.clone() {
+                            if i == pos {
+                                sell_array.push_back(LiveOrder::new(
+                                    od_clone[i].1.clone(),
+                                    od_clone[i].0.clone(),
+                                    d.order_id.to_string(),
+                                ));
+                            } else {
+                                buy_array.push_back(LiveOrder::new(
+                                    od_clone[i].1.clone(),
+                                    od_clone[i].0.clone(),
+                                    d.order_id.to_string(),
+                                ));
+                            }
+                        }
                     }
+                    arr.push(buy_array);
+                    arr.push(sell_array);
                     Ok(arr)
                 } else {
                     Err(())
