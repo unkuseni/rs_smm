@@ -5,6 +5,9 @@ use std::{
 
 use crate::strategy::market_maker::MarketMaker;
 
+//  On next update
+// NOTE: Use a watch function instead to listen for changes in file called config.toml
+
 fn watch(prompt: &str) -> String {
     println!("{}", prompt);
     io::stdout().flush().unwrap();
