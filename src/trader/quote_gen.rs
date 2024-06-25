@@ -90,14 +90,13 @@ impl QuoteGenerator {
             inventory_delta: 0.0,
             // Set the maximum position USD to 0.0.
             max_position_usd: 0.0,
-            
+
             // Set the total order to 10.
             total_order: orders_per_side * 2,
             // Set the preferred spread to the provided value.
             minimum_spread: 0.0,
             // final order distance
             final_order_distance,
-            
 
             last_update_price: 0.0,
 
@@ -121,7 +120,6 @@ impl QuoteGenerator {
     pub fn set_spread(&mut self, spread_in_bps: f64) {
         self.minimum_spread = spread_in_bps;
     }
-
 
     /// Updates the inventory delta based on the quantity and price.
     ///
@@ -296,7 +294,6 @@ impl QuoteGenerator {
 
         orders
     }
-
 
     /// Generates a list of batch orders for positive skew.
     ///
@@ -524,6 +521,10 @@ impl QuoteGenerator {
     ///
     async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) -> bool {
         let mut out_of_bounds = false;
+
+        // Clone the live buys and sells orders.
+        let mut live_buy = self.live_buys_orders.clone();
+        let mut live_sell = self.live_sells_orders.clone();
         // Calculate the bounds based on the spread and mid price.
         let fees = bps_to_decimal(self.minimum_spread + 2.0);
         let bounds = book.get_spread().clip(fees, fees * 2.0) * self.last_update_price;
@@ -534,6 +535,19 @@ impl QuoteGenerator {
         if self.live_buys_orders.len() == 0 && self.live_sells_orders.len() == 0 {
             out_of_bounds = true;
             return out_of_bounds;
+        }
+        if book.mid_price > ask_bounds && self.last_update_price != 0.0 {
+            self.position -= live_sell[0].price * live_sell[0].qty;
+            live_sell.pop_front();
+            println!("Sold {} {}", live_sell[0].qty, symbol); // Update the live buys and sells orders with the new values.
+            self.live_sells_orders = live_sell;
+        }
+
+        if book.mid_price < bid_bounds && self.last_update_price != 0.0 {
+            self.position += live_buy[0].price * live_buy[0].qty;
+            live_buy.pop_front();
+            println!("Sold {} {}", live_buy[0].qty, symbol);
+            self.live_buys_orders = live_buy;
         }
         if self.cancel_limit > 0 {
             // If the ask bounds are less than the mid price and the last update price is not 0.0,
@@ -568,7 +582,7 @@ impl QuoteGenerator {
     ///
     /// * `data` - The private data containing the executions.
     ///
-    fn check_for_fills(&mut self, data: PrivateData) {
+    fn _check_for_fills(&mut self, data: PrivateData) {
         // Clone the live buys and sells orders.
         let mut live_buy = self.live_buys_orders.clone();
         let mut live_sell = self.live_sells_orders.clone();
@@ -630,25 +644,19 @@ impl QuoteGenerator {
     /// * `price_flu` - Price fluctuation of the order book.
     pub async fn update_grid(
         &mut self,
-        wallet: PrivateData,
         skew: f64,
         imbalance: f64,
         book: LocalBook,
         symbol: String,
         price_flu: f64,
     ) {
-        // Check for fills in the wallet data.
-        self.check_for_fills(wallet);
-
         // Update the inventory delta.
         self.inventory_delta();
 
         // Check if the order book is out of bounds with the given symbol.
         let replace_orders = self.out_of_bounds(&book, symbol.clone()).await;
 
-
         if replace_orders == true {
-
             // Generate quotes for the grid based on the order book, symbol, imbalance, skew,
             // and price fluctuation.
             let orders = self.generate_quotes(symbol.clone(), &book, imbalance, skew, price_flu);
@@ -660,14 +668,13 @@ impl QuoteGenerator {
 
             self.rate_limit -= 1;
 
-            
             // Update bounds
             self.last_update_price = book.mid_price;
-            
+
             //Updates the time limit
             self.time_limit = book.last_update;
         }
-        
+
         // Update the time limit
         if self.time_limit > 1 {
             let condition = (book.last_update - self.time_limit) > 1000;
@@ -676,7 +683,6 @@ impl QuoteGenerator {
                 self.cancel_limit = 10;
             }
         }
-
     }
 }
 
@@ -701,11 +707,11 @@ fn bps_to_decimal(bps: f64) -> f64 {
     bps / 10000.0
 }
 
-fn bps_offset(book: &LocalBook, bps: f64) -> f64 {
+fn _bps_offset(book: &LocalBook, bps: f64) -> f64 {
     book.mid_price + (book.mid_price * bps_to_decimal(bps))
 }
 
-fn offset(book: &LocalBook, offset: f64) -> f64 {
+fn _offset(book: &LocalBook, offset: f64) -> f64 {
     book.mid_price + (book.mid_price * offset)
 }
 
@@ -731,7 +737,6 @@ impl OrderManagement {
                         qty,
                         price,
                         0,
-
                     )
                     .await
                 {
@@ -1055,7 +1060,10 @@ impl OrderManagement {
     ///
     /// * `Result<Vec<VecDeque<LiveOrder>>, ()>` - A vector of queues containing the live orders,
     /// or an error if the batch placement fails.
-    async fn batch_place_order(&self, order_array: Vec<BatchOrder>) -> Result<Vec<VecDeque<LiveOrder>>, ()> {
+    async fn batch_place_order(
+        &self,
+        order_array: Vec<BatchOrder>,
+    ) -> Result<Vec<VecDeque<LiveOrder>>, ()> {
         // Clone the order array for later use
         let order_array_clone = order_array.clone();
 
@@ -1215,4 +1223,3 @@ impl OrderManagement {
         }
     }
 }
-

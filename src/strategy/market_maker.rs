@@ -1,5 +1,5 @@
 use bybit::model::WsTrade;
-use skeleton::exchanges::exchange::{ExchangeClient, PrivateData};
+use skeleton::exchanges::exchange::ExchangeClient;
 use skeleton::util::localorderbook::LocalBook;
 use skeleton::{exchanges::exchange::MarketMessage, ss::SharedState};
 use std::collections::{HashMap, VecDeque};
@@ -88,8 +88,7 @@ impl MarketMaker {
                     // Update features with the first market data in the received data.
                     self.update_features(data.markets[0].clone(), self.depths.clone(), false, 610);
                     // Update the strategy with the new market data and private data.
-                    self.potentially_update(data.markets[0].clone(), data.private.clone())
-                        .await;
+                    self.potentially_update(data.markets[0].clone()).await;
                 }
 
                 "both" => {}
@@ -167,15 +166,13 @@ impl MarketMaker {
             );
         }
 
-        for  (_, v) in hash.iter_mut() {
-            v.update_max(); 
+        for (_, v) in hash.iter_mut() {
+            v.update_max();
         }
 
         hash
 
         // Return the populated HashMap.
-        
-
     }
 
     /// Updates the features of the market maker based on the provided data.
@@ -290,23 +287,13 @@ impl MarketMaker {
     ///
     /// * `data` - The new market data.
     /// * `private_data` - The private data for each symbol.
-    async fn potentially_update(
-        &mut self,
-        data: MarketMessage,
-        private_data: HashMap<String, PrivateData>,
-    ) {
+    async fn potentially_update(&mut self, data: MarketMessage) {
         // Get the book, private data, skew, and imbalance for each symbol
         match data {
             // If the market data is from Bybit
             MarketMessage::Bybit(v) => {
                 // Update the strategy for each symbol
                 for (symbol, book) in v.books {
-                    // Get the private data for the current symbol
-                    let wallet = match private_data.get(&symbol) {
-                        Some(v) => v.clone(),
-                        None => panic!("Private data for {} not found", symbol),
-                    };
-
                     // Get the skew and imbalance for the current symbol
                     let skew = self.features.get(&symbol).unwrap().skew;
                     let imbalance = imbalance_ratio(&book, Some(self.depths[0] * 3));
@@ -319,7 +306,7 @@ impl MarketMaker {
 
                     // Update the symbol quoter
                     symbol_quoter
-                        .update_grid(wallet.clone(), skew, imbalance, book, symbol, price_flu)
+                        .update_grid(skew, imbalance, book, symbol, price_flu)
                         .await;
                 }
             }
@@ -327,12 +314,6 @@ impl MarketMaker {
             MarketMessage::Binance(v) => {
                 // Update the strategy for each symbol
                 for (symbol, book) in v.books {
-                    // Get the private data for the current symbol
-                    let wallet = match private_data.get(&symbol) {
-                        Some(v) => v.clone(),
-                        None => panic!("Private data for {} not found", symbol),
-                    };
-
                     // Get the skew and imbalance for the current symbol
                     let skew = self.features.get(&symbol).unwrap().skew;
                     let imbalance = imbalance_ratio(&book, Some(self.depths[0] * 3));
@@ -345,13 +326,13 @@ impl MarketMaker {
 
                     // Update the symbol quoter
                     symbol_quoter
-                        .update_grid(wallet.clone(), skew, imbalance, book, symbol, price_flu)
+                        .update_grid(skew, imbalance, book, symbol, price_flu)
                         .await;
                 }
             }
         }
     }
-    
+
     pub fn set_spread_bps_input(&mut self) {
         for (k, v) in self.generators.iter_mut() {
             let prompt = format!("Note: This is also used a max. deviation before replacement. \n Please enter spread for {} in bps: ", k);
@@ -362,7 +343,7 @@ impl MarketMaker {
 
     pub fn set_spread_toml(&mut self, bps: Vec<f64>) {
         let mut index = 0;
-        for (_, v) in self.generators.iter_mut() { 
+        for (_, v) in self.generators.iter_mut() {
             v.set_spread(bps[index]);
             index += 1;
         }
