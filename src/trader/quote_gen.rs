@@ -623,29 +623,21 @@ impl QuoteGenerator {
             return;
         }
 
-        // Iterate over live sell orders and cancel if out of bounds.
-        for v in self.live_sells_orders.iter() {
-            // If the ask bounds are less than the mid price and the last update price is not 0.0,
-            // cancel all orders for the given symbol.
-            if book.mid_price > ask_bounds && self.last_update_price != 0.0 {
-                if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
-                    self.live_sells_orders.clear();
-                    println!("Cancelling all orders for {}", symbol);
-                    break;
-                }
+        // If the ask bounds are less than the mid price and the last update price is not 0.0,
+        // cancel all orders for the given symbol.
+        if book.mid_price > ask_bounds && self.last_update_price != 0.0 {
+            if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                self.live_sells_orders.clear();
+                println!("Cancelling all orders for {}", symbol);
             }
         }
 
-        // Iterate over live buy orders and cancel if out of bounds.
-        for v in self.live_buys_orders.iter() {
-            // If the bid bounds are greater than the mid price and the last update price is not 0.0,
-            // cancel all orders for the given symbol.
-            if book.mid_price < bid_bounds && self.last_update_price != 0.0 {
-                if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
-                    self.live_buys_orders.clear();
-                    println!("Cancelling all orders for {}", symbol);
-                    break;
-                }
+        // If the bid bounds are greater than the mid price and the last update price is not 0.0,
+        // cancel all orders for the given symbol.
+        if book.mid_price < bid_bounds && self.last_update_price != 0.0 {
+            if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                self.live_buys_orders.clear();
+                println!("Cancelling all orders for {}", symbol);
             }
         }
     }
@@ -783,14 +775,14 @@ impl QuoteGenerator {
 
         // Print the grid orders along with the mid price, the distance between the
         // ask and mid price, and the distance between the mid price and bid.
-        // println!(
-        //     "Grid: {:#?} Ask distance: {:#?}  Bid distance: {:#?} ",
-        //     orders,
-            // Calculate the distance between the ask price and the mid price.
-            // ((orders[1].1 - book.mid_price) / (book.mid_price / 10000.0)).round(),
-            // Calculate the distance between the mid price and the bid price.
-        //     ((book.mid_price - orders[0].1) / (book.mid_price / 10000.0)).round()
-        // );
+        println!(
+            "Grid: {:#?} Ask distance: {:#?}  Bid distance: {:#?} ",
+            orders,
+        // Calculate the distance between the ask price and the mid price.
+        ((orders[1].1 - book.mid_price) / (book.mid_price / 10000.0)).round(),
+        // Calculate the distance between the mid price and the bid price.
+            ((book.mid_price - orders[0].1) / (book.mid_price / 10000.0)).round()
+        );
     }
 }
 
