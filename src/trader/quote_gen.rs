@@ -772,7 +772,11 @@ impl QuoteGenerator {
                     if side == -1 {
                         let live_order = match self
                             .client
-                            .place_sell_limit(round_size(qty, &book), round_price(&book, price), &order_symbol)
+                            .place_sell_limit(
+                                round_size(qty, &book),
+                                round_price(&book, price),
+                                &order_symbol,
+                            )
                             .await
                         {
                             Ok(v) => v,
@@ -780,11 +784,18 @@ impl QuoteGenerator {
                         };
                         self.live_sells_orders.push_back(live_order);
                     } else {
-                        let live_order =
-                            match self.client.place_buy_limit(round_size(qty, &book), round_price(&book, price), &order_symbol).await {
-                                Ok(v) => v,
-                                Err(_) => continue,
-                            };
+                        let live_order = match self
+                            .client
+                            .place_buy_limit(
+                                round_size(qty, &book),
+                                round_price(&book, price),
+                                &order_symbol,
+                            )
+                            .await
+                        {
+                            Ok(v) => v,
+                            Err(_) => continue,
+                        };
                         self.live_buys_orders.push_back(live_order);
                     }
                 }
@@ -800,8 +811,12 @@ impl QuoteGenerator {
                 ((book.mid_price - orders[0].1) / (book.mid_price / 10000.0)).round()
             );
         }
-        if (book.last_update - self.time_limit) > 1000 {
-            self.rate_limit = 10;
+
+        if self.time_limit > 1 {
+            let condition = (book.last_update - self.time_limit) > 1000;
+            if condition == true {
+                self.rate_limit = 10;
+            }
         }
 
         // Update bounds
