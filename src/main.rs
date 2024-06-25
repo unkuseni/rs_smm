@@ -7,9 +7,9 @@ use tokio::sync::mpsc;
 #[tokio::main]
 async fn main() {
     let config = use_toml();
-    let exchange = into_static(config.exchange);
+    let exchange: &'static str = into_static(config.exchange);
     let mut state = ss::SharedState::new(exchange);
-    let symbols = {
+    let symbols: Vec<&'static str> = {
         let mut arr = vec![];
         for v in config.symbols {
             arr.push(into_static(v));
