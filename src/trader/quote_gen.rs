@@ -659,6 +659,14 @@ impl QuoteGenerator {
 
         // Check if the order book is out of bounds with the given symbol.
         let replace_orders = self.out_of_bounds(&book, symbol.clone()).await;
+        // Update the time limit
+        if self.time_limit > 1 {
+            let condition = (book.last_update - self.time_limit) > 1000;
+            if condition == true {
+                self.rate_limit = 10;
+                self.cancel_limit = 10;
+            }
+        }
 
         if replace_orders == true {
             // Generate quotes for the grid based on the order book, symbol, imbalance, skew,
@@ -679,14 +687,6 @@ impl QuoteGenerator {
             self.time_limit = book.last_update;
         }
 
-        // Update the time limit
-        if self.time_limit > 1 {
-            let condition = (book.last_update - self.time_limit) > 1000;
-            if condition == true {
-                self.rate_limit = 10;
-                self.cancel_limit = 10;
-            }
-        }
     }
 }
 
