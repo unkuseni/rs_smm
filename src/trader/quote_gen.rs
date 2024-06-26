@@ -536,8 +536,8 @@ impl QuoteGenerator {
             out_of_bounds = true;
             return out_of_bounds;
         }
-        if book.mid_price > ask_bounds && self.last_update_price != 0.0 {
-            if self.live_sells_orders.len() > 0 {
+        if self.live_sells_orders.len() > 0 {
+            if book.mid_price > live_sell[0].price {
                 self.position -= live_sell[0].price * live_sell[0].qty;
                 live_sell.pop_front();
                 println!("Sold {} {}", live_sell[0].qty, symbol); // Update the live buys and sells orders with the new values.
@@ -545,8 +545,8 @@ impl QuoteGenerator {
             }
         }
 
-        if book.mid_price < bid_bounds && self.last_update_price != 0.0 {
-            if self.live_buys_orders.len() > 0 {
+        if self.live_buys_orders.len() > 0 {
+            if book.mid_price < live_buy[0].price {
                 self.position += live_buy[0].price * live_buy[0].qty;
                 live_buy.pop_front();
                 println!("Sold {} {}", live_buy[0].qty, symbol);
