@@ -519,12 +519,37 @@ impl QuoteGenerator {
     /// * `book` - The order book to check.
     /// * `symbol` - The symbol to cancel orders for.
     ///
+    /// This function checks if the order book is out of bounds and cancels all live orders if it is.
+    /// It first initializes a boolean variable `out_of_bounds` to false.
+    /// Then it clones the live buys and sells orders.
+    /// Next, it calculates the bounds based on the spread and mid price.
+    /// The fees are calculated as the minimum spread plus 2.0 and are converted to decimal format.
+    /// The bounds are then calculated as the spread multiplied by the mid price, with the fees added as clip values.
+    /// The bid bounds are calculated as the mid price minus the bounds, and the ask bounds are calculated as the mid price plus the bounds.
+    /// If there are no live orders, `out_of_bounds` is set to true and the function returns.
+    /// 
+    /// The function then checks if the live sell orders are not empty and if the mid price is greater than the price of the first order in the live sell orders.
+    /// If so, it pops the first order from the live sell orders and updates the position by subtracting the price multiplied by the quantity.
+    /// It then prints the quantity of the sold order and updates the live sells orders with the new values.
+    /// 
+    /// Next, the function checks if the live buy orders are not empty and if the mid price is less than the price of the first order in the live buy orders.
+    /// If so, it pops the first order from the live buy orders and updates the position by adding the price multiplied by the quantity.
+    /// It then prints the quantity of the sold order and updates the live buys orders with the new values.
+    /// 
+    /// If the cancel limit is greater than 0, the function checks if the ask bounds are less than the mid price and the last update price is not 0.0.
+    /// If so, it cancels all orders for the given symbol using the client's `cancel_all` method.
+    /// If the cancellation is successful, it clears the live sells orders, updates `out_of_bounds` to true, and prints a message.
+    /// 
+    /// Then, the function checks if the bid bounds are greater than the mid price and the last update price is not 0.0.
+    /// If so, it cancels all orders for the given symbol using the client's `cancel_all` method.
+    /// If the cancellation is successful, it clears the live buys orders, updates `out_of_bounds` to true, and prints a message.
+    /// 
+    /// Finally, the cancel limit is decremented by 1.
+    /// 
+    /// The function returns the value of `out_of_bounds`.
     async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) -> bool {
         let mut out_of_bounds = false;
 
-        // Clone the live buys and sells orders.
-        let mut live_buy = self.live_buys_orders.clone();
-        let mut live_sell = self.live_sells_orders.clone();
         // Calculate the bounds based on the spread and mid price.
         let fees = bps_to_decimal(self.minimum_spread + 2.0);
         let bounds = book.get_spread().clip(fees, fees * 2.0) * self.last_update_price;
@@ -532,26 +557,26 @@ impl QuoteGenerator {
         let ask_bounds = self.last_update_price + bounds;
 
         // If there are no live orders, return.
-        if self.live_buys_orders.len() == 0 && self.live_sells_orders.len() == 0 {
+        if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
             out_of_bounds = true;
             return out_of_bounds;
         }
 
-        if !live_sell.is_empty() && book.mid_price > live_sell.get(0).unwrap().price {
-            if let Some(order) = live_sell.pop_front() {
-                self.position -= order.price * order.qty;
-                println!("Sold {} {}", live_sell[0].qty, symbol); // Update the live buys and sells orders with the new values.
-            }
-            self.live_sells_orders = live_sell;
+        // Check if live sell orders need to be cancelled
+        if !self.live_sells_orders.is_empty() && book.mid_price > self.live_sells_orders[0].price {
+            let order = self.live_sells_orders.pop_front().unwrap();
+            self.position -= order.price * order.qty;
+            println!("Sold {} {}", order.qty, symbol);
         }
 
-        if !live_buy.is_empty() && book.mid_price < live_buy.get(0).unwrap().price {
-            if let Some(order) = live_buy.pop_front() {
-                self.position += order.price * order.qty;
-                println!("Sold {} {}", order.qty, symbol);
-            }
-            self.live_buys_orders = live_buy;
+        // Check if live buy orders need to be cancelled
+        if !self.live_buys_orders.is_empty() && book.mid_price < self.live_buys_orders[0].price {
+            let order = self.live_buys_orders.pop_front().unwrap();
+            self.position += order.price * order.qty;
+            println!("Sold {} {}", order.qty, symbol);
         }
+
+        // Check if the cancel limit has been reached
         if self.cancel_limit > 0 {
             // If the ask bounds are less than the mid price and the last update price is not 0.0,
             // cancel all orders for the given symbol.
