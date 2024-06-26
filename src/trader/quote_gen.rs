@@ -653,20 +653,22 @@ impl QuoteGenerator {
         book: LocalBook,
         symbol: String,
         price_flu: f64,
+        rate_limit: u32
     ) {
         // Update the inventory delta.
         self.inventory_delta();
 
-        // Check if the order book is out of bounds with the given symbol.
-        let replace_orders = self.out_of_bounds(&book, symbol.clone()).await;
         // Update the time limit
         if self.time_limit > 1 {
             let condition = (book.last_update - self.time_limit) > 1000;
             if condition == true {
-                self.rate_limit = 10;
-                self.cancel_limit = 10;
+                self.rate_limit = rate_limit;
+                self.cancel_limit = rate_limit;
             }
         }
+        
+        // Check if the order book is out of bounds with the given symbol.
+        let replace_orders = self.out_of_bounds(&book, symbol.clone()).await;
 
         if replace_orders == true {
             // Generate quotes for the grid based on the order book, symbol, imbalance, skew,
