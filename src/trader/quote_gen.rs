@@ -433,7 +433,7 @@ impl QuoteGenerator {
 
         // Generate the bid sizes.
         let bid_sizes = {
-            let max_bid_qty = (self.max_position_usd / 2.0) - self.position;
+            let max_bid_qty = (self.max_position_usd / 2.0) - (self.position);
             let size_weights =
                 geometric_weights(clipped_ratio.powf(2.0 + aggression), self.total_order / 2);
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_bid_qty).collect();
@@ -447,7 +447,7 @@ impl QuoteGenerator {
 
         // Generate the ask sizes.
         let ask_sizes = {
-            let max_sell_qty = (self.max_position_usd / 2.0) + self.position;
+            let max_sell_qty = (self.max_position_usd / 2.0) + (self.position);
             let size_weights = geometric_weights(clipped_ratio, self.total_order / 2);
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
             let mut size_arr = vec![];
