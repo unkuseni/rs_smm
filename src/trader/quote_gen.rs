@@ -81,9 +81,9 @@ impl QuoteGenerator {
             // Set the client to the created trader.
             client: trader,
             // Create empty VecDeque for live buy orders with a capacity of 5.
-            live_buys_orders: VecDeque::with_capacity(orders_per_side),
+            live_buys_orders: VecDeque::new(),
             // Create empty VecDeque for live sell orders with a capacity of 5.
-            live_sells_orders: VecDeque::with_capacity(orders_per_side),
+            live_sells_orders: VecDeque::new(),
             // Position
             position: 0.0,
             // Set the inventory delta to 0.0.
@@ -487,7 +487,6 @@ impl QuoteGenerator {
         orders
     }
 
-    
     /// Sends a batch of orders to the exchange asynchronously.
     ///
     /// # Arguments
@@ -568,8 +567,10 @@ impl QuoteGenerator {
             // If the ask bounds are less than the mid price and the last update price is not 0.0,
             // cancel all orders for the given symbol.
             if book.mid_price > ask_bounds && self.last_update_price != 0.0 {
-                if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
-                    self.live_sells_orders.clear();
+                if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
+                    for (i, _) in v.iter().enumerate() {
+                        self.live_sells_orders.remove(i);
+                    }
                     out_of_bounds = true;
                     println!("Cancelling all orders for {}", symbol);
                 }
@@ -579,7 +580,9 @@ impl QuoteGenerator {
             // cancel all orders for the given symbol.
             if book.mid_price < bid_bounds && self.last_update_price != 0.0 {
                 if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
-                    self.live_buys_orders.clear();
+                    for (i, _) in self.live_buys_orders.clone().iter().enumerate() {
+                        self.live_buys_orders.remove(i);
+                    }
                     out_of_bounds = true;
                     println!("Cancelling all orders for {}", symbol);
                 }
@@ -689,9 +692,8 @@ impl QuoteGenerator {
             // Send the generated orders to the book.
             if self.rate_limit > 0 {
                 self.send_batch_orders(orders.clone()).await;
+                self.rate_limit -= 1;
             }
-
-            self.rate_limit -= 1;
 
             // Update bounds
             self.last_update_price = book.mid_price;
@@ -721,7 +723,7 @@ impl LiveOrder {
 
 impl PartialEq for LiveOrder {
     fn eq(&self, other: &Self) -> bool {
-        self.order_id == other.order_id && self.price == other.price && self.qty == other.qty
+        self.order_id == other.order_id
     }
 
     fn ne(&self, other: &Self) -> bool {
@@ -763,17 +765,17 @@ fn round_size(qty: f64, book: &LocalBook) -> f64 {
 fn sort_grid(orders: VecDeque<LiveOrder>, side: i32) -> VecDeque<LiveOrder> {
     // Create a new `Vec` by consuming the `VecDeque`
     let mut vec = Vec::from(orders);
-    
+
     // Sort the `Vec` either in ascending or descending order based on the `side`
     if side > 0 {
         vec.sort_by(|a, b| a.partial_cmp(b).unwrap()); // Sort the Vec in ascending order
     } else {
         vec.sort_by(|a, b| b.partial_cmp(a).unwrap()); // Sort the Vec in descending order
     }
-    
+
     // Create a new `VecDeque` by consuming the sorted `Vec`
     let sorted_vecdeque: VecDeque<LiveOrder> = VecDeque::from(vec);
-    
+
     // Return the sorted `VecDeque`
     sorted_vecdeque
 }
