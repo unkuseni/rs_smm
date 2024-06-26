@@ -83,7 +83,7 @@ impl MarketMaker {
         // Continuously receive and process shared state updates.
         while let Some(data) = receiver.recv().await {
             // Match the exchange in the received data.
-            match data.exchange {
+            match data.exchange.as_str() {
                 "bybit" | "binance" => {
                     // Update features with the first market data in the received data.
                     self.update_features(data.markets[0].clone(), self.depths.clone(), false, 610);
@@ -109,14 +109,14 @@ impl MarketMaker {
     /// # Returns
     ///
     /// A `HashMap` containing the symbol names as keys and `Engine` instances as values.
-    fn build_features(symbol: Vec<&str>) -> HashMap<String, Engine> {
+    fn build_features(symbol: Vec<String>) -> HashMap<String, Engine> {
         // Create a new HashMap to store the features.
         let mut hash: HashMap<String, Engine> = HashMap::new();
 
         // Iterate over each symbol and insert a new `Engine` instance into the HashMap.
         for v in symbol {
             // Convert the symbol name to a string and insert it into the HashMap.
-            hash.insert(v.to_string(), Engine::new());
+            hash.insert(v, Engine::new());
         }
 
         // Return the populated HashMap.

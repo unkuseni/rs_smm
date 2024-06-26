@@ -7,12 +7,11 @@ use tokio::sync::mpsc;
 #[tokio::main]
 async fn main() {
     let config = use_toml();
-    let exchange: &'static str = into_static(config.exchange);
-    let mut state = ss::SharedState::new(exchange);
-    let symbols: Vec<&'static str> = {
+    let mut state = ss::SharedState::new(config.exchange);
+    let symbols: Vec<String> = {
         let mut arr = vec![];
         for v in config.symbols {
-            arr.push(into_static(v));
+            arr.push(v);
         }
         arr
     };
@@ -45,6 +44,4 @@ async fn main() {
     market_maker.start_loop(receiver).await;
 }
 
-fn into_static(input: String) -> &'static str {
-    Box::leak(input.trim().to_string().into_boxed_str())
-}
+

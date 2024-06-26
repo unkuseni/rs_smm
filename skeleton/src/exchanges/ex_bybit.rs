@@ -123,7 +123,7 @@ impl BybitClient {
 
     pub async fn market_subscribe(
         &self,
-        symbol: Vec<&str>,
+        symbol: Vec<String>,
         sender: mpsc::UnboundedSender<BybitMarket>,
     ) {
         let mut delay = 600;
@@ -391,13 +391,13 @@ impl BybitClient {
     }
 }
 
-fn build_requests(symbol: &[&str]) -> Vec<String> {
+fn build_requests(symbol: &[String]) -> Vec<String> {
     let mut request_args = vec![];
 
     // Building book requests
     let book_req: Vec<String> = symbol
         .iter()
-        .flat_map(|&sym| vec![(1, sym), (50, sym), (500, sym)])
+        .flat_map(|sym| vec![(1, sym), (50, sym), (500, sym)])
         .map(|(num, sym)| format!("orderbook.{}.{}", num, sym.to_uppercase()))
         .collect();
     request_args.extend(book_req);
@@ -405,7 +405,7 @@ fn build_requests(symbol: &[&str]) -> Vec<String> {
     // Building kline requests
     let kline_req: Vec<String> = symbol
         .iter()
-        .flat_map(|&sym| vec![("5", sym), ("1", sym)])
+        .flat_map(|sym| vec![("5", sym), ("1", sym)])
         .map(|(interval, sym)| format!("kline.{}.{}", interval, sym.to_uppercase()))
         .collect();
     request_args.extend(kline_req);
@@ -413,21 +413,21 @@ fn build_requests(symbol: &[&str]) -> Vec<String> {
     // Building tickers requests
     let tickers_req: Vec<String> = symbol
         .iter()
-        .map(|&sub| format!("tickers.{}", sub.to_uppercase()))
+        .map(|sub| format!("tickers.{}", sub.to_uppercase()))
         .collect();
     request_args.extend(tickers_req);
 
     // Building trade requests
     let trade_req: Vec<String> = symbol
         .iter()
-        .map(|&sub| format!("publicTrade.{}", sub.to_uppercase()))
+        .map(|sub| format!("publicTrade.{}", sub.to_uppercase()))
         .collect();
     request_args.extend(trade_req);
 
     // Building liquidation requests
     let liq_req: Vec<String> = symbol
         .iter()
-        .map(|&sub| format!("liquidation.{}", sub.to_uppercase()))
+        .map(|sub| format!("liquidation.{}", sub.to_uppercase()))
         .collect();
     request_args.extend(liq_req);
 

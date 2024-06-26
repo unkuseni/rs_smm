@@ -37,11 +37,11 @@ mod tests {
         let api_key = "key".to_string();
         let api_secret = "secret".to_string();
         let bub = BybitClient::init(api_key.clone(), api_secret.clone());
-        let symbol = vec!["NOTUSDT"];
+        let symbol = vec!["NOTUSDT".to_string()];
         let clone_symbol = symbol.clone();
         let (tx2, mut rx2) = mpsc::unbounded_channel::<BinanceMarket>();
         let bub_2 = BinanceClient::init(api_key, api_secret);
-        let symbol_2 = vec!["NOTUSDT"];
+        let symbol_2 = vec!["NOTUSDT".to_string()];
         let clone_symbol_2 = symbol_2.clone();
 
         tokio::spawn(async move {
@@ -80,7 +80,7 @@ mod tests {
         let api_key = "key".to_string();
         let api_secret = "secret".to_string();
         let bub = BinanceClient::init(api_key, api_secret);
-        let symbol = vec!["ETHUSDT"];
+        let symbol = vec!["ETHUSDT".to_string()];
         let symbol_clone = symbol.clone();
 
         let _webs = tokio::task::spawn_blocking(move || {
@@ -182,9 +182,9 @@ mod tests {
 
     #[tokio::test]
     pub async fn test_new_state() {
-        let exchange = "binance";
+        let exchange = "binance".to_string();
         let mut state = ss::SharedState::new(exchange);
-        state.add_symbols(["SKLUSDT", "MATICUSDT"].to_vec());
+        state.add_symbols(["SKLUSDT".to_string(), "MATICUSDT".to_string()].to_vec());
         let (sender, mut receiver) = mpsc::unbounded_channel::<ss::SharedState>();
         let instant = Instant::now();
         tokio::spawn(async move {

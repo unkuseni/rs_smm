@@ -99,7 +99,7 @@ impl BinanceClient {
 
     pub fn market_subscribe(
         &self,
-        symbol: Vec<&str>,
+        symbol: Vec<String>,
         sender: mpsc::UnboundedSender<BinanceMarket>,
     ) {
         let mut delay = 600;
@@ -394,45 +394,45 @@ impl BinanceClient {
     }
 }
 
-fn bin_build_requests(symbol: &[&str]) -> Vec<String> {
+fn bin_build_requests(symbol: &[String]) -> Vec<String> {
     let mut request_args = vec![];
 
     // Agg Trades request
     let trade_req: Vec<String> = symbol
         .iter()
-        .map(|&sub| sub.to_lowercase())
+        .map(|sub| sub.to_lowercase())
         .map(|sub| format!("{}@aggTrade", sub))
         .collect();
     request_args.extend(trade_req);
     let kline_req: Vec<String> = symbol
         .iter()
-        .map(|&sub| sub.to_lowercase())
+        .map(|sub| sub.to_lowercase())
         .flat_map(|sym| vec![("5m", sym.clone()), ("1m", sym.clone())])
         .map(|(interval, sub)| format!("{}_perpetual@@continuousKline_{}", sub, interval))
         .collect();
     request_args.extend(kline_req);
     let best_book: Vec<String> = symbol
         .iter()
-        .map(|&sub| sub.to_lowercase())
+        .map(|sub| sub.to_lowercase())
         .flat_map(|sym| vec![("5", sym.clone()), ("10", sym.clone()), ("20", sym.clone())])
         .map(|(depth, sub)| format!("{}@depth{}@100ms", sub, depth))
         .collect();
     request_args.extend(best_book);
     let book: Vec<String> = symbol
         .iter()
-        .map(|&sub| sub.to_lowercase())
+        .map(|sub| sub.to_lowercase())
         .map(|sub| format!("{}@depth@100ms", sub))
         .collect();
     request_args.extend(book);
     let tickers: Vec<String> = symbol
         .iter()
-        .map(|&sub| sub.to_lowercase())
+        .map(|sub| sub.to_lowercase())
         .map(|sub| format!("{}@bookTicker", sub))
         .collect();
     request_args.extend(tickers);
     let liq_req: Vec<String> = symbol
         .iter()
-        .map(|&sub| sub.to_lowercase())
+        .map(|sub| sub.to_lowercase())
         .map(|sub| format!("{}@forceOrder", sub))
         .collect();
     request_args.extend(liq_req);
