@@ -487,37 +487,42 @@ impl QuoteGenerator {
         orders
     }
 
-    /// Update the orders based on the given batch orders and the local order book.
+    
+    /// Sends a batch of orders to the exchange asynchronously.
     ///
     /// # Arguments
     ///
-    /// * `orders` - A vector of batch orders to update.
-    /// * `book` - The local order book.
+    /// * `orders` - A vector of `BatchOrder` containing the orders to send.
     ///
-    /// This function updates the orders based on the given batch orders and the local order book.
-    /// If the inventory delta is greater than 0.55, remove half of the orders especially buys.
-    /// If the inventory delta is less than -0.55, remove half of the orders especially sells.
-    /// If the inventory delta is between -0.55 and 0.55, do nothing.
-    ///
-    /// If there are more than 5 batch orders, place them as a batch order.
-    /// If the batch order is successful, iterate over each response and push it to the
-    /// appropriate queue. If the inventory delta is greater than 0.55, push the response to
-    /// `live_sells_orders`. If the inventory delta is less than -0.55, push the response to
-    /// `live_buys_orders`. Otherwise, push the response to `live_sells_orders`.
-    ///
-    /// # Returns
-    ///
-    /// None
+    /// This function sends a batch of orders to the exchange asynchronously. It awaits the response
+    /// from the exchange and then iterates over each response and pushes it to the appropriate
+    /// queue. If the response is successful, it sorts the queues and updates the live orders. If
+    /// there is an error, it prints the error message.
     async fn send_batch_orders(&mut self, orders: Vec<BatchOrder>) {
+        // Send the batch orders to the exchange and await the response.
         let order_response = self.client.batch_place_order(orders).await;
+
         match order_response {
+            // If the response is successful, process the orders.
             Ok(v) => {
-                // Iterate over each response and push it to the appropriate queue.
-                self.live_buys_orders = v[0].clone();
-                self.live_sells_orders = v[1].clone();
+                // Push the orders from the first response to the live buys queue.
+                for order in v[0].clone() {
+                    self.live_buys_orders.push_back(order);
+                }
+                // Sort the live buys queue and update it.
+                let sorted_buys = sort_grid(self.live_buys_orders.clone(), -1);
+                self.live_buys_orders = sorted_buys;
+
+                // Push the orders from the second response to the live sells queue.
+                for order in v[1].clone() {
+                    self.live_sells_orders.push_back(order);
+                }
+                // Sort the live sells queue and update it.
+                let sorted_sells = sort_grid(self.live_sells_orders.clone(), 1);
+                self.live_sells_orders = sorted_sells;
             }
+            // If there is an error, print the error message.
             Err(e) => {
-                // Print the error if there is an error placing the batch order.
                 println!("Error placing batch order: {:?}", e);
             }
         }
@@ -539,14 +544,20 @@ impl QuoteGenerator {
         }
 
         // Check if live sell orders need to be cancelled
-        if !self.live_sells_orders.is_empty() && book.mid_price > self.live_sells_orders[0].price && self.last_update_price != 0.0 {
+        if !self.live_sells_orders.is_empty()
+            && book.mid_price > self.live_sells_orders[0].price
+            && self.last_update_price != 0.0
+        {
             let order = self.live_sells_orders.pop_front().unwrap();
             self.position -= order.price * order.qty;
             println!("Sold {} {}", order.qty, symbol);
         }
 
         // Check if live buy orders need to be cancelled
-        if !self.live_buys_orders.is_empty() && book.mid_price < self.live_buys_orders[0].price && self.last_update_price != 0.0 {
+        if !self.live_buys_orders.is_empty()
+            && book.mid_price < self.live_buys_orders[0].price
+            && self.last_update_price != 0.0
+        {
             let order = self.live_buys_orders.pop_front().unwrap();
             self.position += order.price * order.qty;
             println!("Bought {} {}", order.qty, symbol);
@@ -653,7 +664,7 @@ impl QuoteGenerator {
         book: LocalBook,
         symbol: String,
         price_flu: f64,
-        rate_limit: u32
+        rate_limit: u32,
     ) {
         // Update the inventory delta.
         self.inventory_delta();
@@ -666,7 +677,7 @@ impl QuoteGenerator {
                 self.cancel_limit = rate_limit;
             }
         }
-        
+
         // Check if the order book is out of bounds with the given symbol.
         let replace_orders = self.out_of_bounds(&book, symbol.clone()).await;
 
@@ -688,7 +699,6 @@ impl QuoteGenerator {
             //Updates the time limit
             self.time_limit = book.last_update;
         }
-
     }
 }
 
@@ -706,6 +716,22 @@ impl LiveOrder {
             qty,
             order_id,
         }
+    }
+}
+
+impl PartialEq for LiveOrder {
+    fn eq(&self, other: &Self) -> bool {
+        self.order_id == other.order_id && self.price == other.price && self.qty == other.qty
+    }
+
+    fn ne(&self, other: &Self) -> bool {
+        self.order_id != other.order_id || self.price != other.price || self.qty != other.qty
+    }
+}
+
+impl PartialOrd for LiveOrder {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.price.partial_cmp(&other.price)
     }
 }
 
@@ -728,6 +754,28 @@ fn round_price(book: &LocalBook, price: f64) -> f64 {
 
 fn round_size(qty: f64, book: &LocalBook) -> f64 {
     round_step(qty, book.lot_size)
+}
+
+/// This function takes a `VecDeque` of `LiveOrder`s and a `side` integer as input.
+/// It sorts the `VecDeque` in ascending order if the `side` is greater than 1.
+/// Otherwise, it sorts the `VecDeque` in descending order.
+/// It then returns a new `VecDeque` with the sorted orders.
+fn sort_grid(orders: VecDeque<LiveOrder>, side: i32) -> VecDeque<LiveOrder> {
+    // Create a new `Vec` by consuming the `VecDeque`
+    let mut vec = Vec::from(orders);
+    
+    // Sort the `Vec` either in ascending or descending order based on the `side`
+    if side > 0 {
+        vec.sort_by(|a, b| a.partial_cmp(b).unwrap()); // Sort the Vec in ascending order
+    } else {
+        vec.sort_by(|a, b| b.partial_cmp(a).unwrap()); // Sort the Vec in descending order
+    }
+    
+    // Create a new `VecDeque` by consuming the sorted `Vec`
+    let sorted_vecdeque: VecDeque<LiveOrder> = VecDeque::from(vec);
+    
+    // Return the sorted `VecDeque`
+    sorted_vecdeque
 }
 
 impl OrderManagement {
