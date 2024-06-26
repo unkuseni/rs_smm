@@ -536,24 +536,21 @@ impl QuoteGenerator {
             out_of_bounds = true;
             return out_of_bounds;
         }
-        if self.live_sells_orders.len() > 0 {
-            if book.mid_price > live_sell[0].price {
-                if let Some(order) = live_sell.pop_front() {
-                    self.position -= order.price * order.qty;
-                    println!("Sold {} {}", live_sell[0].qty, symbol); // Update the live buys and sells orders with the new values.
-                }
-                self.live_sells_orders = live_sell;
+
+        if !live_sell.is_empty() && book.mid_price > live_sell.get(0).unwrap().price {
+            if let Some(order) = live_sell.pop_front() {
+                self.position -= order.price * order.qty;
+                println!("Sold {} {}", live_sell[0].qty, symbol); // Update the live buys and sells orders with the new values.
             }
+            self.live_sells_orders = live_sell;
         }
 
-        if self.live_buys_orders.len() > 0 {
-            if book.mid_price < live_buy[0].price {
-                if let Some(order) = live_buy.pop_front() {
-                    self.position += order.price * order.qty;
-                    println!("Sold {} {}", order.qty, symbol);
-                }
-                self.live_buys_orders = live_buy;
+        if !live_buy.is_empty() && book.mid_price < live_buy.get(0).unwrap().price {
+            if let Some(order) = live_buy.pop_front() {
+                self.position += order.price * order.qty;
+                println!("Sold {} {}", order.qty, symbol);
             }
+            self.live_buys_orders = live_buy;
         }
         if self.cancel_limit > 0 {
             // If the ask bounds are less than the mid price and the last update price is not 0.0,
