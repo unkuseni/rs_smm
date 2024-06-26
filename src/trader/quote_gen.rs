@@ -459,15 +459,19 @@ impl QuoteGenerator {
 
         // Generate the batch orders.
         let mut orders = vec![];
-        for (i, ask) in ask_prices.iter().enumerate() {
-            // Place bid orders.
+        for (i, bid) in bid_prices.iter().enumerate() {
+            // Create a new batch order with the bid size, price, and quantity.
             orders.push(BatchOrder::new(
                 round_size(bid_sizes[i], book),
-                round_price(book, bid_prices[i]),
+                round_price(book, *bid),
                 1,
             ));
-            // Place ask orders.
-            orders.push(BatchOrder::new(ask_sizes[i], *ask, -1));
+            // Create a new batch order with the ask size, price, and quantity.
+            orders.push(BatchOrder::new(
+                round_size(ask_sizes[i], book),
+                round_price(book, ask_prices[i]),
+                -1,
+            ));
         }
 
         // filter orders  based on notional      // filter orders  based on notional
@@ -511,7 +515,6 @@ impl QuoteGenerator {
             }
         }
     }
-
 
     async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) -> bool {
         let mut out_of_bounds = false;
