@@ -332,10 +332,12 @@ impl QuoteGenerator {
         let ask_prices = geomspace(best_ask, ask_end, self.total_order / 2);
 
         // Calculate the clipped ratio.
-        let clipped_ratio = 0.5 + skew.clip(0.02, 0.48);
+        let clipped_ratio = 0.5 + skew.clip(0.01, 0.49);
 
         // Generate the bid sizes.
-        let bid_sizes = {
+        let bid_sizes = if bid_prices.is_empty() {
+            vec![]
+        } else {
             // Calculate the maximum buy quantity.
             let max_buy_qty = (self.max_position_usd / 2.0) - (self.position);
             // Calculate the size weights.
@@ -352,7 +354,9 @@ impl QuoteGenerator {
         };
 
         // Generate the ask sizes.
-        let ask_sizes = {
+        let ask_sizes = if ask_prices.is_empty() {
+            vec![]
+        } else {
             // Calculate the maximum sell quantity.
             let max_sell_qty = (self.max_position_usd / 2.0) + (self.position);
             // Calculate the size weights.
@@ -429,10 +433,12 @@ impl QuoteGenerator {
         let ask_prices = geomspace(best_ask, ask_end, self.total_order / 2);
 
         // Calculate the clipped ratio.
-        let clipped_ratio = 0.5 + skew.abs().clip(0.02, 0.48);
+        let clipped_ratio = 0.5 + skew.abs().clip(0.01, 0.49);
 
         // Generate the bid sizes.
-        let bid_sizes = {
+        let bid_sizes = if bid_prices.is_empty() {
+            vec![]
+        } else {
             let max_bid_qty = (self.max_position_usd / 2.0) - (self.position);
             let size_weights =
                 geometric_weights(clipped_ratio.powf(2.0 + aggression), self.total_order / 2);
@@ -444,9 +450,10 @@ impl QuoteGenerator {
             }
             size_arr
         };
-
         // Generate the ask sizes.
-        let ask_sizes = {
+        let ask_sizes = if ask_prices.is_empty() {
+            vec![]
+        } else {
             let max_sell_qty = (self.max_position_usd / 2.0) + (self.position);
             let size_weights = geometric_weights(clipped_ratio, self.total_order / 2);
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
@@ -532,17 +539,17 @@ impl QuoteGenerator {
         }
 
         // Check if live sell orders need to be cancelled
-        if !self.live_sells_orders.is_empty() && book.mid_price > self.live_sells_orders[0].price {
+        if !self.live_sells_orders.is_empty() && book.mid_price > self.live_sells_orders[0].price && self.last_update_price != 0.0 {
             let order = self.live_sells_orders.pop_front().unwrap();
             self.position -= order.price * order.qty;
             println!("Sold {} {}", order.qty, symbol);
         }
 
         // Check if live buy orders need to be cancelled
-        if !self.live_buys_orders.is_empty() && book.mid_price < self.live_buys_orders[0].price {
+        if !self.live_buys_orders.is_empty() && book.mid_price < self.live_buys_orders[0].price && self.last_update_price != 0.0 {
             let order = self.live_buys_orders.pop_front().unwrap();
             self.position += order.price * order.qty;
-            println!("Sold {} {}", order.qty, symbol);
+            println!("Bought {} {}", order.qty, symbol);
         }
 
         // Check if the cancel limit has been reached

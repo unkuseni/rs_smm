@@ -12,7 +12,9 @@ pub fn round_step<T: Float>(num: T, step: T) -> T {
 }
 
 pub fn geometric_weights(ratio: f64, n: usize) -> Vec<f64> {
-    assert!(ratio > 0.0 && ratio < 1.0, "Ratio must be between 0 and 1");
+    if !(ratio > 0.0 && ratio < 1.0) {
+        return Vec::new(); // Return an empty vector if ratio is not between 0 and 1
+    }
 
     // Generate the geometric series
     let weights: Vec<f64> = (0..n).map(|i| ratio.powi(i as i32)).collect();
@@ -23,6 +25,7 @@ pub fn geometric_weights(ratio: f64, n: usize) -> Vec<f64> {
     // Normalize the weights so that their sum equals 1
     weights.iter().map(|w| w / sum).collect()
 }
+
 
 pub fn generate_timestamp() -> u64 {
     SystemTime::now()
@@ -81,7 +84,7 @@ pub fn geomspace<T: Float + PartialOrd + Signed>(start: T, end: T, n: usize) -> 
 
     // Check if start or end is zero and panic if it is.
     if start == T::zero() || end == T::zero() {
-        panic!("Start and end must be non-zero for a geometric space.");
+       return Vec::new();
     }
 
     // Calculate the logarithmic ratio between consecutive numbers in the sequence.
