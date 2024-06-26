@@ -538,18 +538,20 @@ impl QuoteGenerator {
         }
         if self.live_sells_orders.len() > 0 {
             if book.mid_price > live_sell[0].price {
-                println!("Sold {} {}", live_sell[0].qty, symbol); // Update the live buys and sells orders with the new values.
-                self.position -= live_sell[0].price * live_sell[0].qty;
-                live_sell.pop_front();
+                if let Some(order) = live_sell.pop_front() {
+                    self.position -= order.price * order.qty;
+                    println!("Sold {} {}", live_sell[0].qty, symbol); // Update the live buys and sells orders with the new values.
+                }
                 self.live_sells_orders = live_sell;
             }
         }
 
         if self.live_buys_orders.len() > 0 {
             if book.mid_price < live_buy[0].price {
-                println!("Sold {} {}", live_buy[0].qty, symbol);
-                self.position += live_buy[0].price * live_buy[0].qty;
-                live_buy.pop_front();
+                if let Some(order) = live_buy.pop_front() {
+                    self.position += order.price * order.qty;
+                    println!("Sold {} {}", order.qty, symbol);
+                }
                 self.live_buys_orders = live_buy;
             }
         }
