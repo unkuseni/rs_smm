@@ -543,20 +543,14 @@ impl QuoteGenerator {
         }
 
         // Check if live sell orders need to be cancelled
-        if !self.live_sells_orders.is_empty()
-            && book.mid_price > self.live_sells_orders[0].price
-            && self.last_update_price != 0.0
-        {
+        if !self.live_sells_orders.is_empty() && book.mid_price > self.live_sells_orders[0].price {
             let order = self.live_sells_orders.pop_front().unwrap();
             self.position -= order.price * order.qty;
             println!("Sold {} {}", order.qty, symbol);
         }
 
         // Check if live buy orders need to be cancelled
-        if !self.live_buys_orders.is_empty()
-            && book.mid_price < self.live_buys_orders[0].price
-            && self.last_update_price != 0.0
-        {
+        if !self.live_buys_orders.is_empty() && book.mid_price < self.live_buys_orders[0].price {
             let order = self.live_buys_orders.pop_front().unwrap();
             self.position += order.price * order.qty;
             println!("Bought {} {}", order.qty, symbol);
@@ -695,12 +689,12 @@ impl QuoteGenerator {
                 self.rate_limit -= 1;
             }
 
-            // Update bounds
-            self.last_update_price = book.mid_price;
-
-            //Updates the time limit
-            self.time_limit = book.last_update;
         }
+        // Update bounds
+        self.last_update_price = book.mid_price;
+
+        //Updates the time limit
+        self.time_limit = book.last_update;
     }
 }
 
