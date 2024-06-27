@@ -163,7 +163,7 @@ impl QuoteGenerator {
             if preferred_spread == 0.0 {
                 bps_to_decimal(25.0) * book.get_mid_price()
             } else {
-                bps_to_decimal(preferred_spread) *  book.get_mid_price()
+                bps_to_decimal(preferred_spread) * book.get_mid_price()
             }
         };
 
@@ -565,7 +565,7 @@ impl QuoteGenerator {
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all orders for the given symbol.
-            if self.cancel_limit > 0 {
+            if self.cancel_limit > 1 {
                 if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
                     // Clear the live orders queue.
                     self.live_sells_orders.clear();
@@ -626,6 +626,13 @@ impl QuoteGenerator {
         // Update the inventory delta.
         self.inventory_delta();
 
+        if self.time_limit > 1 {
+            let condition = (book.last_update - self.time_limit) > 1000;
+            if condition == true {
+                self.rate_limit = 10;
+                self.cancel_limit = 10;
+            }
+        }
         // Check if the order book is out of bounds with the given symbol.
         match self.out_of_bounds(&book, symbol.clone()).await {
             true => {
@@ -648,13 +655,6 @@ impl QuoteGenerator {
         }
 
         // Update the time limit
-        if self.time_limit > 1 {
-            let condition = (book.last_update - self.time_limit) > 1000;
-            if condition == true {
-                self.rate_limit = 10;
-                self.cancel_limit = 10;
-            }
-        }
     }
 }
 
