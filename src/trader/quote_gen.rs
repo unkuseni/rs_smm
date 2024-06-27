@@ -39,6 +39,7 @@ pub struct QuoteGenerator {
     pub inventory_delta: f64,
     total_order: usize,
     final_order_distance: f64,
+    last_updated_price: f64,
     rate_limit: u32,
     time_limit: u64,
     cancel_limit: u32,
@@ -92,6 +93,8 @@ impl QuoteGenerator {
             minimum_spread: 0.0,
             // final order distance
             final_order_distance,
+
+            last_updated_price: 0.0,
 
             rate_limit,
 
@@ -532,53 +535,13 @@ impl QuoteGenerator {
             out_of_bounds = true;
             return out_of_bounds;
         }
-
-        let bid_bounds =
-            (book.get_spread_in_bps() * book.tick_size) - self.live_buys_orders[0].price;
-        let ask_bounds =
-            (book.get_spread_in_bps() * book.tick_size) - self.live_sells_orders[0].price;
-
-        // If the ask bounds are less than the mid price and the last update price is not 0.0,
-        // cancel all orders for the given symbol.
-        if book.mid_price > ask_bounds && self.live_sells_orders[0].price != 0.0 {
-            // Set the `out_of_bounds` boolean to `true`.
-            out_of_bounds = true;
-            // Attempt to cancel all orders for the given symbol.
-            if self.cancel_limit > 0 {
-                if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
-                    // Clear the live orders queue.
-                    self.live_sells_orders.clear();
-                    self.live_buys_orders.clear();
-
-                    // Print a message indicating that all orders have been cancelled.
-                    println!("Cancelling all orders for {}", symbol);
-                    self.cancel_limit -= 1;
-                } else {
-                    self.cancel_limit -= 1;
-                }
-            }
-        }
-
-        // If the bid bounds are greater than the mid price and the last update price is not 0.0,
-        // cancel all orders for the given symbol.
-        if book.mid_price < bid_bounds && self.live_buys_orders[0].price != 0.0 {
-            // Set the `out_of_bounds` boolean to `true`.
-            out_of_bounds = true;
-            // Attempt to cancel all orders for the given symbol.
-            if self.cancel_limit > 0 {
-                if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
-                    // Clear the live orders queue.
-                    self.live_sells_orders.clear();
-                    self.live_buys_orders.clear();
-
-                    // Print a message indicating that all orders have been cancelled.
-                    println!("Cancelling all orders for {}", symbol);
-                    self.cancel_limit -= 1;
-                } else {
-                    self.cancel_limit -= 1;
-                }
-            }
-        }
+        let fees = book.get_spread().clip(
+            bps_to_decimal(self.minimum_spread),
+            bps_to_decimal(self.minimum_spread) * 3.0,
+        );
+        let bounds = fees * self.last_updated_price;
+        let bid_bounds = self.last_updated_price - bounds;
+        let ask_bounds = self.last_updated_price + bounds;
         // Check if live sell orders has been filled
         if !live_sells.is_empty() && book.mid_price > live_sells[0].price {
             // If there are live sell orders, pop the first order from the queue.
@@ -601,6 +564,48 @@ impl QuoteGenerator {
         }
         self.live_buys_orders = live_buys;
         self.live_sells_orders = live_sells;
+
+        // If the ask bounds are less than the mid price and the last update price is not 0.0,
+        // cancel all orders for the given symbol.
+        if book.mid_price > ask_bounds && self.last_updated_price != 0.0 {
+            // Set the `out_of_bounds` boolean to `true`.
+            out_of_bounds = true;
+            // Attempt to cancel all orders for the given symbol.
+            if self.cancel_limit > 0 {
+                if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                    // Clear the live orders queue.
+                    self.live_sells_orders.clear();
+                    self.live_buys_orders.clear();
+
+                    // Print a message indicating that all orders have been cancelled.
+                    println!("Cancelling all orders for {}", symbol);
+                    self.cancel_limit -= 1;
+                } else {
+                    self.cancel_limit -= 1;
+                }
+            }
+        }
+
+        // If the bid bounds are greater than the mid price and the last update price is not 0.0,
+        // cancel all orders for the given symbol.
+        if book.mid_price < bid_bounds && self.last_updated_price != 0.0 {
+            // Set the `out_of_bounds` boolean to `true`.
+            out_of_bounds = true;
+            // Attempt to cancel all orders for the given symbol.
+            if self.cancel_limit > 0 {
+                if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                    // Clear the live orders queue.
+                    self.live_sells_orders.clear();
+                    self.live_buys_orders.clear();
+
+                    // Print a message indicating that all orders have been cancelled.
+                    println!("Cancelling all orders for {}", symbol);
+                    self.cancel_limit -= 1;
+                } else {
+                    self.cancel_limit -= 1;
+                }
+            }
+        }
         return out_of_bounds;
     }
 
@@ -640,6 +645,8 @@ impl QuoteGenerator {
                 self.send_batch_orders(orders.clone()).await;
                 self.rate_limit -= 1;
             }
+            // Updates last update price
+            self.last_updated_price = book.mid_price;
             //Updates the time limit
             self.time_limit = book.last_update;
         }
