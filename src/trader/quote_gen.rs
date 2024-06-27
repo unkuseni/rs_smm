@@ -561,7 +561,7 @@ impl QuoteGenerator {
 
         // If the bid bounds are greater than the mid price and the last update price is not 0.0,
         // cancel all orders for the given symbol.
-        if book.mid_price < bid_bounds  && self.last_update_price != 0.0 {
+        if book.mid_price < bid_bounds && self.last_update_price != 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all orders for the given symbol.
@@ -627,21 +627,24 @@ impl QuoteGenerator {
         self.inventory_delta();
 
         // Check if the order book is out of bounds with the given symbol.
-        let replace_orders = self.out_of_bounds(&book, symbol.clone()).await;
+        match self.out_of_bounds(&book, symbol.clone()).await {
+            true => {
+                // Generate quotes for the grid based on the order book, symbol, imbalance, skew,
+                // and price fluctuation.
+                let orders =
+                    self.generate_quotes(symbol.clone(), &book, imbalance, skew, price_flu);
 
-        if replace_orders == true {
-            // Generate quotes for the grid based on the order book, symbol, imbalance, skew,
-            // and price fluctuation.
-            let orders = self.generate_quotes(symbol.clone(), &book, imbalance, skew, price_flu);
-
-            // Send the generated orders to the book.
-            if self.rate_limit > 0 {
-                self.send_batch_orders(orders.clone()).await;
-                self.rate_limit -= 1;
+                // Send the generated orders to the book.
+                if self.rate_limit > 0 {
+                    self.send_batch_orders(orders.clone()).await;
+                    self.rate_limit -= 1;
+                }
+                //Updates the time limit
+                self.time_limit = book.last_update;
+                self.last_update_price = book.mid_price;
             }
-            //Updates the time limit
-            self.time_limit = book.last_update;
-            self.last_update_price = book.mid_price;
+
+            false => {}
         }
 
         // Update the time limit
