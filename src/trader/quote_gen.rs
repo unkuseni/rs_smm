@@ -527,79 +527,68 @@ impl QuoteGenerator {
     async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) -> bool {
         // Initialize the `out_of_bounds` boolean to `false`.
         let mut out_of_bounds = false;
-        let mut live_buys = self.live_buys_orders.clone();
-        let mut live_sells = self.live_sells_orders.clone();
+
         // If there are no live orders, return `true`.
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
             out_of_bounds = true;
             return out_of_bounds;
         }
-        let max_dev = bps_to_decimal(30.0) * self.last_update_price;
-        let bid_bounds = self.last_update_price - max_dev;
-        let ask_bounds = self.last_update_price + max_dev;
-
-        // If the ask bounds are less than the mid price and the last update price is not 0.0,
+        
+        // If the ask bounds are less than the mid price,
         // cancel all orders for the given symbol.
-        if book.mid_price > ask_bounds && self.last_update_price != 0.0 {
-            // Set the `out_of_bounds` boolean to `true`.
-            out_of_bounds = true;
-            // Attempt to cancel all orders for the given symbol.
-            if self.cancel_limit > 1 {
-                if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
-                    // Clear the live orders queue.
-                    self.live_sells_orders.clear();
-                    self.live_buys_orders.clear();
-
-                    // Print a message indicating that all orders have been cancelled.
-                    println!("Cancelling all orders for {}", symbol);
-                    self.cancel_limit -= 1;
-                } else {
-                    self.cancel_limit -= 1;
-                }
-            }
-        }
-
-        // If the bid bounds are greater than the mid price and the last update price is not 0.0,
-        // cancel all orders for the given symbol.
-        if book.mid_price < bid_bounds && self.last_update_price != 0.0 {
-            // Set the `out_of_bounds` boolean to `true`.
-            out_of_bounds = true;
-            // Attempt to cancel all orders for the given symbol.
-            if self.cancel_limit > 1 {
-                if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
-                    // Clear the live orders queue.
-                    self.live_sells_orders.clear();
-                    self.live_buys_orders.clear();
-
-                    // Print a message indicating that all orders have been cancelled.
-                    println!("Cancelling all orders for {}", symbol);
-                    self.cancel_limit -= 1;
-                } else {
-                    self.cancel_limit -= 1;
-                }
-            }
-        }
-
-        // Check if live sell orders has been filled
-        if !live_sells.is_empty() && book.mid_price > live_sells[0].price {
-            // If there are live sell orders, pop the first order from the queue.
-            if let Some(order) = live_sells.pop_front() {
-                // Update the position by subtracting the price multiplied by the quantity.
-                self.position -= order.price * order.qty;
-                // Print the sold quantity and symbol.
-                println!("Sold {} {}", order.qty, symbol);
-            }
-        }
-
-        // Check if live buy orders need to be cancelled.
-        if !live_buys.is_empty() && book.mid_price < live_buys[0].price {
+        if book.mid_price > self.live_sells_orders[0].price && !self.live_sells_orders.is_empty() {
             // If there are live buy orders, pop the first order from the queue.
-            let order = live_buys.pop_front().unwrap();
+            let order = self.live_sells_orders[0].clone();
             // Update the position by adding the price multiplied by the quantity.
             self.position += order.price * order.qty;
             // Print the bought quantity and symbol.
             println!("Bought {} {}", order.qty, symbol);
+            // Set the `out_of_bounds` boolean to `true`.
+            out_of_bounds = true;
+            // Attempt to cancel all orders for the given symbol.
+            if self.cancel_limit > 1 {
+                if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                    // Clear the live orders queue.
+                    self.live_sells_orders.clear();
+                    self.live_buys_orders.clear();
+
+                    // Print a message indicating that all orders have been cancelled.
+                    println!("Cancelling all orders for {}", symbol);
+                    self.cancel_limit -= 1;
+                } else {
+                    self.cancel_limit -= 1;
+                }
+            }
         }
+
+        // If the bid bounds are greater than the mid price,
+        // cancel all orders for the given symbol.
+        if book.mid_price < self.live_buys_orders[0].price && !self.live_buys_orders.is_empty() {
+            // If there are live buy orders, pop the first order from the queue.
+            let order = self.live_buys_orders[0].clone();
+            // Update the position by adding the price multiplied by the quantity.
+            self.position += order.price * order.qty;
+            // Print the bought quantity and symbol.
+            println!("Bought {} {}", order.qty, symbol);
+            // Set the `out_of_bounds` boolean to `true`.
+            out_of_bounds = true;
+            // Attempt to cancel all orders for the given symbol.
+            if self.cancel_limit > 1 {
+                if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                    // Clear the live orders queue.
+                    self.live_sells_orders.clear();
+                    self.live_buys_orders.clear();
+
+                    // Print a message indicating that all orders have been cancelled.
+                    println!("Cancelling all orders for {}", symbol);
+                    self.cancel_limit -= 1;
+                } else {
+                    self.cancel_limit -= 1;
+                }
+            }
+        }
+
+        // Return the `out_of_bounds` boolean.
         return out_of_bounds;
     }
 
