@@ -527,7 +527,26 @@ impl QuoteGenerator {
         }
     }
 
+    /// Asynchronously checks if the current price is out of bounds for the given symbol.
+    ///
+    /// # Arguments
+    ///
+    /// * `book` - The `LocalBook` containing the current order book data.
+    /// * `symbol` - The symbol to check for out of bounds.
+    ///
+    /// # Returns
+    ///
+    /// A boolean indicating whether the current price is out of bounds.
+    ///
+    /// This function checks if the current price is out of bounds for the given symbol. It calculates
+    /// the bounds based on the spread and mid price. If there are no live orders, it returns `true`.
+    /// It then checks if any live sell orders need to be cancelled. If the `mid_price` is greater than
+    /// the `ask_bounds` and the `last_update_price` is not 0.0, it cancels all orders for the given symbol.
+    /// It then checks if any live buy orders need to be cancelled. If the `mid_price` is less than the
+    /// `bid_bounds` and the `last_update_price` is not 0.0, it cancels all orders for the given symbol.
+    /// Finally, it returns the `out_of_bounds` boolean.
     async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) -> bool {
+        // Initialize the `out_of_bounds` boolean to `false`.
         let mut out_of_bounds = false;
 
         // Calculate the bounds based on the spread and mid price.
@@ -536,52 +555,74 @@ impl QuoteGenerator {
         let bid_bounds = self.last_update_price - bounds;
         let ask_bounds = self.last_update_price + bounds;
 
-        // If there are no live orders, return.
+        // If there are no live orders, return `true`.
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
             out_of_bounds = true;
             return out_of_bounds;
         }
 
-        // Check if live sell orders need to be cancelled
+        // Check if live sell orders need to be cancelled.
         if !self.live_sells_orders.is_empty() && book.mid_price > self.live_sells_orders[0].price {
+            // If there are live sell orders, pop the first order from the queue.
             let order = self.live_sells_orders.pop_front().unwrap();
+            // Update the position by subtracting the price multiplied by the quantity.
             self.position -= order.price * order.qty;
+            // Print the sold quantity and symbol.
             println!("Sold {} {}", order.qty, symbol);
         }
 
-        // Check if live buy orders need to be cancelled
+        // Check if live buy orders need to be cancelled.
         if !self.live_buys_orders.is_empty() && book.mid_price < self.live_buys_orders[0].price {
+            // If there are live buy orders, pop the first order from the queue.
             let order = self.live_buys_orders.pop_front().unwrap();
+            // Update the position by adding the price multiplied by the quantity.
             self.position += order.price * order.qty;
+            // Print the bought quantity and symbol.
             println!("Bought {} {}", order.qty, symbol);
         }
 
-        // Check if the cancel limit has been reached
-        if self.cancel_limit > 0 {
-            // If the ask bounds are less than the mid price and the last update price is not 0.0,
-            // cancel all orders for the given symbol.
-            if book.mid_price > ask_bounds && self.last_update_price != 0.0 {
-                if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
+        // If the ask bounds are less than the mid price and the last update price is not 0.0,
+        // cancel all orders for the given symbol.
+        if book.mid_price > ask_bounds && self.last_update_price != 0.0 {
+            // Set the `out_of_bounds` boolean to `true`.
+            out_of_bounds = true;
+            // Attempt to cancel all orders for the given symbol.
+            if self.cancel_limit > 0 {
+                if let Ok(_v) = self.client.cancel_all(symbol.as_str()).await {
+                    // Clear the live sells orders queue.
                     self.live_sells_orders.clear();
-                    out_of_bounds = true;
-                    println!("Cancelling all orders for {}", symbol);
-                }
-            }
-
-            // If the bid bounds are greater than the mid price and the last update price is not 0.0,
-            // cancel all orders for the given symbol.
-            if book.mid_price < bid_bounds && self.last_update_price != 0.0 {
-                if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                    // Clear the live buys orders queue.
                     self.live_buys_orders.clear();
-                    out_of_bounds = true;
+                    // Print a message indicating that all orders have been cancelled.
                     println!("Cancelling all orders for {}", symbol);
+                    self.cancel_limit -= 1;
+                } else {
+                    self.cancel_limit -= 1;
                 }
             }
-
-            self.cancel_limit -= 1;
         }
 
-        out_of_bounds
+        // If the bid bounds are greater than the mid price and the last update price is not 0.0,
+        // cancel all orders for the given symbol.
+        if book.mid_price < bid_bounds && self.last_update_price != 0.0 {
+            // Set the `out_of_bounds` boolean to `true`.
+            out_of_bounds = true;
+            // Attempt to cancel all orders for the given symbol.
+            if self.cancel_limit > 0 {
+                if let Ok(_v) = self.client.cancel_all(symbol.as_str()).await {
+                    // Clear the live buys orders queue.
+                    self.live_buys_orders.clear();
+                    // Clear the live sells orders queue.
+                    self.live_sells_orders.clear();
+                    // Print a message indicating that all orders have been cancelled.
+                    println!("Cancelling all orders for {}", symbol);
+                    self.cancel_limit -= 1;
+                } else {
+                    self.cancel_limit -= 1;
+                }
+            }
+        }
+        return out_of_bounds;
     }
 
     /// Checks for fills in the provided private data and updates the grid of live orders accordingly.
@@ -657,19 +698,10 @@ impl QuoteGenerator {
         book: LocalBook,
         symbol: String,
         price_flu: f64,
-        rate_limit: u32,
+        _rate_limit: u32,
     ) {
         // Update the inventory delta.
         self.inventory_delta();
-
-        // Update the time limit
-        if self.time_limit > 1 {
-            let condition = (book.last_update - self.time_limit) > 1000;
-            if condition == true {
-                self.rate_limit = 10;
-                self.cancel_limit = 10;
-            }
-        }
 
         // Check if the order book is out of bounds with the given symbol.
         let replace_orders = self.out_of_bounds(&book, symbol.clone()).await;
@@ -684,13 +716,20 @@ impl QuoteGenerator {
                 self.send_batch_orders(orders.clone()).await;
                 self.rate_limit -= 1;
             }
-
+            // Update bounds
+            self.last_update_price = book.mid_price;
+            //Updates the time limit
+            self.time_limit = book.last_update;
         }
-        // Update bounds
-        self.last_update_price = book.mid_price;
 
-        //Updates the time limit
-        self.time_limit = book.last_update;
+        // Update the time limit
+        if self.time_limit > 1 {
+            let condition = (book.last_update - self.time_limit) > 1000;
+            if condition == true {
+                self.rate_limit = 10;
+                self.cancel_limit = 10;
+            }
+        }
     }
 }
 
