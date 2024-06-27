@@ -5,14 +5,16 @@ use std::{
 
 use num_traits::{Float, Signed};
 
-use toml::Value;
+use serde::Deserialize;
 
 pub fn round_step<T: Float>(num: T, step: T) -> T {
     (num / step).round() * step
 }
 
 pub fn geometric_weights(ratio: f64, n: usize) -> Vec<f64> {
-    assert!(ratio > 0.0 && ratio < 1.0, "Ratio must be between 0 and 1");
+    if !(ratio > 0.0 && ratio < 1.0) {
+        return Vec::new(); // Return an empty vector if ratio is not between 0 and 1
+    }
 
     // Generate the geometric series
     let weights: Vec<f64> = (0..n).map(|i| ratio.powi(i as i32)).collect();
@@ -23,6 +25,7 @@ pub fn geometric_weights(ratio: f64, n: usize) -> Vec<f64> {
     // Normalize the weights so that their sum equals 1
     weights.iter().map(|w| w / sum).collect()
 }
+
 
 pub fn generate_timestamp() -> u64 {
     SystemTime::now()
@@ -81,7 +84,7 @@ pub fn geomspace<T: Float + PartialOrd + Signed>(start: T, end: T, n: usize) -> 
 
     // Check if start or end is zero and panic if it is.
     if start == T::zero() || end == T::zero() {
-        panic!("Start and end must be non-zero for a geometric space.");
+       return Vec::new();
     }
 
     // Calculate the logarithmic ratio between consecutive numbers in the sequence.
@@ -114,7 +117,7 @@ pub fn nbsqrt<T: PartialOrd + Float + Signed>(num: T) -> T {
 
 pub fn spread_price_in_bps(spread: f64, price: f64) -> f64 {
     let percent = spread / price;
-    let  bps = percent * 10000.0;
+    let bps = percent * 10000.0;
     bps.round()
 }
 
@@ -173,14 +176,34 @@ mod tests {
         println!("{:#?}", num);
         println!("{:#?}", num_geom);
     }
+
+    #[test]
+    fn params() {
+        let result = read_toml("./src/util/test.toml");
+        println!("{:#?}", result);
+    }
 }
 
 /// This section is for a toml parser that will be used for reading config files
 ///
-pub fn read_toml(path: &str) -> Value {
+pub fn read_toml(path: &str) -> Config {
     let mut file = std::fs::File::open(path).expect("Unable to open file");
     let mut contents = String::new();
     file.read_to_string(&mut contents)
         .expect("Unable to read file");
     toml::from_str(&contents).expect("Unable to parse file")
+}
+
+#[derive(Deserialize, Debug)]
+pub struct Config {
+    pub exchange: String,
+    pub symbols: Vec<String>,
+    pub api_keys: Vec<(String, String, String)>,
+    pub balances: Vec<(String, f64)>,
+    pub leverage: f64,
+    pub orders_per_side: usize,
+    pub final_order_distance: f64,
+    pub depths: Vec<usize>,
+    pub rate_limit: u32,
+    pub bps: Vec<f64>,
 }

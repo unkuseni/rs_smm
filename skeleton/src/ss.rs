@@ -17,12 +17,12 @@ use crate::{
 
 #[derive(Debug, Clone)]
 pub struct SharedState {
-    pub exchange: &'static str,
+    pub exchange: String,
     pub logging: Logger,
     pub clients: HashMap<String, ExchangeClient>,
     pub private: HashMap<String, PrivateData>,
     pub markets: Vec<MarketMessage>,
-    pub symbols: Vec<&'static str>,
+    pub symbols: Vec<String>,
 }
 
 impl SharedState {
@@ -35,17 +35,17 @@ impl SharedState {
     /// # Returns
     ///
     /// A new instance of `SharedState` with default values.
-    pub fn new(exchange: &'static str) -> Self {
+    pub fn new(exchange: String) -> Self {
         // Create a new logger
         let log = Logger;
 
         // Initialize the `SharedState` struct with default values
         Self {
-            exchange,                // The exchange where the market is traded
+            exchange: exchange.clone(),                // The exchange where the market is traded
             logging: log,            // The logger for the application
             clients: HashMap::new(), // A hashmap to store exchange clients
             private: HashMap::new(), // A hashmap to store private data
-            markets: match exchange {
+            markets: match exchange.as_str() {
                 "bybit" => {
                     // If the exchange is "bybit", initialize the `markets` vector with a Bybit market
                     vec![MarketMessage::Bybit(BybitMarket::default())]
@@ -84,10 +84,10 @@ impl SharedState {
         key: String,
         secret: String,
         symbol: String,
-        exchange: Option<&'static str>,
+        exchange: Option<String>,
     ) {
         // Check the exchange and add the corresponding client.
-        match self.exchange {
+        match self.exchange.as_str() {
             // If the exchange is "bybit", add a BybitClient.
             "bybit" => {
                 let client = BybitClient::init(key, secret);
@@ -101,7 +101,7 @@ impl SharedState {
             // If the exchange is "both", check the `exchange` argument and add the corresponding client.
             "both" => {
                 if let Some(v) = exchange {
-                    match v {
+                    match v.as_str() {
                         // If the `exchange` is "bybit", add a BybitClient.
                         "bybit" => {
                             let client = BybitClient::init(key, secret);
@@ -122,7 +122,7 @@ impl SharedState {
         }
     }
 
-    pub fn add_symbols(&mut self, markets: Vec<&'static str>) {
+    pub fn add_symbols(&mut self, markets: Vec<String>) {
         self.symbols.extend(markets);
     }
 
@@ -147,8 +147,8 @@ impl SharedState {
 ///
 /// If an invalid exchange is provided, this function will panic.
 pub async fn load_data(state: SharedState, state_sender: mpsc::UnboundedSender<SharedState>) {
-    let exchange = state.exchange;
-    match exchange {
+    let exchange = state.exchange.clone();
+    match exchange.as_str() {
         "bybit" => load_bybit(state.clone(), state_sender).await,
         "binance" => load_binance(state.clone(), state_sender).await,
         "both" => load_both(state.clone(), state_sender).await,
