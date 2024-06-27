@@ -531,8 +531,10 @@ impl QuoteGenerator {
             return out_of_bounds;
         }
 
-        let bid_bounds = (book.get_spread_in_bps() * book.tick_size) - self.live_buys_orders[0].price;
-        let ask_bounds = (book.get_spread_in_bps() * book.tick_size) - self.live_sells_orders[0].price;
+        let bid_bounds =
+            (book.get_spread_in_bps() * book.tick_size) - self.live_buys_orders[0].price;
+        let ask_bounds =
+            (book.get_spread_in_bps() * book.tick_size) - self.live_sells_orders[0].price;
 
         // If the ask bounds are less than the mid price and the last update price is not 0.0,
         // cancel all orders for the given symbol.
@@ -541,15 +543,11 @@ impl QuoteGenerator {
             out_of_bounds = true;
             // Attempt to cancel all orders for the given symbol.
             if self.cancel_limit > 0 {
-                if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
-                    for (pos, order) in v.iter().enumerate() {
-                        // Clear the live orders queue.
-                        if *order == self.live_sells_orders[pos] {
-                            self.live_sells_orders.remove(pos);
-                        } else if *order == self.live_buys_orders[pos] {
-                            self.live_buys_orders.remove(pos);
-                        }
-                    }
+                if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                    // Clear the live orders queue.
+                    self.live_sells_orders.clear();
+                    self.live_buys_orders.clear();
+
                     // Print a message indicating that all orders have been cancelled.
                     println!("Cancelling all orders for {}", symbol);
                     self.cancel_limit -= 1;
@@ -566,15 +564,11 @@ impl QuoteGenerator {
             out_of_bounds = true;
             // Attempt to cancel all orders for the given symbol.
             if self.cancel_limit > 0 {
-                if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
-                    for (pos, order) in v.iter().enumerate() {
-                        // Clear the live orders queue.
-                        if *order == self.live_sells_orders[pos] {
-                            self.live_sells_orders.remove(pos);
-                        } else if *order == self.live_buys_orders[pos] {
-                            self.live_buys_orders.remove(pos);
-                        }
-                    }
+                if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                    // Clear the live orders queue.
+                    self.live_sells_orders.clear();
+                    self.live_buys_orders.clear();
+
                     // Print a message indicating that all orders have been cancelled.
                     println!("Cancelling all orders for {}", symbol);
                     self.cancel_limit -= 1;
