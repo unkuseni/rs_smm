@@ -558,6 +558,25 @@ impl QuoteGenerator {
                     if v.len() == (self.live_buys_orders.len() + self.live_sells_orders.len()) {
                         self.live_sells_orders.clear();
                         self.live_buys_orders.clear();
+                    } else {
+                        for cancelled_order in v.clone() {
+                            for (i, live_order) in
+                                self.live_buys_orders.clone().iter_mut().enumerate()
+                            {
+                                if *live_order == cancelled_order {
+                                    self.live_buys_orders.remove(i);
+                                }
+                            }
+                        }
+                        for cancelled_order in v.clone() {
+                            for (i, live_order) in
+                                self.live_sells_orders.clone().iter_mut().enumerate()
+                            {
+                                if *live_order == cancelled_order {
+                                    self.live_sells_orders.remove(i);
+                                }
+                            }
+                        }
                     }
 
                     // Print a message indicating that all orders have been cancelled.
@@ -585,6 +604,25 @@ impl QuoteGenerator {
                     if v.len() == (self.live_buys_orders.len() + self.live_sells_orders.len()) {
                         self.live_sells_orders.clear();
                         self.live_buys_orders.clear();
+                    } else {
+                        for cancelled_order in v.clone() {
+                            for (i, live_order) in
+                                self.live_buys_orders.clone().iter_mut().enumerate()
+                            {
+                                if *live_order == cancelled_order {
+                                    self.live_buys_orders.remove(i);
+                                }
+                            }
+                        }
+                        for cancelled_order in v.clone() {
+                            for (i, live_order) in
+                                self.live_sells_orders.clone().iter_mut().enumerate()
+                            {
+                                if *live_order == cancelled_order {
+                                    self.live_sells_orders.remove(i);
+                                }
+                            }
+                        }
                     }
                     // Print a message indicating that all orders have been cancelled.
                     println!("Cancelling all orders for {}", symbol);
@@ -594,7 +632,7 @@ impl QuoteGenerator {
                 }
             }
         }
-        self.last_update_price  = book.mid_price;
+        self.last_update_price = book.mid_price;
         // Return the `out_of_bounds` boolean.
         out_of_bounds
     }
