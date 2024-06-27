@@ -39,6 +39,7 @@ pub struct QuoteGenerator {
     pub inventory_delta: f64,
     total_order: usize,
     final_order_distance: f64,
+    last_update_price: f64,
     rate_limit: u32,
     time_limit: u64,
     cancel_limit: u32,
@@ -91,6 +92,8 @@ impl QuoteGenerator {
             minimum_spread: 0.0,
             // final order distance
             final_order_distance,
+
+            last_update_price: 0.0,
 
             rate_limit,
 
@@ -531,13 +534,13 @@ impl QuoteGenerator {
             out_of_bounds = true;
             return out_of_bounds;
         }
-        let max_dev = bps_to_decimal(2.5) * book.mid_price;
-        let bid_bounds = book.mid_price - max_dev;
-        let ask_bounds = book.mid_price + max_dev;
+        let max_dev = bps_to_decimal(30.0) * self.last_update_price;
+        let bid_bounds = self.last_update_price - max_dev;
+        let ask_bounds = self.last_update_price + max_dev;
 
         // If the ask bounds are less than the mid price and the last update price is not 0.0,
         // cancel all orders for the given symbol.
-        if self.live_sells_orders[0].price < ask_bounds {
+        if book.mid_price > ask_bounds && self.last_update_price != 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all orders for the given symbol.
@@ -558,7 +561,7 @@ impl QuoteGenerator {
 
         // If the bid bounds are greater than the mid price and the last update price is not 0.0,
         // cancel all orders for the given symbol.
-        if self.live_buys_orders[0].price > bid_bounds {
+        if book.mid_price < bid_bounds  && self.last_update_price != 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all orders for the given symbol.
@@ -638,6 +641,7 @@ impl QuoteGenerator {
             }
             //Updates the time limit
             self.time_limit = book.last_update;
+            self.last_update_price = book.mid_price;
         }
 
         // Update the time limit
