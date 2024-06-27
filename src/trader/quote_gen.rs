@@ -535,30 +535,6 @@ impl QuoteGenerator {
         let bid_bounds = book.mid_price - max_dev;
         let ask_bounds = book.mid_price + max_dev;
 
-        // Check if live sell orders has been filled
-        if !live_sells.is_empty() && book.mid_price > live_sells[0].price {
-            // If there are live sell orders, pop the first order from the queue.
-            if let Some(order) = live_sells.pop_front() {
-                // Update the position by subtracting the price multiplied by the quantity.
-                self.position -= order.price * order.qty;
-                // Print the sold quantity and symbol.
-                println!("Sold {} {}", order.qty, symbol);
-            }
-        }
-
-        // Check if live buy orders need to be cancelled.
-        if !live_buys.is_empty() && book.mid_price < live_buys[0].price {
-            // If there are live buy orders, pop the first order from the queue.
-            let order = live_buys.pop_front().unwrap();
-            // Update the position by adding the price multiplied by the quantity.
-            self.position += order.price * order.qty;
-            // Print the bought quantity and symbol.
-            println!("Bought {} {}", order.qty, symbol);
-        }
-        
-        self.live_buys_orders = live_buys;
-        self.live_sells_orders = live_sells;
-
         // If the ask bounds are less than the mid price and the last update price is not 0.0,
         // cancel all orders for the given symbol.
         if self.live_sells_orders[0].price < ask_bounds {
@@ -599,6 +575,27 @@ impl QuoteGenerator {
                     self.cancel_limit -= 1;
                 }
             }
+        }
+
+        // Check if live sell orders has been filled
+        if !live_sells.is_empty() && book.mid_price > live_sells[0].price {
+            // If there are live sell orders, pop the first order from the queue.
+            if let Some(order) = live_sells.pop_front() {
+                // Update the position by subtracting the price multiplied by the quantity.
+                self.position -= order.price * order.qty;
+                // Print the sold quantity and symbol.
+                println!("Sold {} {}", order.qty, symbol);
+            }
+        }
+
+        // Check if live buy orders need to be cancelled.
+        if !live_buys.is_empty() && book.mid_price < live_buys[0].price {
+            // If there are live buy orders, pop the first order from the queue.
+            let order = live_buys.pop_front().unwrap();
+            // Update the position by adding the price multiplied by the quantity.
+            self.position += order.price * order.qty;
+            // Print the bought quantity and symbol.
+            println!("Bought {} {}", order.qty, symbol);
         }
         return out_of_bounds;
     }
