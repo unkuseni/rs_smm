@@ -3,14 +3,10 @@ use std::{borrow::Cow, collections::VecDeque};
 use binance::{account::OrderSide, futures::account::CustomOrderRequest};
 use bybit::model::{
     AmendOrderRequest, BatchAmendRequest, BatchCancelRequest, BatchPlaceRequest,
-    CancelOrderRequest, CancelallRequest, FastExecData, OrderRequest, Side,
+    CancelOrderRequest, CancelallRequest, OrderRequest, Side,
 };
 use skeleton::{
-    exchanges::{
-        ex_binance::BinanceClient,
-        ex_bybit::BybitClient,
-        exchange::{ExchangeClient, PrivateData},
-    },
+    exchanges::{ex_binance::BinanceClient, ex_bybit::BybitClient, exchange::ExchangeClient},
     util::{
         helpers::{geometric_weights, geomspace, nbsqrt, round_step, Round},
         localorderbook::LocalBook,
@@ -561,26 +557,6 @@ impl QuoteGenerator {
             return out_of_bounds;
         }
 
-        // Check if live sell orders need to be cancelled.
-        if !self.live_sells_orders.is_empty() && book.mid_price > self.live_sells_orders[0].price {
-            // If there are live sell orders, pop the first order from the queue.
-            let order = self.live_sells_orders.pop_front().unwrap();
-            // Update the position by subtracting the price multiplied by the quantity.
-            self.position -= order.price * order.qty;
-            // Print the sold quantity and symbol.
-            println!("Sold {} {}", order.qty, symbol);
-        }
-
-        // Check if live buy orders need to be cancelled.
-        if !self.live_buys_orders.is_empty() && book.mid_price < self.live_buys_orders[0].price {
-            // If there are live buy orders, pop the first order from the queue.
-            let order = self.live_buys_orders.pop_front().unwrap();
-            // Update the position by adding the price multiplied by the quantity.
-            self.position += order.price * order.qty;
-            // Print the bought quantity and symbol.
-            println!("Bought {} {}", order.qty, symbol);
-        }
-
         // If the ask bounds are less than the mid price and the last update price is not 0.0,
         // cancel all orders for the given symbol.
         if book.mid_price > ask_bounds && self.last_update_price > 0.0 {
@@ -588,11 +564,15 @@ impl QuoteGenerator {
             out_of_bounds = true;
             // Attempt to cancel all orders for the given symbol.
             if self.cancel_limit > 0 {
-                if let Ok(_v) = self.client.cancel_all(symbol.as_str()).await {
-                    // Clear the live sells orders queue.
-                    self.live_sells_orders.clear();
-                    // Clear the live buys orders queue.
-                    self.live_buys_orders.clear();
+                if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
+                    for (pos, order) in v.iter().enumerate() {
+                        // Clear the live orders queue.
+                        if *order == self.live_sells_orders[pos] {
+                            self.live_sells_orders.remove(pos);
+                        } else if *order == self.live_buys_orders[pos] {
+                            self.live_buys_orders.remove(pos);
+                        }
+                    }
                     // Print a message indicating that all orders have been cancelled.
                     println!("Cancelling all orders for {}", symbol);
                     self.cancel_limit -= 1;
@@ -609,11 +589,15 @@ impl QuoteGenerator {
             out_of_bounds = true;
             // Attempt to cancel all orders for the given symbol.
             if self.cancel_limit > 0 {
-                if let Ok(_v) = self.client.cancel_all(symbol.as_str()).await {
-                    // Clear the live buys orders queue.
-                    self.live_buys_orders.clear();
-                    // Clear the live sells orders queue.
-                    self.live_sells_orders.clear();
+                if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
+                    for (pos, order) in v.iter().enumerate() {
+                        // Clear the live orders queue.
+                        if *order == self.live_sells_orders[pos] {
+                            self.live_sells_orders.remove(pos);
+                        } else if *order == self.live_buys_orders[pos] {
+                            self.live_buys_orders.remove(pos);
+                        }
+                    }
                     // Print a message indicating that all orders have been cancelled.
                     println!("Cancelling all orders for {}", symbol);
                     self.cancel_limit -= 1;
@@ -631,53 +615,27 @@ impl QuoteGenerator {
     ///
     /// * `data` - The private data containing the executions.
     ///
-    fn _check_for_fills(&mut self, data: PrivateData) {
-        // Clone the live buys and sells orders.
-        let mut live_buy = self.live_buys_orders.clone();
-        let mut live_sell = self.live_sells_orders.clone();
-
-        // Get the executions from the private data.
-        let fills = match data {
-            PrivateData::Bybit(v) => v.executions,
-            PrivateData::Binance(v) => v.into_fastexec(),
-        };
-
-        // Iterate over the executions and update the grid of live orders.
-        for FastExecData {
-            order_id,
-            exec_qty,
-            side,
-            symbol,
-            ..
-        } in fills
-        {
-            // If the execution quantity is not zero, update the grid of live orders.
-            if exec_qty != "0.0" {
-                // If the side is "Buy", remove the filled order from live buys and update the position.
-                if side == "Buy" {
-                    for (i, order) in live_buy.clone().iter().enumerate() {
-                        if order.order_id == order_id {
-                            live_buy.remove(i);
-                            self.position += order.price * order.qty;
-                            println!("Bought {} {}", order.qty, symbol);
-                        }
-                    }
-                // If the side is not "Buy", remove the filled order from live sells and update the position.
-                } else {
-                    for (i, order) in live_sell.clone().iter().enumerate() {
-                        if order.order_id == order_id {
-                            live_sell.remove(i);
-                            self.position -= order.price * order.qty;
-                            println!("Sold {} {}", order.qty, symbol);
-                        }
-                    }
-                }
+    fn simulated_fills(&mut self, book: &LocalBook, symbol: String) {
+        // Check if live sell orders has been filled
+        if !self.live_sells_orders.is_empty() && book.mid_price > self.live_sells_orders[0].price {
+            // If there are live sell orders, pop the first order from the queue.
+            if let Some(order) = self.live_sells_orders.pop_front() {
+                // Update the position by subtracting the price multiplied by the quantity.
+                self.position -= order.price * order.qty;
+                // Print the sold quantity and symbol.
+                println!("Sold {} {}", order.qty, symbol);
             }
         }
 
-        // Update the live buys and sells orders with the new values.
-        self.live_buys_orders = live_buy;
-        self.live_sells_orders = live_sell;
+        // Check if live buy orders need to be cancelled.
+        if !self.live_buys_orders.is_empty() && book.mid_price < self.live_buys_orders[0].price {
+            // If there are live buy orders, pop the first order from the queue.
+            let order = self.live_buys_orders.pop_front().unwrap();
+            // Update the position by adding the price multiplied by the quantity.
+            self.position += order.price * order.qty;
+            // Print the bought quantity and symbol.
+            println!("Bought {} {}", order.qty, symbol);
+        }
     }
 
     /// Updates the grid of orders with the current wallet data, skew, imbalance,
@@ -700,6 +658,8 @@ impl QuoteGenerator {
         price_flu: f64,
         _rate_limit: u32,
     ) {
+        // Check for fills
+        self.simulated_fills(&book, symbol.clone());
         // Update the inventory delta.
         self.inventory_delta();
 
@@ -716,8 +676,6 @@ impl QuoteGenerator {
                 self.send_batch_orders(orders.clone()).await;
                 self.rate_limit -= 1;
             }
-            // Update bounds
-            self.last_update_price = book.mid_price;
             //Updates the time limit
             self.time_limit = book.last_update;
         }
@@ -730,6 +688,8 @@ impl QuoteGenerator {
                 self.cancel_limit = 10;
             }
         }
+        // Update bounds
+        self.last_update_price = book.mid_price;
     }
 }
 
