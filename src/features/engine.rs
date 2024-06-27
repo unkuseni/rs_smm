@@ -137,18 +137,18 @@ impl Engine {
         let deep_imb = self.deep_imbalance_ratio * DEEP_IMB_WEIGHT; // -1 to 1
         let exp_ret = {
             if self.expected_return > 0.0 {
-                1.0 * EXP_RET_WEIGHT
+                0.5 * EXP_RET_WEIGHT
             } else if self.expected_return < 0.0 {
-                -1.0 * EXP_RET_WEIGHT
+                -0.5 * EXP_RET_WEIGHT
             } else {
                 0.0
             }
         };
         let voi = {
             if self.voi > 0.0 {
-                1.0 * VOI_WEIGHT
+                0.5 * VOI_WEIGHT
             } else if self.voi < 0.0 {
-                -1.0 * VOI_WEIGHT
+                -0.5 * VOI_WEIGHT
             } else {
                 0.0
             }
@@ -156,9 +156,9 @@ impl Engine {
         let wmid = self.wmid * EXP_RET_WEIGHT;
         let mid_b = {
             if self.mid_price_basis > 0.0 {
-                1.0 * MID_BASIS_WEIGHT
+                0.5 * MID_BASIS_WEIGHT
             } else {
-                -1.0 * MID_BASIS_WEIGHT
+                -0.5 * MID_BASIS_WEIGHT
             }
         };
         if use_wmid == true {
