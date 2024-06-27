@@ -532,11 +532,7 @@ impl QuoteGenerator {
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
             out_of_bounds = true;
             return out_of_bounds;
-        }
-        
-        // If the ask bounds are less than the mid price,
-        // cancel all orders for the given symbol.
-        if book.mid_price > self.live_sells_orders[0].price && !self.live_sells_orders.is_empty() {
+        } else if book.mid_price > self.live_sells_orders[0].price {
             // If there are live buy orders, pop the first order from the queue.
             let order = self.live_sells_orders[0].clone();
             // Update the position by adding the price multiplied by the quantity.
@@ -559,11 +555,7 @@ impl QuoteGenerator {
                     self.cancel_limit -= 1;
                 }
             }
-        }
-
-        // If the bid bounds are greater than the mid price,
-        // cancel all orders for the given symbol.
-        if book.mid_price < self.live_buys_orders[0].price && !self.live_buys_orders.is_empty() {
+        } else if book.mid_price < self.live_buys_orders[0].price {
             // If there are live buy orders, pop the first order from the queue.
             let order = self.live_buys_orders[0].clone();
             // Update the position by adding the price multiplied by the quantity.
@@ -589,7 +581,7 @@ impl QuoteGenerator {
         }
 
         // Return the `out_of_bounds` boolean.
-        return out_of_bounds;
+        out_of_bounds
     }
 
     /// Updates the grid of orders with the current wallet data, skew, imbalance,
