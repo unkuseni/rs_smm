@@ -161,9 +161,9 @@ impl QuoteGenerator {
         // Calculate the minimum spread by converting the preferred spread to decimal format.
         let min_spread = {
             if preferred_spread == 0.0 {
-                bps_to_decimal(25.0) * book.mid_price
+                bps_to_decimal(25.0) * book.get_mid_price()
             } else {
-                bps_to_decimal(preferred_spread) * book.mid_price
+                bps_to_decimal(preferred_spread) *  book.get_mid_price()
             }
         };
 
@@ -237,7 +237,7 @@ impl QuoteGenerator {
         let mut orders = if skew >= 0.0 {
             // If the imbalance is large and the price fluctuation is negative, generate negative
             // skew orders. Otherwise, generate positive skew orders.
-            if imbalance > 0.94 && volatility <= -curr_spread * 2.0 {
+            if imbalance > 0.85 && volatility <= -curr_spread * 2.0 {
                 self.negative_skew_orders(
                     half_spread,
                     curr_spread,
@@ -261,7 +261,7 @@ impl QuoteGenerator {
         } else {
             // If the imbalance is large and the price fluctuation is negative, generate positive
             // skew orders. Otherwise, generate negative skew orders.
-            if imbalance > 0.94 && volatility <= -curr_spread * 2.0 {
+            if imbalance > 0.85 && volatility <= -curr_spread * 2.0 {
                 self.positive_skew_orders(
                     half_spread,
                     curr_spread,
