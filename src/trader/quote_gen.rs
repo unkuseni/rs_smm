@@ -39,7 +39,6 @@ pub struct QuoteGenerator {
     pub inventory_delta: f64,
     total_order: usize,
     final_order_distance: f64,
-    last_update_price: f64,
     rate_limit: u32,
     time_limit: u64,
     cancel_limit: u32,
@@ -94,10 +93,10 @@ impl QuoteGenerator {
             // final order distance
             final_order_distance,
 
-            last_update_price: 0.0,
-
             rate_limit,
+
             time_limit: 0,
+
             cancel_limit: rate_limit,
         }
     }
@@ -523,43 +522,21 @@ impl QuoteGenerator {
         }
     }
 
-    /// Asynchronously checks if the current price is out of bounds for the given symbol.
-    ///
-    /// # Arguments
-    ///
-    /// * `book` - The `LocalBook` containing the current order book data.
-    /// * `symbol` - The symbol to check for out of bounds.
-    ///
-    /// # Returns
-    ///
-    /// A boolean indicating whether the current price is out of bounds.
-    ///
-    /// This function checks if the current price is out of bounds for the given symbol. It calculates
-    /// the bounds based on the spread and mid price. If there are no live orders, it returns `true`.
-    /// It then checks if any live sell orders need to be cancelled. If the `mid_price` is greater than
-    /// the `ask_bounds` and the `last_update_price` is not 0.0, it cancels all orders for the given symbol.
-    /// It then checks if any live buy orders need to be cancelled. If the `mid_price` is less than the
-    /// `bid_bounds` and the `last_update_price` is not 0.0, it cancels all orders for the given symbol.
-    /// Finally, it returns the `out_of_bounds` boolean.
     async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) -> bool {
         // Initialize the `out_of_bounds` boolean to `false`.
         let mut out_of_bounds = false;
-
-        // Calculate the bounds based on the spread and mid price.
-        let fees = bps_to_decimal(self.minimum_spread + 2.0);
-        let bounds = book.get_spread().clip(fees, fees * 2.0) * book.mid_price;
-        let bid_bounds = self.last_update_price - bounds;
-        let ask_bounds = self.last_update_price + bounds;
-
         // If there are no live orders, return `true`.
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
             out_of_bounds = true;
             return out_of_bounds;
         }
 
+        let bid_bounds = (book.get_spread_in_bps() * book.tick_size) - self.live_buys_orders[0].price;
+        let ask_bounds = (book.get_spread_in_bps() * book.tick_size) - self.live_sells_orders[0].price;
+
         // If the ask bounds are less than the mid price and the last update price is not 0.0,
         // cancel all orders for the given symbol.
-        if book.mid_price > ask_bounds && self.last_update_price > 0.0 {
+        if book.mid_price > ask_bounds && self.live_sells_orders[0].price != 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all orders for the given symbol.
@@ -584,7 +561,7 @@ impl QuoteGenerator {
 
         // If the bid bounds are greater than the mid price and the last update price is not 0.0,
         // cancel all orders for the given symbol.
-        if book.mid_price < bid_bounds && self.last_update_price > 0.0 {
+        if book.mid_price < bid_bounds && self.live_buys_orders[0].price != 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all orders for the given symbol.
@@ -688,8 +665,6 @@ impl QuoteGenerator {
                 self.cancel_limit = 10;
             }
         }
-        // Update bounds
-        self.last_update_price = book.mid_price;
     }
 }
 
@@ -716,7 +691,7 @@ impl PartialEq for LiveOrder {
     }
 
     fn ne(&self, other: &Self) -> bool {
-        self.order_id != other.order_id || self.price != other.price || self.qty != other.qty
+        self.order_id != other.order_id
     }
 }
 
