@@ -11,11 +11,11 @@ pub fn round_step<T: Float>(num: T, step: T) -> T {
     (num / step).round() * step
 }
 
-pub fn geometric_weights(ratio: f64, n: usize) -> Vec<f64> {
-    if !(ratio > 0.0 && ratio < 1.0) {
-        return Vec::new(); // Return an empty vector if ratio is not between 0 and 1
-    }
-
+pub fn geometric_weights(ratio: f64, n: usize, reverse: bool) -> Vec<f64> {
+    assert!(
+        ratio >= 0.0 && ratio <= 1.0,
+        "Ratio must be between 0 and 1"
+    );
     // Generate the geometric series
     let weights: Vec<f64> = (0..n).map(|i| ratio.powi(i as i32)).collect();
 
@@ -23,9 +23,14 @@ pub fn geometric_weights(ratio: f64, n: usize) -> Vec<f64> {
     let sum: f64 = weights.iter().sum();
 
     // Normalize the weights so that their sum equals 1
-    weights.iter().map(|w| w / sum).collect()
-}
+    let normalized: Vec<f64> = weights.iter().map(|w| w / sum).collect();
 
+    if reverse {
+        normalized.into_iter().rev().collect()
+    } else {
+        normalized
+    }
+}
 
 pub fn generate_timestamp() -> u64 {
     SystemTime::now()
@@ -77,16 +82,6 @@ pub fn linspace<T: Float + Signed + PartialOrd>(start: T, end: T, n: usize) -> V
 ///
 /// If start or end is zero.
 pub fn geomspace<T: Float + PartialOrd + Signed>(start: T, end: T, n: usize) -> Vec<T> {
-    // Check if the number of elements is zero and return an empty vector if it is.
-    if n == 0 {
-        return Vec::new();
-    }
-
-    // Check if start or end is zero and panic if it is.
-    if start == T::zero() || end == T::zero() {
-       return Vec::new();
-    }
-
     // Calculate the logarithmic ratio between consecutive numbers in the sequence.
     let log_ratio = (end / start).log10() / T::from(n - 1).unwrap();
 
@@ -173,8 +168,14 @@ mod tests {
     fn lin() {
         let num = linspace(0.6243, 0.6532, 14);
         let num_geom = geomspace(1.0, 0.01, 14);
+        let rev_geom = geomspace(0.01, 1.0, 14);
+        let geom_weights = geometric_weights(0.5, 14, false);
+        let rev_geom_weights = geometric_weights(0.5, 14, true);
         println!("{:#?}", num);
         println!("{:#?}", num_geom);
+        println!("{:#?}", rev_geom);
+        println!("{:#?}", geom_weights);
+        println!("{:#?}", rev_geom_weights);
     }
 
     #[test]
@@ -206,4 +207,5 @@ pub struct Config {
     pub depths: Vec<usize>,
     pub rate_limit: u32,
     pub bps: Vec<f64>,
+    pub use_wmid: bool,
 }
