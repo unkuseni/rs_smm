@@ -326,7 +326,7 @@ impl QuoteGenerator {
 
         // Generate the bid and ask prices.
         let bid_prices = geomspace(best_bid, bid_end, self.total_order / 2);
-        let ask_prices = geomspace(best_ask, ask_end, self.total_order / 2);
+        let ask_prices = geomspace(ask_end, best_ask, self.total_order / 2);
 
         // Calculate the clipped ratio.
         let clipped_ratio = 0.5 + skew.clip(0.01, 0.49);
@@ -342,12 +342,7 @@ impl QuoteGenerator {
             // Calculate the sizes.
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_buy_qty).collect();
 
-            let mut size_arr = vec![];
-            // Calculate the sizes divided by the prices.
-            for (price, v) in bid_prices.iter().zip(sizes.iter()) {
-                size_arr.push(*v / price);
-            }
-            size_arr
+            sizes
         };
 
         // Generate the ask sizes.
@@ -365,12 +360,7 @@ impl QuoteGenerator {
             // Calculate the sizes.
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
 
-            let mut size_arr = vec![];
-            // Calculate the sizes divided by the prices.
-            for (price, v) in ask_prices.iter().zip(sizes.iter()) {
-                size_arr.push(*v / *price);
-            }
-            size_arr
+            sizes
         };
 
         // Generate the batch orders.
@@ -447,11 +437,7 @@ impl QuoteGenerator {
             );
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_bid_qty).collect();
 
-            let mut size_arr = vec![];
-            for (price, v) in bid_prices.iter().zip(sizes.iter()) {
-                size_arr.push(*v / price);
-            }
-            size_arr
+            sizes
         };
         // Generate the ask sizes.
         let ask_sizes = if ask_prices.is_empty() {
@@ -460,11 +446,7 @@ impl QuoteGenerator {
             let max_sell_qty = (self.max_position_usd / 2.0) + (self.position);
             let size_weights = geometric_weights(clipped_ratio, self.total_order / 2, false);
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
-            let mut size_arr = vec![];
-            for (price, v) in ask_prices.iter().zip(sizes.iter()) {
-                size_arr.push(*v / *price);
-            }
-            size_arr
+            sizes
         };
 
         // Generate the batch orders.
