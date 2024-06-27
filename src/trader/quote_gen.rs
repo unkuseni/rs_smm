@@ -39,7 +39,6 @@ pub struct QuoteGenerator {
     pub inventory_delta: f64,
     total_order: usize,
     final_order_distance: f64,
-    last_updated_price: f64,
     rate_limit: u32,
     time_limit: u64,
     cancel_limit: u32,
@@ -86,15 +85,12 @@ impl QuoteGenerator {
             inventory_delta: 0.0,
             // Set the maximum position USD to 0.0.
             max_position_usd: 0.0,
-
             // Set the total order to 10.
             total_order: orders_per_side * 2,
             // Set the preferred spread to the provided value.
             minimum_spread: 0.0,
             // final order distance
             final_order_distance,
-
-            last_updated_price: 0.0,
 
             rate_limit,
 
@@ -162,9 +158,9 @@ impl QuoteGenerator {
         // Calculate the minimum spread by converting the preferred spread to decimal format.
         let min_spread = {
             if preferred_spread == 0.0 {
-                bps_to_decimal(25.0)
+                bps_to_decimal(25.0) * book.mid_price
             } else {
-                bps_to_decimal(preferred_spread)
+                bps_to_decimal(preferred_spread) * book.mid_price
             }
         };
 
@@ -210,7 +206,7 @@ impl QuoteGenerator {
         let preferred_spread = self.minimum_spread;
 
         // Calculate the adjusted spread by calling the `adjusted_spread` method.
-        let curr_spread = QuoteGenerator::adjusted_spread(preferred_spread, book) * start;
+        let curr_spread = QuoteGenerator::adjusted_spread(preferred_spread, book);
 
         // Calculate the half spread by dividing the spread by 2.
         let half_spread = curr_spread / 2.0;
@@ -238,7 +234,7 @@ impl QuoteGenerator {
         let mut orders = if skew >= 0.0 {
             // If the imbalance is large and the price fluctuation is negative, generate negative
             // skew orders. Otherwise, generate positive skew orders.
-            if imbalance > 0.95 && volatility <= -curr_spread * 2.0 {
+            if imbalance > 0.94 && volatility <= -curr_spread * 2.0 {
                 self.negative_skew_orders(
                     half_spread,
                     curr_spread,
@@ -262,7 +258,7 @@ impl QuoteGenerator {
         } else {
             // If the imbalance is large and the price fluctuation is negative, generate positive
             // skew orders. Otherwise, generate negative skew orders.
-            if imbalance > 0.95 && volatility <= -curr_spread * 2.0 {
+            if imbalance > 0.94 && volatility <= -curr_spread * 2.0 {
                 self.positive_skew_orders(
                     half_spread,
                     curr_spread,
@@ -535,13 +531,10 @@ impl QuoteGenerator {
             out_of_bounds = true;
             return out_of_bounds;
         }
-        let fees = book.get_spread().clip(
-            bps_to_decimal(self.minimum_spread),
-            bps_to_decimal(self.minimum_spread) * 3.0,
-        );
-        let bounds = fees * self.last_updated_price;
-        let bid_bounds = self.last_updated_price - bounds;
-        let ask_bounds = self.last_updated_price + bounds;
+        let max_dev = bps_to_decimal(2.5) * book.mid_price;
+        let bid_bounds = book.mid_price - max_dev;
+        let ask_bounds = book.mid_price + max_dev;
+
         // Check if live sell orders has been filled
         if !live_sells.is_empty() && book.mid_price > live_sells[0].price {
             // If there are live sell orders, pop the first order from the queue.
@@ -562,12 +555,13 @@ impl QuoteGenerator {
             // Print the bought quantity and symbol.
             println!("Bought {} {}", order.qty, symbol);
         }
+        
         self.live_buys_orders = live_buys;
         self.live_sells_orders = live_sells;
 
         // If the ask bounds are less than the mid price and the last update price is not 0.0,
         // cancel all orders for the given symbol.
-        if book.mid_price > ask_bounds && self.last_updated_price != 0.0 {
+        if self.live_sells_orders[0].price < ask_bounds {
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all orders for the given symbol.
@@ -588,7 +582,7 @@ impl QuoteGenerator {
 
         // If the bid bounds are greater than the mid price and the last update price is not 0.0,
         // cancel all orders for the given symbol.
-        if book.mid_price < bid_bounds && self.last_updated_price != 0.0 {
+        if self.live_buys_orders[0].price > bid_bounds {
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all orders for the given symbol.
@@ -645,8 +639,6 @@ impl QuoteGenerator {
                 self.send_batch_orders(orders.clone()).await;
                 self.rate_limit -= 1;
             }
-            // Updates last update price
-            self.last_updated_price = book.mid_price;
             //Updates the time limit
             self.time_limit = book.last_update;
         }
