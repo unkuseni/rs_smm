@@ -583,7 +583,7 @@ impl QuoteGenerator {
 
         // If the ask bounds are less than the mid price and the last update price is not 0.0,
         // cancel all orders for the given symbol.
-        if book.mid_price > ask_bounds && self.last_update_price != 0.0 {
+        if book.mid_price > ask_bounds && self.last_update_price > 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all orders for the given symbol.
@@ -604,7 +604,7 @@ impl QuoteGenerator {
 
         // If the bid bounds are greater than the mid price and the last update price is not 0.0,
         // cancel all orders for the given symbol.
-        if book.mid_price < bid_bounds && self.last_update_price != 0.0 {
+        if book.mid_price < bid_bounds && self.last_update_price > 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all orders for the given symbol.
