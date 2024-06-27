@@ -562,9 +562,7 @@ impl QuoteGenerator {
             // cancel all orders for the given symbol.
             if book.mid_price > ask_bounds && self.last_update_price != 0.0 {
                 if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
-                    for (i, _) in v.iter().enumerate() {
-                        self.live_sells_orders.remove(i);
-                    }
+                    self.live_sells_orders.clear();
                     out_of_bounds = true;
                     println!("Cancelling all orders for {}", symbol);
                 }
@@ -574,9 +572,7 @@ impl QuoteGenerator {
             // cancel all orders for the given symbol.
             if book.mid_price < bid_bounds && self.last_update_price != 0.0 {
                 if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
-                    for (i, _) in self.live_buys_orders.clone().iter().enumerate() {
-                        self.live_buys_orders.remove(i);
-                    }
+                    self.live_buys_orders.clear();
                     out_of_bounds = true;
                     println!("Cancelling all orders for {}", symbol);
                 }
