@@ -525,6 +525,8 @@ impl QuoteGenerator {
     async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) -> bool {
         // Initialize the `out_of_bounds` boolean to `false`.
         let mut out_of_bounds = false;
+        let mut live_buys = self.live_buys_orders.clone();
+        let mut live_sells = self.live_sells_orders.clone();
         // If there are no live orders, return `true`.
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
             out_of_bounds = true;
@@ -577,20 +579,10 @@ impl QuoteGenerator {
                 }
             }
         }
-        return out_of_bounds;
-    }
-
-    /// Checks for fills in the provided private data and updates the grid of live orders accordingly.
-    ///
-    /// # Arguments
-    ///
-    /// * `data` - The private data containing the executions.
-    ///
-    fn simulated_fills(&mut self, book: &LocalBook, symbol: String) {
         // Check if live sell orders has been filled
-        if !self.live_sells_orders.is_empty() && book.mid_price > self.live_sells_orders[0].price {
+        if !live_sells.is_empty() && book.mid_price > live_sells[0].price {
             // If there are live sell orders, pop the first order from the queue.
-            if let Some(order) = self.live_sells_orders.pop_front() {
+            if let Some(order) = live_sells.pop_front() {
                 // Update the position by subtracting the price multiplied by the quantity.
                 self.position -= order.price * order.qty;
                 // Print the sold quantity and symbol.
@@ -599,14 +591,15 @@ impl QuoteGenerator {
         }
 
         // Check if live buy orders need to be cancelled.
-        if !self.live_buys_orders.is_empty() && book.mid_price < self.live_buys_orders[0].price {
+        if !live_buys.is_empty() && book.mid_price < live_buys[0].price {
             // If there are live buy orders, pop the first order from the queue.
-            let order = self.live_buys_orders.pop_front().unwrap();
+            let order = live_buys.pop_front().unwrap();
             // Update the position by adding the price multiplied by the quantity.
             self.position += order.price * order.qty;
             // Print the bought quantity and symbol.
             println!("Bought {} {}", order.qty, symbol);
         }
+        return out_of_bounds;
     }
 
     /// Updates the grid of orders with the current wallet data, skew, imbalance,
@@ -629,8 +622,6 @@ impl QuoteGenerator {
         price_flu: f64,
         _rate_limit: u32,
     ) {
-        // Check for fills
-        self.simulated_fills(&book, symbol.clone());
         // Update the inventory delta.
         self.inventory_delta();
 
