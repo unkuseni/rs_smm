@@ -599,6 +599,8 @@ impl QuoteGenerator {
             // Print the bought quantity and symbol.
             println!("Bought {} {}", order.qty, symbol);
         }
+        self.live_buys_orders = live_buys;
+        self.live_sells_orders = live_sells;
         return out_of_bounds;
     }
 
