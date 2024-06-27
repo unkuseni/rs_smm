@@ -41,7 +41,7 @@ async fn main() {
     tokio::spawn(async move {
         ss::load_data(state, sender).await;
     });
-    market_maker.start_loop(receiver,config.rate_limit).await;
+    market_maker
+        .start_loop(receiver, config.use_wmid, config.rate_limit)
+        .await;
 }
-
-

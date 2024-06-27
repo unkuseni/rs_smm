@@ -83,7 +83,8 @@ impl MarketMaker {
     /// This function does not return any value.
     pub async fn start_loop(
         &mut self,
-        mut receiver: UnboundedReceiver<SharedState>,
+        mut receiver: UnboundedReceiver<SharedState>, 
+        use_wmid: bool,
         rate_limit: u32,
     ) {
         let mut send = 0;
@@ -94,7 +95,7 @@ impl MarketMaker {
             match data.exchange.as_str() {
                 "bybit" | "binance" => {
                     // Update features with the first market data in the received data.
-                    self.update_features(data.markets[0].clone(), self.depths.clone(), false, 610);
+                    self.update_features(data.markets[0].clone(), self.depths.clone(), use_wmid, 610);
 
                     // Update the strategy with the new market data and private data.
                     if send > 50 {
