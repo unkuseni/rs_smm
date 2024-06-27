@@ -544,7 +544,7 @@ impl QuoteGenerator {
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all orders for the given symbol.
-            if self.cancel_limit > 0 {
+            if self.cancel_limit > 1 {
                 if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
                     // Clear the live orders queue.
                     self.live_sells_orders.clear();
@@ -635,7 +635,7 @@ impl QuoteGenerator {
                     self.generate_quotes(symbol.clone(), &book, imbalance, skew, price_flu);
 
                 // Send the generated orders to the book.
-                if self.rate_limit > 0 {
+                if self.rate_limit > 1 {
                     self.send_batch_orders(orders.clone()).await;
                     self.rate_limit -= 1;
                 }
