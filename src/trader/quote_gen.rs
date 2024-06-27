@@ -551,7 +551,7 @@ impl QuoteGenerator {
 
         // Calculate the bounds based on the spread and mid price.
         let fees = bps_to_decimal(self.minimum_spread + 2.0);
-        let bounds = book.get_spread().clip(fees, fees * 2.0) * self.last_update_price;
+        let bounds = book.get_spread().clip(fees, fees * 2.0) * book.mid_price;
         let bid_bounds = self.last_update_price - bounds;
         let ask_bounds = self.last_update_price + bounds;
 
