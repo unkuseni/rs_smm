@@ -550,8 +550,6 @@ impl QuoteGenerator {
             let order = self.live_sells_orders[0].clone();
             // Update the position by adding the price multiplied by the quantity.
             self.position -= order.price * order.qty;
-            // Print the bought quantity and symbol.
-            println!("Sold {} {}", order.qty, symbol);
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all buy orders bey the bounds.
@@ -588,8 +586,6 @@ impl QuoteGenerator {
                             }
                         }
                     }
-                    // Print a message indicating that all orders have been cancelled.
-                    println!("Cancelling all orders for {}", symbol);
                     self.cancel_limit -= 1;
                 } else {
                     self.cancel_limit -= 1;
@@ -619,8 +615,6 @@ impl QuoteGenerator {
             let order = self.live_buys_orders[0].clone();
             // Update the position by adding the price multiplied by the quantity.
             self.position += order.price * order.qty;
-            // Print the bought quantity and symbol.
-            println!("Bought {} {}", order.qty, symbol);
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all sell orders for the given symbol.
@@ -662,8 +656,6 @@ impl QuoteGenerator {
                         }
                     }
                 }
-                // Print a message indicating that all orders have been cancelled.
-                println!("Cancelling all orders for {}", symbol);
                 self.cancel_limit -= 1;
 
                 for v in single_ask_cancels {
