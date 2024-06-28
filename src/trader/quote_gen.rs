@@ -335,7 +335,7 @@ impl QuoteGenerator {
         } else {
             // Calculate the maximum buy quantity.
             let max_buy_qty =
-                ((self.max_position_usd / 2.0) - (self.position)) / book.get_mid_price();
+                ((self.max_position_usd / 2.0) - self.position) / book.get_mid_price();
             // Calculate the size weights.
             let size_weights = geometric_weights(0.63, self.total_order / 2, true);
             // Calculate the sizes.
@@ -350,7 +350,7 @@ impl QuoteGenerator {
         } else {
             // Calculate the maximum sell quantity.
             let max_sell_qty =
-                ((self.max_position_usd / 2.0) + (self.position)) / book.get_mid_price();
+                ((self.max_position_usd / 2.0) + self.position) / book.get_mid_price();
             // Calculate the size weights.
             let size_weights = geometric_weights(0.37, self.total_order / 2, false);
             // Calculate the sizes.
@@ -425,7 +425,7 @@ impl QuoteGenerator {
             vec![]
         } else {
             let max_bid_qty =
-                ((self.max_position_usd / 2.0) - (self.position)) / book.get_mid_price();
+                ((self.max_position_usd / 2.0) - self.position) / book.get_mid_price();
             let size_weights = geometric_weights(0.37, self.total_order / 2, true);
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_bid_qty).collect();
 
@@ -436,7 +436,7 @@ impl QuoteGenerator {
             vec![]
         } else {
             let max_sell_qty =
-                ((self.max_position_usd / 2.0) + (self.position)) / book.get_mid_price();
+                ((self.max_position_usd / 2.0) + self.position) / book.get_mid_price();
             let size_weights = geometric_weights(0.63, self.total_order / 2, false);
             let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
             sizes.reverse();
@@ -514,8 +514,8 @@ impl QuoteGenerator {
         let bounds = self.last_update_price * bps_to_decimal(self.minimum_spread);
         let bid_bounds = self.last_update_price - bounds;
         let ask_bounds = self.last_update_price + bounds;
-        let outer_ask_bounds = self.last_update_price + (bounds * 10.0);
-        let outer_bid_bounds = self.last_update_price - (bounds * 10.0);
+        let outer_ask_bounds = self.last_update_price + (bounds * 7.0);
+        let outer_bid_bounds = self.last_update_price - (bounds * 7.0);
 
         let mut outer_ask_orders = {
             let mut arr = vec![];
@@ -558,7 +558,29 @@ impl QuoteGenerator {
 
             if self.cancel_limit > 1 {
                 outer_bid_orders.extend(outer_ask_orders);
-                if let Ok(v) = self.client.batch_cancel(outer_bid_orders, &symbol).await {
+                if outer_bid_orders.len() > 10 || outer_bid_orders.clone().len() < 20 {
+                    let single_cancels = outer_bid_orders.drain(11..).collect::<Vec<LiveOrder>>();
+                    for v in single_cancels {
+                        if let Ok(cancelled_order) =
+                            self.client.cancel_order(v.clone(), &symbol).await
+                        {
+                            for (i, live_order) in
+                                self.live_buys_orders.clone().iter_mut().enumerate()
+                            {
+                                if *live_order == cancelled_order {
+                                    self.live_buys_orders.remove(i);
+                                }
+                            }
+                            for (i, live_order) in
+                                self.live_sells_orders.clone().iter_mut().enumerate()
+                            {
+                                if *live_order == cancelled_order {
+                                    self.live_sells_orders.remove(i);
+                                }
+                            }
+                        }
+                    }
+                } else if let Ok(v) = self.client.batch_cancel(outer_bid_orders, &symbol).await {
                     // Clear the live orders queue.
                     for cancelled_order in v.clone() {
                         for (i, live_order) in self.live_buys_orders.clone().iter_mut().enumerate()
@@ -596,7 +618,29 @@ impl QuoteGenerator {
 
             if self.cancel_limit > 1 {
                 outer_ask_orders.extend(outer_bid_orders);
-                if let Ok(v) = self
+                if outer_ask_orders.len() > 10 || outer_ask_orders.clone().len() < 20 {
+                    let single_cancels = outer_ask_orders.drain(11..).collect::<Vec<LiveOrder>>();
+                    for v in single_cancels {
+                        if let Ok(cancelled_order) =
+                            self.client.cancel_order(v.clone(), &symbol).await
+                        {
+                            for (i, live_order) in
+                                self.live_buys_orders.clone().iter_mut().enumerate()
+                            {
+                                if *live_order == cancelled_order {
+                                    self.live_buys_orders.remove(i);
+                                }
+                            }
+                            for (i, live_order) in
+                                self.live_sells_orders.clone().iter_mut().enumerate()
+                            {
+                                if *live_order == cancelled_order {
+                                    self.live_sells_orders.remove(i);
+                                }
+                            }
+                        }
+                    }
+                } else if let Ok(v) = self
                     .client
                     .batch_cancel(outer_ask_orders, symbol.as_str())
                     .await
