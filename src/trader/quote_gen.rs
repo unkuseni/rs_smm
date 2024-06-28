@@ -328,9 +328,6 @@ impl QuoteGenerator {
         let bid_prices = geomspace(best_bid, bid_end, self.total_order / 2);
         let ask_prices = geomspace(ask_end, best_ask, self.total_order / 2);
 
-        // Calculate the clipped ratio.
-        let clipped_ratio = 0.5 + skew.clip(0.01, 0.49);
-
         // Generate the bid sizes.
         let bid_sizes = if bid_prices.is_empty() {
             vec![]
@@ -338,7 +335,7 @@ impl QuoteGenerator {
             // Calculate the maximum buy quantity.
             let max_buy_qty = (self.max_position_usd / 2.0) - (self.position);
             // Calculate the size weights.
-            let size_weights = geometric_weights(clipped_ratio, self.total_order / 2, true);
+            let size_weights = geometric_weights(0.75, self.total_order / 2, true);
             // Calculate the sizes.
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_buy_qty).collect();
 
@@ -352,11 +349,7 @@ impl QuoteGenerator {
             // Calculate the maximum sell quantity.
             let max_sell_qty = (self.max_position_usd / 2.0) + (self.position);
             // Calculate the size weights.
-            let size_weights = geometric_weights(
-                clipped_ratio.powf(2.0 + aggression),
-                self.total_order / 2,
-                false,
-            );
+            let size_weights = geometric_weights(0.75, self.total_order / 2, false);
             // Calculate the sizes.
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
 
@@ -422,19 +415,12 @@ impl QuoteGenerator {
         let bid_prices = geomspace(best_bid, bid_end, self.total_order / 2);
         let ask_prices = geomspace(best_ask, ask_end, self.total_order / 2);
 
-        // Calculate the clipped ratio.
-        let clipped_ratio = 0.5 + skew.abs().clip(0.0, 0.50);
-
         // Generate the bid sizes.
         let bid_sizes = if bid_prices.is_empty() {
             vec![]
         } else {
             let max_bid_qty = (self.max_position_usd / 2.0) - (self.position);
-            let size_weights = geometric_weights(
-                clipped_ratio.powf(2.0 + aggression),
-                self.total_order / 2,
-                true,
-            );
+            let size_weights = geometric_weights(0.75, self.total_order / 2, true);
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_bid_qty).collect();
 
             sizes
@@ -444,7 +430,7 @@ impl QuoteGenerator {
             vec![]
         } else {
             let max_sell_qty = (self.max_position_usd / 2.0) + (self.position);
-            let size_weights = geometric_weights(clipped_ratio, self.total_order / 2, false);
+            let size_weights = geometric_weights(0.75, self.total_order / 2, false);
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
             sizes
         };
