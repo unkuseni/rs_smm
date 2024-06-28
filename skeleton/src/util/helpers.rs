@@ -166,16 +166,15 @@ mod tests {
 
     #[test]
     fn lin() {
-        let num = linspace(0.6243, 0.6532, 14);
-        let num_geom = geomspace(1.0, 0.01, 14);
-        let rev_geom = geomspace(0.01, 1.0, 14);
-        let geom_weights = geometric_weights(0.5, 14, false);
-        let rev_geom_weights = geometric_weights(0.5, 14, true);
-        println!("{:#?}", num);
-        println!("{:#?}", num_geom);
-        println!("{:#?}", rev_geom);
-        println!("{:#?}", geom_weights);
-        println!("{:#?}", rev_geom_weights);
+        let num_geom = geomspace(0.6243, 0.6001, 5);
+        let num_wei = geometric_weights(0.63, 5, true);
+        let rev_geom = geomspace(0.6954, 0.6245, 5);
+
+        let rev_wei = geometric_weights(0.37, 5, false);
+
+        println!("{:#?}    {:#?}", num_geom, num_wei);
+
+        println!("{:#?}    {:#?}", rev_geom, rev_wei);
     }
 
     #[test]

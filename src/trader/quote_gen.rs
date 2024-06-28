@@ -333,9 +333,9 @@ impl QuoteGenerator {
             vec![]
         } else {
             // Calculate the maximum buy quantity.
-            let max_buy_qty = (self.max_position_usd / 2.0) - (self.position);
+            let max_buy_qty = ((self.max_position_usd / 2.0) - (self.position)) / book.get_mid_price();
             // Calculate the size weights.
-            let size_weights = geometric_weights(0.75, self.total_order / 2, true);
+            let size_weights = geometric_weights(0.63, self.total_order / 2, true);
             // Calculate the sizes.
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_buy_qty).collect();
 
@@ -347,9 +347,9 @@ impl QuoteGenerator {
             vec![]
         } else {
             // Calculate the maximum sell quantity.
-            let max_sell_qty = (self.max_position_usd / 2.0) + (self.position);
+            let max_sell_qty = ((self.max_position_usd / 2.0) + (self.position)) / book.get_mid_price();
             // Calculate the size weights.
-            let size_weights = geometric_weights(0.75, self.total_order / 2, false);
+            let size_weights = geometric_weights(0.37, self.total_order / 2, false);
             // Calculate the sizes.
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
 
@@ -419,8 +419,8 @@ impl QuoteGenerator {
         let bid_sizes = if bid_prices.is_empty() {
             vec![]
         } else {
-            let max_bid_qty = (self.max_position_usd / 2.0) - (self.position);
-            let size_weights = geometric_weights(0.75, self.total_order / 2, true);
+            let max_bid_qty = ((self.max_position_usd / 2.0) - (self.position)) / book.get_mid_price();
+            let size_weights = geometric_weights(0.37, self.total_order / 2, true);
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_bid_qty).collect();
 
             sizes
@@ -429,8 +429,8 @@ impl QuoteGenerator {
         let ask_sizes = if ask_prices.is_empty() {
             vec![]
         } else {
-            let max_sell_qty = (self.max_position_usd / 2.0) + (self.position);
-            let size_weights = geometric_weights(0.75, self.total_order / 2, false);
+            let max_sell_qty = ((self.max_position_usd / 2.0) + (self.position)) / book.get_mid_price();
+            let size_weights = geometric_weights(0.63, self.total_order / 2, false);
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
             sizes
         };
