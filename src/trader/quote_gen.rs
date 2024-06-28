@@ -333,7 +333,8 @@ impl QuoteGenerator {
             vec![]
         } else {
             // Calculate the maximum buy quantity.
-            let max_buy_qty = ((self.max_position_usd / 2.0) - (self.position)) / book.get_mid_price();
+            let max_buy_qty =
+                ((self.max_position_usd / 2.0) - (self.position)) / book.get_mid_price();
             // Calculate the size weights.
             let size_weights = geometric_weights(0.63, self.total_order / 2, true);
             // Calculate the sizes.
@@ -347,7 +348,8 @@ impl QuoteGenerator {
             vec![]
         } else {
             // Calculate the maximum sell quantity.
-            let max_sell_qty = ((self.max_position_usd / 2.0) + (self.position)) / book.get_mid_price();
+            let max_sell_qty =
+                ((self.max_position_usd / 2.0) + (self.position)) / book.get_mid_price();
             // Calculate the size weights.
             let size_weights = geometric_weights(0.37, self.total_order / 2, false);
             // Calculate the sizes.
@@ -413,13 +415,14 @@ impl QuoteGenerator {
 
         // Generate the bid and ask prices.
         let bid_prices = geomspace(best_bid, bid_end, self.total_order / 2);
-        let ask_prices = geomspace(best_ask, ask_end, self.total_order / 2);
+        let ask_prices = geomspace(ask_end, best_ask, self.total_order / 2);
 
         // Generate the bid sizes.
         let bid_sizes = if bid_prices.is_empty() {
             vec![]
         } else {
-            let max_bid_qty = ((self.max_position_usd / 2.0) - (self.position)) / book.get_mid_price();
+            let max_bid_qty =
+                ((self.max_position_usd / 2.0) - (self.position)) / book.get_mid_price();
             let size_weights = geometric_weights(0.37, self.total_order / 2, true);
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_bid_qty).collect();
 
@@ -429,7 +432,8 @@ impl QuoteGenerator {
         let ask_sizes = if ask_prices.is_empty() {
             vec![]
         } else {
-            let max_sell_qty = ((self.max_position_usd / 2.0) + (self.position)) / book.get_mid_price();
+            let max_sell_qty =
+                ((self.max_position_usd / 2.0) + (self.position)) / book.get_mid_price();
             let size_weights = geometric_weights(0.63, self.total_order / 2, false);
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
             sizes
@@ -501,7 +505,7 @@ impl QuoteGenerator {
     async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) -> bool {
         // Initialize the `out_of_bounds` boolean to `false`.
         let mut out_of_bounds = false;
-        let bounds = self.last_update_price * bps_to_decimal(self.minimum_spread * 3.7);
+        let bounds = self.last_update_price * bps_to_decimal(self.minimum_spread * 1.5);
         let bid_bounds = self.last_update_price - bounds;
         let ask_bounds = self.last_update_price + bounds;
         // If there are no live orders, return `true`.
