@@ -517,6 +517,28 @@ impl QuoteGenerator {
         let outer_ask_bounds = self.last_update_price + (bounds * 10.0);
         let outer_bid_bounds = self.last_update_price - (bounds * 10.0);
 
+        let mut outer_ask_orders = {
+            let mut arr = vec![];
+            for order in &self.live_sells_orders {
+                if order.price > outer_ask_bounds {
+                    arr.push(order.clone());
+                }
+            }
+            arr.reverse();
+
+            arr
+        };
+        let mut outer_bid_orders = {
+            let mut arr = vec![];
+            for order in &self.live_buys_orders {
+                if order.price < outer_bid_bounds {
+                    arr.push(order.clone());
+                }
+            }
+            arr.reverse();
+
+            arr
+        };
         // If there are no live orders, return `true`.
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
             out_of_bounds = true;
@@ -533,18 +555,9 @@ impl QuoteGenerator {
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all buy orders bey the bounds.
-            let outer_bid_orders = {
-                let mut arr = vec![];
-                for order in &self.live_buys_orders {
-                    if order.price < outer_bid_bounds {
-                        arr.push(order.clone());
-                    }
-                }
-                arr.reverse();
 
-                arr
-            };
             if self.cancel_limit > 1 {
+                outer_bid_orders.extend(outer_ask_orders);
                 if let Ok(v) = self.client.batch_cancel(outer_bid_orders, &symbol).await {
                     // Clear the live orders queue.
                     for cancelled_order in v.clone() {
@@ -552,6 +565,12 @@ impl QuoteGenerator {
                         {
                             if *live_order == cancelled_order {
                                 self.live_buys_orders.remove(i);
+                            }
+                        }
+                        for (i, live_order) in self.live_sells_orders.clone().iter_mut().enumerate()
+                        {
+                            if *live_order == cancelled_order {
+                                self.live_sells_orders.remove(i);
                             }
                         }
                     }
@@ -574,18 +593,9 @@ impl QuoteGenerator {
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all sell orders for the given symbol.
-            let outer_ask_orders = {
-                let mut arr = vec![];
-                for order in &self.live_sells_orders {
-                    if order.price > outer_ask_bounds {
-                        arr.push(order.clone());
-                    }
-                }
-                arr.reverse();
 
-                arr
-            };
             if self.cancel_limit > 1 {
+                outer_ask_orders.extend(outer_bid_orders);
                 if let Ok(v) = self
                     .client
                     .batch_cancel(outer_ask_orders, symbol.as_str())
@@ -597,6 +607,12 @@ impl QuoteGenerator {
                         {
                             if *live_order == cancelled_order {
                                 self.live_sells_orders.remove(i);
+                            }
+                        }
+                        for (i, live_order) in self.live_buys_orders.clone().iter_mut().enumerate()
+                        {
+                            if *live_order == cancelled_order {
+                                self.live_buys_orders.remove(i);
                             }
                         }
                     }
