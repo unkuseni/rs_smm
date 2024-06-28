@@ -327,6 +327,7 @@ impl QuoteGenerator {
         // Generate the bid and ask prices.
         let bid_prices = geomspace(best_bid, bid_end, self.total_order / 2);
         let mut ask_prices = geomspace(ask_end, best_ask, self.total_order / 2);
+        ask_prices.reverse();
 
         // Generate the bid sizes.
         let bid_sizes = if bid_prices.is_empty() {
@@ -353,8 +354,9 @@ impl QuoteGenerator {
             // Calculate the size weights.
             let size_weights = geometric_weights(0.37, self.total_order / 2, false);
             // Calculate the sizes.
-            let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
+            let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
 
+            sizes.reverse();
             sizes
         };
 
@@ -369,8 +371,8 @@ impl QuoteGenerator {
             ));
             // Create a new batch order with the ask size, price, and quantity.
             orders.push(BatchOrder::new(
-                round_size(*ask_sizes.last().unwrap(), book),
-                round_price(book, *ask_prices.last().unwrap()),
+                round_size(ask_sizes[i], book),
+                round_price(book, ask_prices[i]),
                 -1,
             ));
         }
@@ -436,7 +438,9 @@ impl QuoteGenerator {
             let max_sell_qty =
                 ((self.max_position_usd / 2.0) + (self.position)) / book.get_mid_price();
             let size_weights = geometric_weights(0.63, self.total_order / 2, false);
-            let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
+            let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
+            sizes.reverse();
+
             sizes
         };
 
@@ -452,8 +456,8 @@ impl QuoteGenerator {
             // Create a new batch order with the ask size, price, and quantity.
 
             orders.push(BatchOrder::new(
-                round_size(*ask_sizes.last().unwrap(), book),
-                round_price(book, *ask_prices.last().unwrap()),
+                round_size(ask_sizes[i], book),
+                round_price(book, ask_prices[i]),
                 -1,
             ));
         }
