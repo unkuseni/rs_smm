@@ -261,7 +261,7 @@ impl QuoteGenerator {
         } else {
             // If the imbalance is large and the price fluctuation is negative, generate positive
             // skew orders. Otherwise, generate negative skew orders.
-            if imbalance > 0.85 && volatility <= -curr_spread * 2.0 {
+            if imbalance < -0.85 && volatility <= curr_spread * 2.0 {
                 self.positive_skew_orders(
                     half_spread,
                     curr_spread,
