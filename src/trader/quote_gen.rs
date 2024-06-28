@@ -502,16 +502,14 @@ impl QuoteGenerator {
                 self.live_sells_orders = sorted_sells;
             }
             // If there is an error, print the error message.
-            Err(e) => {
-                println!("Error placing batch order: {:?}", e);
-            }
+            _ => {}
         }
     }
 
     async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) -> bool {
         // Initialize the `out_of_bounds` boolean to `false`.
         let mut out_of_bounds = false;
-        let bounds = self.last_update_price * bps_to_decimal(self.minimum_spread);
+        let bounds = self.last_update_price * bps_to_decimal(self.minimum_spread + 3.0);
         let bid_bounds = self.last_update_price - bounds;
         let ask_bounds = self.last_update_price + bounds;
         let outer_ask_bounds = self.last_update_price + (bounds * 9.5);
@@ -555,6 +553,8 @@ impl QuoteGenerator {
             // Attempt to cancel all buy orders bey the bounds.
 
             if self.cancel_limit > 1 {
+                outer_ask_orders.reverse();
+                outer_bid_orders.extend(outer_ask_orders);
                 let single_bid_cancels = {
                     let mut new_arr = vec![];
                     if outer_bid_orders.len() > 10 {
@@ -620,6 +620,8 @@ impl QuoteGenerator {
             // Attempt to cancel all sell orders for the given symbol.
 
             if self.cancel_limit > 1 {
+                outer_bid_orders.reverse();
+                outer_ask_orders.extend(outer_bid_orders);
                 let single_ask_cancels = {
                     let mut new_arr = vec![];
                     if outer_ask_orders.len() > 10 {
