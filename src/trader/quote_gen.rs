@@ -326,7 +326,7 @@ impl QuoteGenerator {
 
         // Generate the bid and ask prices.
         let bid_prices = geomspace(best_bid, bid_end, self.total_order / 2);
-        let ask_prices = geomspace(ask_end, best_ask, self.total_order / 2);
+        let mut ask_prices = geomspace(ask_end, best_ask, self.total_order / 2);;
 
         // Generate the bid sizes.
         let bid_sizes = if bid_prices.is_empty() {
@@ -369,8 +369,8 @@ impl QuoteGenerator {
             ));
             // Create a new batch order with the ask size, price, and quantity.
             orders.push(BatchOrder::new(
-                round_size(ask_sizes[i], book),
-                round_price(book, ask_prices[i]),
+                round_size(*ask_sizes.last().unwrap(), book),
+                round_price(book, *ask_prices.last().unwrap()),
                 -1,
             ));
         }
@@ -415,7 +415,8 @@ impl QuoteGenerator {
 
         // Generate the bid and ask prices.
         let bid_prices = geomspace(best_bid, bid_end, self.total_order / 2);
-        let ask_prices = geomspace(ask_end, best_ask, self.total_order / 2);
+        let mut ask_prices = geomspace(ask_end, best_ask, self.total_order / 2);
+        ask_prices.reverse();
 
         // Generate the bid sizes.
         let bid_sizes = if bid_prices.is_empty() {
@@ -449,9 +450,10 @@ impl QuoteGenerator {
                 1,
             ));
             // Create a new batch order with the ask size, price, and quantity.
+
             orders.push(BatchOrder::new(
-                round_size(ask_sizes[i], book),
-                round_price(book, ask_prices[i]),
+                round_size(*ask_sizes.last().unwrap(), book),
+                round_price(book, *ask_prices.last().unwrap()),
                 -1,
             ));
         }
