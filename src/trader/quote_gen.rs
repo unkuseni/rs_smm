@@ -514,8 +514,8 @@ impl QuoteGenerator {
         let bounds = self.last_update_price * bps_to_decimal(self.minimum_spread);
         let bid_bounds = self.last_update_price - bounds;
         let ask_bounds = self.last_update_price + bounds;
-        let outer_ask_bounds = self.last_update_price + (bounds * 7.0);
-        let outer_bid_bounds = self.last_update_price - (bounds * 7.0);
+        let outer_ask_bounds = self.last_update_price + (bounds * 9.0);
+        let outer_bid_bounds = self.last_update_price - (bounds * 9.0);
 
         let mut outer_ask_orders = {
             let mut arr = vec![];
@@ -549,9 +549,9 @@ impl QuoteGenerator {
             // If there are live buy orders, pop the first order from the queue.
             let order = self.live_sells_orders[0].clone();
             // Update the position by adding the price multiplied by the quantity.
-            self.position += order.price * order.qty;
+            self.position -= order.price * order.qty;
             // Print the bought quantity and symbol.
-            println!("Bought {} {}", order.qty, symbol);
+            println!("Sold {} {}", order.qty, symbol);
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all buy orders bey the bounds.
@@ -559,7 +559,7 @@ impl QuoteGenerator {
             if self.cancel_limit > 1 {
                 outer_bid_orders.extend(outer_ask_orders);
                 if outer_bid_orders.len() > 10 || outer_bid_orders.clone().len() < 20 {
-                    let single_cancels = outer_bid_orders.drain(11..).collect::<Vec<LiveOrder>>();
+                    let single_cancels = outer_bid_orders.drain(10..).collect::<Vec<LiveOrder>>();
                     for v in single_cancels {
                         if let Ok(cancelled_order) =
                             self.client.cancel_order(v.clone(), &symbol).await
@@ -619,7 +619,7 @@ impl QuoteGenerator {
             if self.cancel_limit > 1 {
                 outer_ask_orders.extend(outer_bid_orders);
                 if outer_ask_orders.len() > 10 || outer_ask_orders.clone().len() < 20 {
-                    let single_cancels = outer_ask_orders.drain(11..).collect::<Vec<LiveOrder>>();
+                    let single_cancels = outer_ask_orders.drain(10..).collect::<Vec<LiveOrder>>();
                     for v in single_cancels {
                         if let Ok(cancelled_order) =
                             self.client.cancel_order(v.clone(), &symbol).await
