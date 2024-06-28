@@ -514,8 +514,8 @@ impl QuoteGenerator {
         let bounds = self.last_update_price * bps_to_decimal(self.minimum_spread);
         let bid_bounds = self.last_update_price - bounds;
         let ask_bounds = self.last_update_price + bounds;
-        let outer_ask_bounds = self.last_update_price + (bounds * 9.0);
-        let outer_bid_bounds = self.last_update_price - (bounds * 9.0);
+        let outer_ask_bounds = self.last_update_price + (bounds * 9.5);
+        let outer_bid_bounds = self.last_update_price - (bounds * 9.5);
 
         let mut outer_ask_orders = {
             let mut arr = vec![];
@@ -557,30 +557,22 @@ impl QuoteGenerator {
             // Attempt to cancel all buy orders bey the bounds.
 
             if self.cancel_limit > 1 {
-                outer_bid_orders.extend(outer_ask_orders);
-                if outer_bid_orders.len() > 10 || outer_bid_orders.clone().len() < 20 {
-                    let single_cancels = outer_bid_orders.drain(10..).collect::<Vec<LiveOrder>>();
-                    for v in single_cancels {
-                        if let Ok(cancelled_order) =
-                            self.client.cancel_order(v.clone(), &symbol).await
-                        {
-                            for (i, live_order) in
-                                self.live_buys_orders.clone().iter_mut().enumerate()
-                            {
-                                if *live_order == cancelled_order {
-                                    self.live_buys_orders.remove(i);
-                                }
-                            }
-                            for (i, live_order) in
-                                self.live_sells_orders.clone().iter_mut().enumerate()
-                            {
-                                if *live_order == cancelled_order {
-                                    self.live_sells_orders.remove(i);
-                                }
+                let single_bid_cancels = {
+                    let mut new_arr = vec![];
+                    if outer_bid_orders.len() > 10 {
+                        for i in 0..(outer_bid_orders.len() - 10) {
+                            match outer_bid_orders.pop() {
+                                Some(v) => new_arr.push(v),
+                                None => break,
                             }
                         }
+                        new_arr
+                    } else {
+                        new_arr
                     }
-                } else if let Ok(v) = self.client.batch_cancel(outer_bid_orders, &symbol).await {
+                };
+
+                if let Ok(v) = self.client.batch_cancel(outer_bid_orders, &symbol).await {
                     // Clear the live orders queue.
                     for cancelled_order in v.clone() {
                         for (i, live_order) in self.live_buys_orders.clone().iter_mut().enumerate()
@@ -602,6 +594,23 @@ impl QuoteGenerator {
                 } else {
                     self.cancel_limit -= 1;
                 }
+
+                for v in single_bid_cancels {
+                    if let Ok(cancelled_order) = self.client.cancel_order(v, &symbol).await {
+                        for (i, live_order) in self.live_buys_orders.clone().iter_mut().enumerate()
+                        {
+                            if *live_order == cancelled_order {
+                                self.live_buys_orders.remove(i);
+                            }
+                        }
+                        for (i, live_order) in self.live_sells_orders.clone().iter_mut().enumerate()
+                        {
+                            if *live_order == cancelled_order {
+                                self.live_sells_orders.remove(i);
+                            }
+                        }
+                    }
+                }
             }
         } else if book.mid_price < self.live_buys_orders[0].price
             || (book.mid_price < bid_bounds && self.last_update_price != 0.0)
@@ -617,30 +626,22 @@ impl QuoteGenerator {
             // Attempt to cancel all sell orders for the given symbol.
 
             if self.cancel_limit > 1 {
-                outer_ask_orders.extend(outer_bid_orders);
-                if outer_ask_orders.len() > 10 || outer_ask_orders.clone().len() < 20 {
-                    let single_cancels = outer_ask_orders.drain(10..).collect::<Vec<LiveOrder>>();
-                    for v in single_cancels {
-                        if let Ok(cancelled_order) =
-                            self.client.cancel_order(v.clone(), &symbol).await
-                        {
-                            for (i, live_order) in
-                                self.live_buys_orders.clone().iter_mut().enumerate()
-                            {
-                                if *live_order == cancelled_order {
-                                    self.live_buys_orders.remove(i);
-                                }
-                            }
-                            for (i, live_order) in
-                                self.live_sells_orders.clone().iter_mut().enumerate()
-                            {
-                                if *live_order == cancelled_order {
-                                    self.live_sells_orders.remove(i);
-                                }
+                let single_ask_cancels = {
+                    let mut new_arr = vec![];
+                    if outer_ask_orders.len() > 10 {
+                        for i in 0..(outer_ask_orders.len() - 10) {
+                            match outer_ask_orders.pop() {
+                                Some(v) => new_arr.push(v),
+                                None => break,
                             }
                         }
+                        new_arr
+                    } else {
+                        new_arr
                     }
-                } else if let Ok(v) = self
+                };
+
+                if let Ok(v) = self
                     .client
                     .batch_cancel(outer_ask_orders, symbol.as_str())
                     .await
@@ -664,6 +665,23 @@ impl QuoteGenerator {
                 // Print a message indicating that all orders have been cancelled.
                 println!("Cancelling all orders for {}", symbol);
                 self.cancel_limit -= 1;
+
+                for v in single_ask_cancels {
+                    if let Ok(cancelled_order) = self.client.cancel_order(v, &symbol).await {
+                        for (i, live_order) in self.live_buys_orders.clone().iter_mut().enumerate()
+                        {
+                            if *live_order == cancelled_order {
+                                self.live_buys_orders.remove(i);
+                            }
+                        }
+                        for (i, live_order) in self.live_sells_orders.clone().iter_mut().enumerate()
+                        {
+                            if *live_order == cancelled_order {
+                                self.live_sells_orders.remove(i);
+                            }
+                        }
+                    }
+                }
             } else {
                 self.cancel_limit -= 1;
             }
