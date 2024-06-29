@@ -1287,9 +1287,9 @@ dependencies = [
 
 [[package]]
 name = "rs_bybit"
-version = "0.2.3"
+version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0ed51a57e69ac288585fc6ead10f641d2cd80daa207881f5e085d9450c9d623f"
+checksum = "632512798e55021df371e2d3226d875bfde21f26b72f19732696ef6e165ded8a"
 dependencies = [
  "chrono",
  "futures",
