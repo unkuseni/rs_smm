@@ -524,8 +524,6 @@ impl QuoteGenerator {
         // Initialize the `out_of_bounds` boolean to `false`.
         let mut out_of_bounds = false;
         let bounds = self.last_update_price * bps_to_decimal(self.minimum_spread + 3.0);
-        let bid_bounds = self.last_update_price - bounds;
-        let ask_bounds = self.last_update_price + bounds;
         let outer_ask_bounds = self.last_update_price + (bounds * 9.5);
         let outer_bid_bounds = self.last_update_price - (bounds * 9.5);
 
