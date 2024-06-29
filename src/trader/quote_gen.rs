@@ -496,9 +496,7 @@ impl QuoteGenerator {
                 self.live_sells_orders = sorted_sells;
             }
             // If there is an error, print the error message.
-            Err(e) => {
-                println!("Error placing batch order: {:?}", e);
-            }
+            _ => {}
         }
     }
 
@@ -525,9 +523,11 @@ impl QuoteGenerator {
     async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) -> bool {
         // Initialize the `out_of_bounds` boolean to `false`.
         let mut out_of_bounds = false;
-        let bounds = self.last_update_price * bps_to_decimal(self.minimum_spread + 2.0);
-        let outer_ask_bounds = book.best_bid.price + (bounds * 9.5);
-        let outer_bid_bounds = book.best_ask.price - (bounds * 9.5);
+        let bounds = self.last_update_price * bps_to_decimal(self.minimum_spread + 3.0);
+        let bid_bounds = self.last_update_price - bounds;
+        let ask_bounds = self.last_update_price + bounds;
+        let outer_ask_bounds = self.last_update_price + (bounds * 9.5);
+        let outer_bid_bounds = self.last_update_price - (bounds * 9.5);
 
         let mut outer_ask_orders = {
             let mut arr = vec![];
