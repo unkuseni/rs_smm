@@ -11,6 +11,7 @@ use skeleton::{
         ex_bybit::BybitClient,
         exchange::{ExchangeClient, PrivateData},
     },
+   
     util::{
         helpers::{geometric_weights, geomspace, nbsqrt, round_step, Round},
         localorderbook::LocalBook,
@@ -540,7 +541,7 @@ impl QuoteGenerator {
     async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) -> bool {
         // Initialize the `out_of_bounds` boolean to `false`.
         let mut out_of_bounds = false;
-        let bounds = self.last_update_price * bps_to_decimal(self.minimum_spread + 3.0);
+        let bounds = self.last_update_price * bps_to_decimal(self.minimum_spread + 10.0);
         let (current_bid_bounds, current_ask_bounds) = (
             book.best_bid.price - (bounds * self.final_order_distance),
             book.best_ask.price + (bounds * self.final_order_distance),
