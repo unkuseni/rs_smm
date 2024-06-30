@@ -204,7 +204,6 @@ impl QuoteGenerator {
         book: &LocalBook,
         imbalance: f64,
         skew: f64,
-        price_flu: f64,
     ) -> Vec<BatchOrder> {
         // Get the start price from the order book.
         let start = book.get_mid_price();
@@ -234,23 +233,10 @@ impl QuoteGenerator {
             d * nbsqrt(skew)
         };
 
-        let volatility = bps_to_decimal(price_flu) * start;
         let notional = book.min_notional;
 
         // Generate the orders based on the skew value.
         let mut orders = if skew >= 0.0 {
-            // If the imbalance is large and the price fluctuation is negative, generate negative
-            // skew orders. Otherwise, generate positive skew orders.
-            if imbalance > 0.85 && volatility <= -curr_spread * 2.0 {
-                self.negative_skew_orders(
-                    half_spread,
-                    curr_spread,
-                    start,
-                    aggression,
-                    notional,
-                    book,
-                )
-            } else {
                 self.positive_skew_orders(
                     half_spread,
                     curr_spread,
@@ -259,20 +245,8 @@ impl QuoteGenerator {
                     notional,
                     book,
                 )
-            }
+            
         } else {
-            // If the imbalance is  negative large and the price fluctuation is positive, generate positive
-            // skew orders. Otherwise, generate negative skew orders.
-            if imbalance < -0.85 && volatility >= curr_spread * 2.0 {
-                self.positive_skew_orders(
-                    half_spread,
-                    curr_spread,
-                    start,
-                    aggression,
-                    notional,
-                    book,
-                )
-            } else {
                 self.negative_skew_orders(
                     half_spread,
                     curr_spread,
@@ -281,7 +255,7 @@ impl QuoteGenerator {
                     notional,
                     book,
                 )
-            }
+            
         };
 
         // Add the symbol to each order.
@@ -585,8 +559,7 @@ impl QuoteGenerator {
         imbalance: f64,
         book: LocalBook,
         symbol: String,
-        price_flu: f64,
-        _rate_limit: u32,
+        rate_limit: u32,
     ) {
         // Update the inventory delta.
         self.inventory_delta();
@@ -594,8 +567,8 @@ impl QuoteGenerator {
         if self.time_limit > 1 {
             let condition = (book.last_update - self.time_limit) > 1000;
             if condition == true {
-                self.rate_limit = 10;
-                self.cancel_limit = 10;
+                self.rate_limit = rate_limit;
+                self.cancel_limit = rate_limit;
             }
         }
 
@@ -606,7 +579,7 @@ impl QuoteGenerator {
                 // Generate quotes for the grid based on the order book, symbol, imbalance, skew,
                 // and price fluctuation.
                 let orders =
-                    self.generate_quotes(symbol.clone(), &book, imbalance, skew, price_flu);
+                    self.generate_quotes(symbol.clone(), &book, imbalance, skew);
 
                 // Send the generated orders to the book.
                 if self.rate_limit > 1 {

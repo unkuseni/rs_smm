@@ -327,13 +327,10 @@ impl MarketMaker {
                     // Get the symbol quoter for the current symbol
                     let symbol_quoter = self.generators.get_mut(&symbol).unwrap();
 
-                    // Get the price fluctuation for the current symbol
-                    let price_flu = self.features.get(&symbol).unwrap().price_flu.1;
-
                     if let Some(p) = private_data.get(&symbol) {
                         // Update the symbol quoter
                         symbol_quoter
-                            .update_grid(p.clone(), skew, imbalance, book, symbol, price_flu, rate_limit)
+                            .update_grid(p.clone(), skew, imbalance, book, symbol, rate_limit)
                             .await;
                     }
                 }
@@ -349,13 +346,10 @@ impl MarketMaker {
                     // Get the symbol quoter for the current symbol
                     let symbol_quoter = self.generators.get_mut(&symbol).unwrap();
 
-                    // Get the price fluctuation for the current symbol
-                    let price_flu = self.features.get(&symbol).unwrap().price_flu.1;
-
                     if let Some(p) = private_data.get(&symbol) {
                         // Update the symbol quoter
                         symbol_quoter
-                            .update_grid(p.clone(), skew, imbalance, book, symbol, price_flu, rate_limit)
+                            .update_grid(p.clone(), skew, imbalance, book, symbol, rate_limit)
                             .await;
                     }
                 }
