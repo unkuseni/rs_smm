@@ -528,19 +528,39 @@ impl QuoteGenerator {
             book.best_ask.price + (bounds * self.final_order_distance),
         );
 
+        let outer_ask_orders = {
+            let mut arr = vec![];
+            for order in &self.live_sells_orders {
+                if order.price > outer_ask_bounds {
+                    arr.push(order.clone());
+                }
+            }
+            arr.reverse();
+
+            arr
+        };
+        let outer_bid_orders = {
+            let mut arr = vec![];
+            for order in &self.live_buys_orders {
+                if order.price < outer_bid_bounds {
+                    arr.push(order.clone());
+                }
+            }
+            arr.reverse();
+
+            arr
+        };
         // If there are no live orders, return `true`.
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
             out_of_bounds = true;
             return out_of_bounds;
-        } else if outer_ask_bounds < current_ask_bounds
-            && self.last_update_price != 0.0
-        {
+        } else if outer_ask_bounds < current_ask_bounds && self.last_update_price != 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all buy orders bey the bounds.
 
             if self.cancel_limit > 1 {
-                if let Ok(v) = self.client.cancel_all(&symbol).await {
+                if let Ok(v) = self.client.batch_cancel(outer_ask_orders, &symbol).await {
                     // Clear the live orders queue.
                     for cancelled_order in v.clone() {
                         for (i, live_order) in self.live_buys_orders.clone().iter_mut().enumerate()
@@ -561,15 +581,17 @@ impl QuoteGenerator {
                     self.cancel_limit -= 1;
                 }
             }
-        } else if outer_bid_bounds > current_bid_bounds
-            && self.last_update_price != 0.0
-        {
+        } else if outer_bid_bounds > current_bid_bounds && self.last_update_price != 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
             // Attempt to cancel all sell orders for the given symbol.
 
             if self.cancel_limit > 1 {
-                if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
+                if let Ok(v) = self
+                    .client
+                    .batch_cancel(outer_bid_orders, symbol.as_str())
+                    .await
+                {
                     // Clear the live orders queue.
                     for cancelled_order in v.clone() {
                         for (i, live_order) in self.live_sells_orders.clone().iter_mut().enumerate()
