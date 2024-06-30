@@ -1116,20 +1116,18 @@ impl OrderManagement {
                     let mut sell_array = VecDeque::new();
                     for (i, d) in v.result.list.iter().enumerate() {
                         for pos in tracking_sells.clone() {
-                            if i == pos && v.ret_ext_info.list[i].code == 0 {
+                            if i == pos {
                                 sell_array.push_back(LiveOrder::new(
                                     od_clone[i].1.clone(),
                                     od_clone[i].0.clone(),
                                     d.order_id.to_string(),
                                 ));
-                            } else if i != pos && v.ret_ext_info.list[i].code == 0 {
+                            } else {
                                 buy_array.push_back(LiveOrder::new(
                                     od_clone[i].1.clone(),
                                     od_clone[i].0.clone(),
                                     d.order_id.to_string(),
                                 ));
-                            } else {
-                                // TODO: Handle unfilled orders
                             }
                         }
                     }
