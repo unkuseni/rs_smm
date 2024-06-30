@@ -555,8 +555,8 @@ impl QuoteGenerator {
             if self.cancel_limit > 1 {
                 for v in self.live_sells_orders.clone() {
                     if v.price >= current_ask_bounds {
-                        out_of_bounds = true;
                         if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                            out_of_bounds = true;
                             println!("Cancelling all orders for {}", symbol);
                             break;
                         }
@@ -565,15 +565,15 @@ impl QuoteGenerator {
 
                 for v in self.live_buys_orders.clone() {
                     if v.price <= current_bid_bounds {
-                        out_of_bounds = true;
                         if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                            out_of_bounds = true;
                             println!("Cancelling all orders for {}", symbol);
                             break;
                         }
                     }
                 }
             }
-        }
+        } 
         self.last_update_price = book.mid_price;
         // Return the `out_of_bounds` boolean.
         out_of_bounds

@@ -281,6 +281,7 @@ impl BybitClient {
             {
                 Ok(_) => {
                     println!("Subscription successful");
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
                 }
                 Err(e) => {
                     eprintln!("Subscription error: {}", e);
@@ -379,6 +380,7 @@ impl BybitClient {
             {
                 Ok(_) => {
                     println!("Subscription successful");
+                    tokio::time::sleep(Duration::from_millis(delay)).await;
                 }
                 Err(e) => {
                     eprintln!("Subscription error: {}", e);
