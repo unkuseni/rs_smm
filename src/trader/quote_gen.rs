@@ -540,10 +540,10 @@ impl QuoteGenerator {
     async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) -> bool {
         // Initialize the `out_of_bounds` boolean to `false`.
         let mut out_of_bounds = false;
-        let bounds = self.last_update_price * bps_to_decimal(self.minimum_spread + 10.0);
+        let bounds = book.mid_price * bps_to_decimal(3.0);
         let (current_bid_bounds, current_ask_bounds) = (
-            book.best_bid.price - (bounds * self.final_order_distance),
-            book.best_ask.price + (bounds * self.final_order_distance),
+            book.mid_price - bounds,
+            book.mid_price + bounds,
         );
 
         // If there are no live orders, return `true`.
@@ -556,7 +556,7 @@ impl QuoteGenerator {
             if self.cancel_limit > 1 {
                 for sell in self.live_sells_orders.clone() {
                     for buy in self.live_buys_orders.clone() {
-                        if buy.price <= current_bid_bounds || sell.price >= current_ask_bounds {
+                        if buy.price > current_bid_bounds || sell.price < current_ask_bounds {
                             if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
                                 out_of_bounds = true;
                                 println!("Cancelling all orders for {}", symbol);
