@@ -549,6 +549,7 @@ impl QuoteGenerator {
         // If there are no live orders, return `true`.
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
             out_of_bounds = true;
+            self.last_update_price = book.mid_price;
             return out_of_bounds;
         } else if self.last_update_price != 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
@@ -558,6 +559,7 @@ impl QuoteGenerator {
                         if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
                             out_of_bounds = true;
                             println!("Cancelling all orders for {}", symbol);
+                            self.last_update_price = book.mid_price;
                             break;
                         }
                     }
@@ -568,13 +570,13 @@ impl QuoteGenerator {
                         if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
                             out_of_bounds = true;
                             println!("Cancelling all orders for {}", symbol);
+                            self.last_update_price = book.mid_price;
                             break;
                         }
                     }
                 }
             }
-        } 
-        self.last_update_price = book.mid_price;
+        }
         // Return the `out_of_bounds` boolean.
         out_of_bounds
     }
