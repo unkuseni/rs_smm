@@ -546,7 +546,6 @@ impl QuoteGenerator {
                     arr.push(order.clone());
                 }
             }
-            arr.reverse();
 
             arr
         };
