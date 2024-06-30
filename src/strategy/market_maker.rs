@@ -98,7 +98,7 @@ impl MarketMaker {
                     self.update_features(data.markets[0].clone(), self.depths.clone(), use_wmid, 610);
 
                     // Update the strategy with the new market data and private data.
-                    if send > 50 {
+                    if send > 300 {
                         self.potentially_update(data.markets[0].clone(), rate_limit)
                             .await;
                     } else {
