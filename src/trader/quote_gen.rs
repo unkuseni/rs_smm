@@ -11,7 +11,6 @@ use skeleton::{
         ex_bybit::BybitClient,
         exchange::{ExchangeClient, PrivateData},
     },
-   
     util::{
         helpers::{geometric_weights, geomspace, nbsqrt, round_step, Round},
         localorderbook::LocalBook,
@@ -553,22 +552,24 @@ impl QuoteGenerator {
             return out_of_bounds;
         } else if self.last_update_price != 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
-            for v in self.live_sells_orders.clone() {
-                if v.price >= current_ask_bounds {
-                    out_of_bounds = true;
-                    if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
-                        println!("Cancelling all orders for {}", symbol);
-                        break;
+            if self.cancel_limit > 1 {
+                for v in self.live_sells_orders.clone() {
+                    if v.price >= current_ask_bounds {
+                        out_of_bounds = true;
+                        if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                            println!("Cancelling all orders for {}", symbol);
+                            break;
+                        }
                     }
                 }
-            }
 
-            for v in self.live_buys_orders.clone() {
-                if v.price <= current_bid_bounds {
-                    out_of_bounds = true;
-                    if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
-                        println!("Cancelling all orders for {}", symbol);
-                        break;
+                for v in self.live_buys_orders.clone() {
+                    if v.price <= current_bid_bounds {
+                        out_of_bounds = true;
+                        if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                            println!("Cancelling all orders for {}", symbol);
+                            break;
+                        }
                     }
                 }
             }
