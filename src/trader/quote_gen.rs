@@ -567,8 +567,8 @@ impl QuoteGenerator {
         if self.time_limit > 1 {
             let condition = (book.last_update - self.time_limit) > 1000;
             if condition == true {
-                self.rate_limit = rate_limit;
-                self.cancel_limit = rate_limit;
+                self.rate_limit = 10;
+                self.cancel_limit = 10;
             }
         }
 
