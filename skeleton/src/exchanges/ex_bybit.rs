@@ -126,7 +126,7 @@ impl BybitClient {
         symbol: Vec<String>,
         sender: mpsc::UnboundedSender<BybitMarket>,
     ) {
-        let mut delay = 600;
+        let delay = 50;
         let market: BybitStream = Bybit::new(None, None);
         let category: Category = Category::Linear;
         let request_args = build_requests(&symbol);
@@ -285,7 +285,6 @@ impl BybitClient {
                 Err(e) => {
                     eprintln!("Subscription error: {}", e);
                     tokio::time::sleep(Duration::from_millis(delay)).await;
-                    delay *= 2;
                 }
             }
         }
@@ -296,7 +295,7 @@ impl BybitClient {
         sender: mpsc::UnboundedSender<TaggedPrivate>,
         symbol: String,
     ) {
-        let mut delay = 1;
+        let delay = 50;
         let user_stream: BybitStream = BybitStream::new(
             Some(self.key.clone()),    // API key
             Some(self.secret.clone()), // Secret Key
@@ -384,7 +383,6 @@ impl BybitClient {
                 Err(e) => {
                     eprintln!("Subscription error: {}", e);
                     tokio::time::sleep(Duration::from_millis(delay)).await;
-                    delay *= 2;
                 }
             }
         }

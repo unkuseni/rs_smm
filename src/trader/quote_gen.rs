@@ -3,10 +3,14 @@ use std::{borrow::Cow, collections::VecDeque};
 use binance::{account::OrderSide, futures::account::CustomOrderRequest};
 use bybit::model::{
     AmendOrderRequest, BatchAmendRequest, BatchCancelRequest, BatchPlaceRequest,
-    CancelOrderRequest, CancelallRequest, OrderRequest, Side,
+    CancelOrderRequest, CancelallRequest, FastExecData, OrderRequest, Side,
 };
 use skeleton::{
-    exchanges::{ex_binance::BinanceClient, ex_bybit::BybitClient, exchange::ExchangeClient},
+    exchanges::{
+        ex_binance::BinanceClient,
+        ex_bybit::BybitClient,
+        exchange::{ExchangeClient, PrivateData},
+    },
     util::{
         helpers::{geometric_weights, geomspace, nbsqrt, round_step, Round},
         localorderbook::LocalBook,
@@ -500,20 +504,36 @@ impl QuoteGenerator {
         }
     }
 
-    fn check_for_fills(&mut self, book: &LocalBook) {
-        if !self.live_sells_orders.is_empty()
-            && book.best_ask.price < self.live_sells_orders[0].price
+    fn check_for_fills(&mut self, data: PrivateData) {
+        let fills = match data {
+            PrivateData::Bybit(data) => data.executions,
+            PrivateData::Binance(data) => data.into_fastexec(),
+        };
+
+        for FastExecData {
+            order_id,
+            exec_qty,
+            side,
+            ..
+        } in fills
         {
-            let order = self.live_sells_orders[0].clone();
-            self.position -= order.price * order.qty;
-            self.live_sells_orders.pop_front();
-        } else if !self.live_buys_orders.is_empty()
-            && book.best_bid.price > self.live_buys_orders[0].price
-        {
-            let order = self.live_buys_orders[0].clone();
-            self.position += order.price * order.qty;
-            self.live_buys_orders.pop_front();
-        } else {
+            if exec_qty.as_str() != "0.0" {
+                if side == "Buy" {
+                    for (i, order) in self.live_buys_orders.clone().iter().enumerate() {
+                        if order.order_id == order_id {
+                            self.position += order.price * order.qty;
+                            self.live_buys_orders.remove(i);
+                        }
+                    }
+                } else {
+                    for (i, order) in self.live_sells_orders.clone().iter().enumerate() {
+                        if order.order_id == order_id {
+                            self.position -= order.price * order.qty;
+                            self.live_sells_orders.remove(i);
+                        }
+                    }
+                }
+            }
         }
     }
 
@@ -521,95 +541,35 @@ impl QuoteGenerator {
         // Initialize the `out_of_bounds` boolean to `false`.
         let mut out_of_bounds = false;
         let bounds = self.last_update_price * bps_to_decimal(self.minimum_spread + 3.0);
-        let outer_ask_bounds = self.last_update_price + (bounds * self.final_order_distance);
-        let outer_bid_bounds = self.last_update_price - (bounds * self.final_order_distance);
         let (current_bid_bounds, current_ask_bounds) = (
             book.best_bid.price - (bounds * self.final_order_distance),
             book.best_ask.price + (bounds * self.final_order_distance),
         );
 
-        let outer_ask_orders = {
-            let mut arr = vec![];
-            for order in &self.live_sells_orders {
-                if order.price > outer_ask_bounds {
-                    arr.push(order.clone());
-                }
-            }
-            arr.reverse();
-
-            arr
-        };
-        let outer_bid_orders = {
-            let mut arr = vec![];
-            for order in &self.live_buys_orders {
-                if order.price < outer_bid_bounds {
-                    arr.push(order.clone());
-                }
-            }
-
-            arr
-        };
         // If there are no live orders, return `true`.
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
             out_of_bounds = true;
             return out_of_bounds;
-        } else if outer_ask_bounds < current_ask_bounds && self.last_update_price != 0.0 {
+        } else if self.last_update_price != 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
-            out_of_bounds = true;
-            // Attempt to cancel all buy orders bey the bounds.
-
-            if self.cancel_limit > 1 {
-                if let Ok(v) = self.client.batch_cancel(outer_ask_orders, &symbol).await {
-                    // Clear the live orders queue.
-                    for cancelled_order in v.clone() {
-                        for (i, live_order) in self.live_buys_orders.clone().iter_mut().enumerate()
-                        {
-                            if *live_order == cancelled_order {
-                                self.live_buys_orders.remove(i);
-                            }
-                        }
-                        for (i, live_order) in self.live_sells_orders.clone().iter_mut().enumerate()
-                        {
-                            if *live_order == cancelled_order {
-                                self.live_sells_orders.remove(i);
-                            }
-                        }
+            for v in self.live_sells_orders.clone() {
+                if v.price >= current_ask_bounds {
+                    out_of_bounds = true;
+                    if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                        println!("Cancelling all orders for {}", symbol);
+                        break;
                     }
-                    self.cancel_limit -= 1;
-                } else {
-                    self.cancel_limit -= 1;
                 }
             }
-        } else if outer_bid_bounds > current_bid_bounds && self.last_update_price != 0.0 {
-            // Set the `out_of_bounds` boolean to `true`.
-            out_of_bounds = true;
-            // Attempt to cancel all sell orders for the given symbol.
 
-            if self.cancel_limit > 1 {
-                if let Ok(v) = self
-                    .client
-                    .batch_cancel(outer_bid_orders, symbol.as_str())
-                    .await
-                {
-                    // Clear the live orders queue.
-                    for cancelled_order in v.clone() {
-                        for (i, live_order) in self.live_sells_orders.clone().iter_mut().enumerate()
-                        {
-                            if *live_order == cancelled_order {
-                                self.live_sells_orders.remove(i);
-                            }
-                        }
-                        for (i, live_order) in self.live_buys_orders.clone().iter_mut().enumerate()
-                        {
-                            if *live_order == cancelled_order {
-                                self.live_buys_orders.remove(i);
-                            }
-                        }
+            for v in self.live_buys_orders.clone() {
+                if v.price <= current_bid_bounds {
+                    out_of_bounds = true;
+                    if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
+                        println!("Cancelling all orders for {}", symbol);
+                        break;
                     }
                 }
-                self.cancel_limit -= 1;
-            } else {
-                self.cancel_limit -= 1;
             }
         }
         self.last_update_price = book.mid_price;
@@ -630,6 +590,7 @@ impl QuoteGenerator {
     /// * `price_flu` - Price fluctuation of the order book.
     pub async fn update_grid(
         &mut self,
+        private_data: PrivateData,
         skew: f64,
         imbalance: f64,
         book: LocalBook,
@@ -648,7 +609,7 @@ impl QuoteGenerator {
             }
         }
 
-        self.check_for_fills(&book);
+        self.check_for_fills(private_data);
         // Check if the order book is out of bounds with the given symbol.
         match self.out_of_bounds(&book, symbol.clone()).await {
             true => {

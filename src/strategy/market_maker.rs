@@ -1,5 +1,5 @@
 use bybit::model::WsTrade;
-use skeleton::exchanges::exchange::ExchangeClient;
+use skeleton::exchanges::exchange::{ExchangeClient, PrivateData};
 use skeleton::util::localorderbook::LocalBook;
 use skeleton::{exchanges::exchange::MarketMessage, ss::SharedState};
 use std::collections::{HashMap, VecDeque};
@@ -83,7 +83,7 @@ impl MarketMaker {
     /// This function does not return any value.
     pub async fn start_loop(
         &mut self,
-        mut receiver: UnboundedReceiver<SharedState>, 
+        mut receiver: UnboundedReceiver<SharedState>,
         use_wmid: bool,
         rate_limit: u32,
     ) {
@@ -95,11 +95,16 @@ impl MarketMaker {
             match data.exchange.as_str() {
                 "bybit" | "binance" => {
                     // Update features with the first market data in the received data.
-                    self.update_features(data.markets[0].clone(), self.depths.clone(), use_wmid, 610);
+                    self.update_features(
+                        data.markets[0].clone(),
+                        self.depths.clone(),
+                        use_wmid,
+                        610,
+                    );
 
                     // Update the strategy with the new market data and private data.
                     if send > 300 {
-                        self.potentially_update(data.markets[0].clone(), rate_limit)
+                        self.potentially_update(data.private, data.markets[0].clone(), rate_limit)
                             .await;
                     } else {
                         wait.tick().await;
@@ -303,7 +308,12 @@ impl MarketMaker {
     ///
     /// * `data` - The new market data.
     /// * `private_data` - The private data for each symbol.
-    async fn potentially_update(&mut self, data: MarketMessage, rate_limit: u32) {
+    async fn potentially_update(
+        &mut self,
+        private_data: HashMap<String, PrivateData>,
+        data: MarketMessage,
+        rate_limit: u32,
+    ) {
         // Get the book, private data, skew, and imbalance for each symbol
         match data {
             // If the market data is from Bybit
@@ -320,10 +330,12 @@ impl MarketMaker {
                     // Get the price fluctuation for the current symbol
                     let price_flu = self.features.get(&symbol).unwrap().price_flu.1;
 
-                    // Update the symbol quoter
-                    symbol_quoter
-                        .update_grid(skew, imbalance, book, symbol, price_flu, rate_limit)
-                        .await;
+                    if let Some(p) = private_data.get(&symbol) {
+                        // Update the symbol quoter
+                        symbol_quoter
+                            .update_grid(p.clone(), skew, imbalance, book, symbol, price_flu, rate_limit)
+                            .await;
+                    }
                 }
             }
             // If the market data is from Binance
@@ -340,10 +352,12 @@ impl MarketMaker {
                     // Get the price fluctuation for the current symbol
                     let price_flu = self.features.get(&symbol).unwrap().price_flu.1;
 
-                    // Update the symbol quoter
-                    symbol_quoter
-                        .update_grid(skew, imbalance, book, symbol, price_flu, rate_limit)
-                        .await;
+                    if let Some(p) = private_data.get(&symbol) {
+                        // Update the symbol quoter
+                        symbol_quoter
+                            .update_grid(p.clone(), skew, imbalance, book, symbol, price_flu, rate_limit)
+                            .await;
+                    }
                 }
             }
         }
