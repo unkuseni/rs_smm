@@ -308,7 +308,7 @@ impl QuoteGenerator {
         } else {
             // Calculate the maximum buy quantity.
             let max_buy_qty =
-                ((self.max_position_usd / 2.0) - self.position) / book.get_mid_price();
+                (self.max_position_usd / 2.0) - self.position;
             // Calculate the size weights.
             let size_weights = geometric_weights(0.63, self.total_order / 2, true);
             // Calculate the sizes.
@@ -323,7 +323,7 @@ impl QuoteGenerator {
         } else {
             // Calculate the maximum sell quantity.
             let max_sell_qty =
-                ((self.max_position_usd / 2.0) + self.position) / book.get_mid_price();
+                (self.max_position_usd / 2.0) + self.position;
             // Calculate the size weights.
             let size_weights = geometric_weights(0.37, self.total_order / 2, false);
             // Calculate the sizes.
@@ -338,13 +338,13 @@ impl QuoteGenerator {
         for (i, bid) in bid_prices.iter().enumerate() {
             // Create a new batch order with the bid size, price, and quantity.
             orders.push(BatchOrder::new(
-                round_size(bid_sizes[i], book),
+                round_size(bid_sizes[i] / *bid, book),
                 round_price(book, *bid),
                 1,
             ));
             // Create a new batch order with the ask size, price, and quantity.
             orders.push(BatchOrder::new(
-                round_size(ask_sizes[i], book),
+                round_size(ask_sizes[i] / ask_prices[i], book),
                 round_price(book, ask_prices[i]),
                 -1,
             ));
@@ -397,7 +397,7 @@ impl QuoteGenerator {
             vec![]
         } else {
             let max_bid_qty =
-                ((self.max_position_usd / 2.0) - self.position) / book.get_mid_price();
+                (self.max_position_usd / 2.0) - self.position;
             let size_weights = geometric_weights(0.37, self.total_order / 2, true);
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_bid_qty).collect();
 
@@ -408,7 +408,7 @@ impl QuoteGenerator {
             vec![]
         } else {
             let max_sell_qty =
-                ((self.max_position_usd / 2.0) + self.position) / book.get_mid_price();
+                (self.max_position_usd / 2.0) + self.position;
             let size_weights = geometric_weights(0.63, self.total_order / 2, false);
             let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
             sizes.reverse();
@@ -421,14 +421,14 @@ impl QuoteGenerator {
         for (i, bid) in bid_prices.iter().enumerate() {
             // Create a new batch order with the bid size, price, and quantity.
             orders.push(BatchOrder::new(
-                round_size(bid_sizes[i], book),
+                round_size(bid_sizes[i] / *bid, book),
                 round_price(book, *bid),
                 1,
             ));
 
             // Create a new batch order with the ask size, price, and quantity.
             orders.push(BatchOrder::new(
-                round_size(ask_sizes[i], book),
+                round_size(ask_sizes[i] / ask_prices[i], book),
                 round_price(book, ask_prices[i]),
                 -1,
             ));
