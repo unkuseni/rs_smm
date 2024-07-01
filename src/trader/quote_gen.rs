@@ -237,25 +237,9 @@ impl QuoteGenerator {
 
         // Generate the orders based on the skew value.
         let mut orders = if skew >= 0.0 {
-                self.positive_skew_orders(
-                    half_spread,
-                    curr_spread,
-                    start,
-                    aggression,
-                    notional,
-                    book,
-                )
-            
+            self.positive_skew_orders(half_spread, curr_spread, start, aggression, notional, book)
         } else {
-                self.negative_skew_orders(
-                    half_spread,
-                    curr_spread,
-                    start,
-                    aggression,
-                    notional,
-                    book,
-                )
-            
+            self.negative_skew_orders(half_spread, curr_spread, start, aggression, notional, book)
         };
 
         // Add the symbol to each order.
@@ -307,8 +291,7 @@ impl QuoteGenerator {
             vec![]
         } else {
             // Calculate the maximum buy quantity.
-            let max_buy_qty =
-                (self.max_position_usd / 2.0) - self.position;
+            let max_buy_qty = (self.max_position_usd / 2.0) - self.position;
             // Calculate the size weights.
             let size_weights = geometric_weights(0.63, self.total_order / 2, true);
             // Calculate the sizes.
@@ -322,8 +305,7 @@ impl QuoteGenerator {
             vec![]
         } else {
             // Calculate the maximum sell quantity.
-            let max_sell_qty =
-                (self.max_position_usd / 2.0) + self.position;
+            let max_sell_qty = (self.max_position_usd / 2.0) + self.position;
             // Calculate the size weights.
             let size_weights = geometric_weights(0.37, self.total_order / 2, false);
             // Calculate the sizes.
@@ -396,9 +378,8 @@ impl QuoteGenerator {
         let bid_sizes = if bid_prices.is_empty() {
             vec![]
         } else {
-            let max_bid_qty =
-                (self.max_position_usd / 2.0) - self.position;
-            let size_weights = geometric_weights(0.37, self.total_order / 2, true);
+            let max_bid_qty = (self.max_position_usd / 2.0) - self.position;
+            let size_weights = geometric_weights(0.75, self.total_order / 2, true);
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_bid_qty).collect();
 
             sizes
@@ -407,9 +388,8 @@ impl QuoteGenerator {
         let ask_sizes = if ask_prices.is_empty() {
             vec![]
         } else {
-            let max_sell_qty =
-                (self.max_position_usd / 2.0) + self.position;
-            let size_weights = geometric_weights(0.63, self.total_order / 2, false);
+            let max_sell_qty = (self.max_position_usd / 2.0) + self.position;
+            let size_weights = geometric_weights(0.75, self.total_order / 2, false);
             let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
             sizes.reverse();
 
@@ -452,29 +432,33 @@ impl QuoteGenerator {
     /// there is an error, it prints the error message.
     async fn send_batch_orders(&mut self, orders: Vec<BatchOrder>) {
         // Send the batch orders to the exchange and await the response.
-        let order_response = self.client.batch_place_order(orders).await;
+        if orders.len() <= 10 {
+            let order_response = self.client.batch_place_order(orders).await;
 
-        match order_response {
-            // If the response is successful, process the orders.
-            Ok(v) => {
-                // Push the orders from the first response to the live buys queue.
-                for order in v[0].clone() {
-                    self.live_buys_orders.push_back(order);
-                }
-                // Sort the live buys queue and update it.
-                let sorted_buys = sort_grid(self.live_buys_orders.clone(), -1);
-                self.live_buys_orders = sorted_buys;
+            match order_response {
+                // If the response is successful, process the orders.
+                Ok(v) => {
+                    // Push the orders from the first response to the live buys queue.
+                    for order in v[0].clone() {
+                        self.live_buys_orders.push_back(order);
+                    }
+                    // Sort the live buys queue and update it.
+                    let sorted_buys = sort_grid(self.live_buys_orders.clone(), -1);
+                    self.live_buys_orders = sorted_buys;
 
-                // Push the orders from the second response to the live sells queue.
-                for order in v[1].clone() {
-                    self.live_sells_orders.push_back(order);
+                    // Push the orders from the second response to the live sells queue.
+                    for order in v[1].clone() {
+                        self.live_sells_orders.push_back(order);
+                    }
+                    // Sort the live sells queue and update it.
+                    let sorted_sells = sort_grid(self.live_sells_orders.clone(), 1);
+                    self.live_sells_orders = sorted_sells;
                 }
-                // Sort the live sells queue and update it.
-                let sorted_sells = sort_grid(self.live_sells_orders.clone(), 1);
-                self.live_sells_orders = sorted_sells;
+                // If there is an error, print the error message.
+                _ => {}
             }
-            // If there is an error, print the error message.
-            _ => {}
+        } else {
+            
         }
     }
 
@@ -491,7 +475,7 @@ impl QuoteGenerator {
             ..
         } in fills
         {
-            if exec_qty.as_str() != "0.0" {
+            if exec_qty.parse::<f64>().unwrap() > 0.0 {
                 if side == "Buy" {
                     for (i, order) in self.live_buys_orders.clone().iter().enumerate() {
                         if order.order_id == order_id {
@@ -578,8 +562,7 @@ impl QuoteGenerator {
             true => {
                 // Generate quotes for the grid based on the order book, symbol, imbalance, skew,
                 // and price fluctuation.
-                let orders =
-                    self.generate_quotes(symbol.clone(), &book, imbalance, skew);
+                let orders = self.generate_quotes(symbol.clone(), &book, imbalance, skew);
 
                 // Send the generated orders to the book.
                 if self.rate_limit > 1 {
