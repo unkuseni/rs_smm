@@ -445,7 +445,7 @@ impl QuoteGenerator {
         } else {
             let mut start_index = 0;
             let mut end_index = 10;
-            for _ in 0..count {
+            for _ in 0..(count - 1) {
                let order_response = self.client.batch_place_order(orders[start_index..end_index].to_vec()).await; 
                 match order_response {
                 // If the response is successful, process the orders.
@@ -471,6 +471,30 @@ impl QuoteGenerator {
             }
                 start_index += 10;
                 end_index += 10;
+            }
+
+            let last_response = self.client.batch_place_order(orders[start_index..].to_vec()).await;
+             match last_response {
+                // If the response is successful, process the orders.
+                Ok(v) => {
+                    // Push the orders from the first response to the live buys queue.
+                    for order in v[0].clone() {
+                        self.live_buys_orders.push_back(order);
+                    }
+                    // Sort the live buys queue and update it.
+                    let sorted_buys = sort_grid(self.live_buys_orders.clone(), -1);
+                    self.live_buys_orders = sorted_buys;
+
+                    // Push the orders from the second response to the live sells queue.
+                    for order in v[1].clone() {
+                        self.live_sells_orders.push_back(order);
+                    }
+                    // Sort the live sells queue and update it.
+                    let sorted_sells = sort_grid(self.live_sells_orders.clone(), 1);
+                    self.live_sells_orders = sorted_sells;
+                }
+                // If there is an error, print the error message.
+                _ => {}
             }
         }
     }
