@@ -12,7 +12,7 @@ use skeleton::{
         exchange::{ExchangeClient, PrivateData},
     },
     util::{
-        helpers::{geometric_weights, geomspace, nbsqrt, round_step, Round},
+        helpers::{geometric_weights, geomspace, round_step, Round},
         localorderbook::LocalBook,
     },
 };
@@ -217,29 +217,13 @@ impl QuoteGenerator {
         // Calculate the half spread by dividing the spread by 2.
         let half_spread = curr_spread / 2.0;
 
-        // Calculate the aggression based on the imbalance and skew values.
-        let aggression = {
-            let mut d = 0.0;
-            // If the imbalance is large or not zero, set the aggression factor to 0.6.
-            // Otherwise, set it to 0.1.
-            if imbalance >= 0.6 || imbalance <= -0.6 {
-                d += 0.6;
-            } else if imbalance != 0.0 {
-                d += 0.23;
-            } else {
-                d += 0.1;
-            }
-            // Multiply the aggression factor by the square root of the skew value.
-            d * nbsqrt(skew)
-        };
-
         let notional = book.min_notional;
 
         // Generate the orders based on the skew value.
         let mut orders = if skew >= 0.0 {
-            self.positive_skew_orders(half_spread, curr_spread, start, aggression, notional, book)
+            self.positive_skew_orders(half_spread, curr_spread, start, imbalance.abs(), notional, book)
         } else {
-            self.negative_skew_orders(half_spread, curr_spread, start, aggression, notional, book)
+            self.negative_skew_orders(half_spread, curr_spread, start, imbalance.abs(), notional, book)
         };
 
         // Add the symbol to each order.
@@ -432,6 +416,7 @@ impl QuoteGenerator {
     /// there is an error, it prints the error message.
     async fn send_batch_orders(&mut self, orders: Vec<BatchOrder>) {
         // Send the batch orders to the exchange and await the response.
+        let count = (orders.len() as f64 / 10.0).ceil() as usize;
         if orders.len() <= 10 {
             let order_response = self.client.batch_place_order(orders).await;
 
@@ -458,7 +443,35 @@ impl QuoteGenerator {
                 _ => {}
             }
         } else {
-            
+            let mut start_index = 0;
+            let mut end_index = 10;
+            for _ in 0..count {
+               let order_response = self.client.batch_place_order(orders[start_index..end_index].to_vec()).await; 
+                match order_response {
+                // If the response is successful, process the orders.
+                Ok(v) => {
+                    // Push the orders from the first response to the live buys queue.
+                    for order in v[0].clone() {
+                        self.live_buys_orders.push_back(order);
+                    }
+                    // Sort the live buys queue and update it.
+                    let sorted_buys = sort_grid(self.live_buys_orders.clone(), -1);
+                    self.live_buys_orders = sorted_buys;
+
+                    // Push the orders from the second response to the live sells queue.
+                    for order in v[1].clone() {
+                        self.live_sells_orders.push_back(order);
+                    }
+                    // Sort the live sells queue and update it.
+                    let sorted_sells = sort_grid(self.live_sells_orders.clone(), 1);
+                    self.live_sells_orders = sorted_sells;
+                }
+                // If there is an error, print the error message.
+                _ => {}
+            }
+                start_index += 10;
+                end_index += 10;
+            }
         }
     }
 
@@ -551,8 +564,8 @@ impl QuoteGenerator {
         if self.time_limit > 1 {
             let condition = (book.last_update - self.time_limit) > 1000;
             if condition == true {
-                self.rate_limit = 10;
-                self.cancel_limit = 10;
+                self.rate_limit = rate_limit;
+                self.cancel_limit = rate_limit;
             }
         }
 
