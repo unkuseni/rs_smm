@@ -528,7 +528,7 @@ impl QuoteGenerator {
         } else if self.last_update_price != 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
             if self.cancel_limit > 1 {
-                if book.mid_price < current_bid_bounds || book.mid_price >= current_ask_bounds {
+                if book.mid_price < current_bid_bounds || book.mid_price > current_ask_bounds {
                     if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
                         out_of_bounds = true;
                         println!("Cancelling all orders for {}", symbol);
@@ -1039,7 +1039,7 @@ impl OrderManagement {
                     },
                     qty,
                     price: Some(price),
-                    time_in_force: Some(Cow::Borrowed("GTC")),
+                    time_in_force: Some(Cow::Borrowed("PostOnly")),
                     ..Default::default()
                 });
             }
