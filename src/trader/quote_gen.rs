@@ -490,31 +490,26 @@ impl QuoteGenerator {
                 end_index += 10;
             }
 
-            let last_response = self
-                .client
-                .batch_place_order(orders[start_index..].to_vec())
-                .await;
-            match last_response {
-                // If the response is successful, process the orders.
-                Ok(v) => {
-                    // Push the orders from the first response to the live buys queue.
-                    for order in v[0].clone() {
-                        self.live_buys_orders.push_back(order);
+            for BatchOrder(qty, price, symbol, side) in orders[start_index..].to_vec() {
+                if side > 0 {
+                    match self.client.place_buy_limit(qty, price, &symbol).await {
+                        Ok(v) => {
+                            self.live_buys_orders.push_back(v);
+                            let sorted_buys = sort_grid(self.live_buys_orders.clone(), -1);
+                            self.live_buys_orders = sorted_buys;
+                        }
+                        _ => {}
                     }
-                    // Sort the live buys queue and update it.
-                    let sorted_buys = sort_grid(self.live_buys_orders.clone(), -1);
-                    self.live_buys_orders = sorted_buys;
-
-                    // Push the orders from the second response to the live sells queue.
-                    for order in v[1].clone() {
-                        self.live_sells_orders.push_back(order);
+                } else {
+                    match self.client.place_sell_limit(qty, price, &symbol).await {
+                        Ok(order) => {
+                            self.live_sells_orders.push_back(order);
+                            let sorted_sells = sort_grid(self.live_sells_orders.clone(), 1);
+                            self.live_sells_orders = sorted_sells;
+                        }
+                        _ => {}
                     }
-                    // Sort the live sells queue and update it.
-                    let sorted_sells = sort_grid(self.live_sells_orders.clone(), 1);
-                    self.live_sells_orders = sorted_sells;
                 }
-                // If there is an error, print the error message.
-                _ => {}
             }
         }
     }
@@ -570,9 +565,7 @@ impl QuoteGenerator {
         } else if self.last_update_price != 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
             if self.cancel_limit > 1 {
-                if book.mid_price < current_bid_bounds
-                    || book.mid_price > current_ask_bounds
-                {
+                if book.mid_price < current_bid_bounds || book.mid_price > current_ask_bounds {
                     if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
                         out_of_bounds = true;
                         println!("Cancelling all orders for {}", symbol);
