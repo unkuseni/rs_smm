@@ -579,7 +579,9 @@ impl QuoteGenerator {
                     || outer_ask_orders.price > outer_ask_bounds
                     || outer_bid_orders.price < outer_bid_bounds
                 {
-                    if let Ok(v) = self.client.batch_cancel(vec![outer_ask_orders, outer_bid_orders],symbol.as_str()).await {
+                    let mut batch_cancels = self.live_buys_orders.clone();
+                    batch_cancels.extend(self.live_sells_orders.clone());
+                    if let Ok(v) = self.client.batch_cancel(batch_cancels.into(), symbol.as_str()).await {
                         out_of_bounds = true;
                         println!("Cancelling all orders for {}", symbol);
                         for cancelled_order in v.clone() {
