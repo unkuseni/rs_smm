@@ -527,7 +527,8 @@ impl QuoteGenerator {
             ..
         } in fills
         {
-            if exec_qty.parse::<f64>().unwrap() > 0.0 {
+            let exec_qty_str = exec_qty.replace(",", ""); // Remove commas
+            if exec_qty_str.parse::<f64>().unwrap() > 0.0 {
                 if side == "Buy" {
                     for (i, order) in self.live_buys_orders.clone().iter().enumerate() {
                         if order.order_id == order_id {
