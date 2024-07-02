@@ -3,14 +3,10 @@ use std::{borrow::Cow, collections::VecDeque};
 use binance::{account::OrderSide, futures::account::CustomOrderRequest};
 use bybit::model::{
     AmendOrderRequest, BatchAmendRequest, BatchCancelRequest, BatchPlaceRequest,
-    CancelOrderRequest, CancelallRequest, FastExecData, OrderRequest, Side,
+    CancelOrderRequest, CancelallRequest, OrderRequest, Side,
 };
 use skeleton::{
-    exchanges::{
-        ex_binance::BinanceClient,
-        ex_bybit::BybitClient,
-        exchange::{ExchangeClient, PrivateData},
-    },
+    exchanges::{ex_binance::BinanceClient, ex_bybit::BybitClient, exchange::ExchangeClient},
     util::{
         helpers::{geometric_weights, geomspace, round_step, Round},
         localorderbook::LocalBook,
@@ -221,9 +217,23 @@ impl QuoteGenerator {
 
         // Generate the orders based on the skew value.
         let mut orders = if skew >= 0.0 {
-            self.positive_skew_orders(half_spread, curr_spread, start, imbalance.abs(), notional, book)
+            self.positive_skew_orders(
+                half_spread,
+                curr_spread,
+                start,
+                imbalance.abs(),
+                notional,
+                book,
+            )
         } else {
-            self.negative_skew_orders(half_spread, curr_spread, start, imbalance.abs(), notional, book)
+            self.negative_skew_orders(
+                half_spread,
+                curr_spread,
+                start,
+                imbalance.abs(),
+                notional,
+                book,
+            )
         };
 
         // Add the symbol to each order.
@@ -363,7 +373,7 @@ impl QuoteGenerator {
             vec![]
         } else {
             let max_bid_qty = (self.max_position_usd / 2.0) - self.position;
-            let size_weights = geometric_weights(0.37 ,self.total_order / 2, true);
+            let size_weights = geometric_weights(0.37, self.total_order / 2, true);
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_bid_qty).collect();
 
             sizes
@@ -446,35 +456,41 @@ impl QuoteGenerator {
             let mut start_index = 0;
             let mut end_index = 10;
             for _ in 0..(count - 1) {
-               let order_response = self.client.batch_place_order(orders[start_index..end_index].to_vec()).await; 
+                let order_response = self
+                    .client
+                    .batch_place_order(orders[start_index..end_index].to_vec())
+                    .await;
                 match order_response {
-                // If the response is successful, process the orders.
-                Ok(v) => {
-                    // Push the orders from the first response to the live buys queue.
-                    for order in v[0].clone() {
-                        self.live_buys_orders.push_back(order);
-                    }
-                    // Sort the live buys queue and update it.
-                    let sorted_buys = sort_grid(self.live_buys_orders.clone(), -1);
-                    self.live_buys_orders = sorted_buys;
+                    // If the response is successful, process the orders.
+                    Ok(v) => {
+                        // Push the orders from the first response to the live buys queue.
+                        for order in v[0].clone() {
+                            self.live_buys_orders.push_back(order);
+                        }
+                        // Sort the live buys queue and update it.
+                        let sorted_buys = sort_grid(self.live_buys_orders.clone(), -1);
+                        self.live_buys_orders = sorted_buys;
 
-                    // Push the orders from the second response to the live sells queue.
-                    for order in v[1].clone() {
-                        self.live_sells_orders.push_back(order);
+                        // Push the orders from the second response to the live sells queue.
+                        for order in v[1].clone() {
+                            self.live_sells_orders.push_back(order);
+                        }
+                        // Sort the live sells queue and update it.
+                        let sorted_sells = sort_grid(self.live_sells_orders.clone(), 1);
+                        self.live_sells_orders = sorted_sells;
                     }
-                    // Sort the live sells queue and update it.
-                    let sorted_sells = sort_grid(self.live_sells_orders.clone(), 1);
-                    self.live_sells_orders = sorted_sells;
+                    // If there is an error, print the error message.
+                    _ => {}
                 }
-                // If there is an error, print the error message.
-                _ => {}
-            }
                 start_index += 10;
                 end_index += 10;
             }
 
-            let last_response = self.client.batch_place_order(orders[start_index..].to_vec()).await;
-             match last_response {
+            let last_response = self
+                .client
+                .batch_place_order(orders[start_index..].to_vec())
+                .await;
+            match last_response {
                 // If the response is successful, process the orders.
                 Ok(v) => {
                     // Push the orders from the first response to the live buys queue.
@@ -499,35 +515,18 @@ impl QuoteGenerator {
         }
     }
 
-    fn check_for_fills(&mut self, data: PrivateData) {
-        let fills = match data {
-            PrivateData::Bybit(data) => data.executions,
-            PrivateData::Binance(data) => data.into_fastexec(),
-        };
+    fn check_for_fills(&mut self, book: &LocalBook) {
+        for (i, order) in self.live_buys_orders.clone().iter().enumerate() {
+            if book.best_bid.price < order.price {
+                self.position += order.price * order.qty;
+                self.live_buys_orders.remove(i);
+            }
+        }
 
-        for FastExecData {
-            order_id,
-            exec_qty,
-            side,
-            ..
-        } in fills
-        {
-            if exec_qty.parse::<f64>().unwrap() > 0.0 {
-                if side == "Buy" {
-                    for (i, order) in self.live_buys_orders.clone().iter().enumerate() {
-                        if order.order_id == order_id {
-                            self.position += order.price * order.qty;
-                            self.live_buys_orders.remove(i);
-                        }
-                    }
-                } else {
-                    for (i, order) in self.live_sells_orders.clone().iter().enumerate() {
-                        if order.order_id == order_id {
-                            self.position -= order.price * order.qty;
-                            self.live_sells_orders.remove(i);
-                        }
-                    }
-                }
+        for (i, order) in self.live_sells_orders.clone().iter().enumerate() {
+            if book.best_ask.price > order.price {
+                self.position -= order.price * order.qty;
+                self.live_sells_orders.remove(i);
             }
         }
     }
@@ -575,7 +574,6 @@ impl QuoteGenerator {
     /// * `price_flu` - Price fluctuation of the order book.
     pub async fn update_grid(
         &mut self,
-        private_data: PrivateData,
         skew: f64,
         imbalance: f64,
         book: LocalBook,
@@ -593,7 +591,7 @@ impl QuoteGenerator {
             }
         }
 
-        self.check_for_fills(private_data);
+        self.check_for_fills(&book);
         // Check if the order book is out of bounds with the given symbol.
         match self.out_of_bounds(&book, symbol.clone()).await {
             true => {
