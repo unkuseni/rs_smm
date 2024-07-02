@@ -557,11 +557,9 @@ impl QuoteGenerator {
         // Initialize the `out_of_bounds` boolean to `false`.
         let mut out_of_bounds = false;
         let bounds = self.last_update_price * bps_to_decimal(self.minimum_spread * 1.5);
-        let (current_bid_bounds, current_ask_bounds, outer_ask_bounds, outer_bid_bounds) = (
+        let (current_bid_bounds, current_ask_bounds) = (
             self.last_update_price - bounds,
             self.last_update_price + bounds,
-            book.mid_price + (bounds * self.final_order_distance),
-            book.mid_price - (bounds * self.final_order_distance),
         );
 
         // If there are no live orders, return `true`.
@@ -572,16 +570,10 @@ impl QuoteGenerator {
         } else if self.last_update_price != 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
             if self.cancel_limit > 1 {
-                let outer_ask_orders = self.live_sells_orders.clone().pop_back().unwrap();
-                let outer_bid_orders = self.live_buys_orders.clone().pop_back().unwrap();
                 if book.mid_price < current_bid_bounds
                     || book.mid_price > current_ask_bounds
-                    || outer_ask_orders.price > outer_ask_bounds
-                    || outer_bid_orders.price < outer_bid_bounds
                 {
-                    let mut batch_cancels = self.live_buys_orders.clone();
-                    batch_cancels.extend(self.live_sells_orders.clone());
-                    if let Ok(v) = self.client.batch_cancel(batch_cancels.into(), symbol.as_str()).await {
+                    if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
                         out_of_bounds = true;
                         println!("Cancelling all orders for {}", symbol);
                         for cancelled_order in v.clone() {
