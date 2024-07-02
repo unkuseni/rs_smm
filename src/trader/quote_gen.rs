@@ -458,7 +458,7 @@ impl QuoteGenerator {
             }
         } else {
             let mut start_index = 0;
-            let mut end_index = 10;
+            let mut end_index = 9;
             for _ in 0..(count - 1) {
                 let order_response = self
                     .client
