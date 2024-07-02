@@ -2,11 +2,10 @@ use std::{borrow::Cow, collections::VecDeque};
 
 use binance::{account::OrderSide, futures::account::CustomOrderRequest};
 use bybit::model::{
-    AmendOrderRequest, BatchAmendRequest, BatchCancelRequest, BatchPlaceRequest,
-    CancelOrderRequest, CancelallRequest, OrderRequest, Side,
+    AmendOrderRequest, BatchAmendRequest, BatchCancelRequest, BatchPlaceRequest, CancelOrderRequest, CancelallRequest, FastExecData, OrderRequest, Side
 };
 use skeleton::{
-    exchanges::{ex_binance::BinanceClient, ex_bybit::BybitClient, exchange::ExchangeClient},
+    exchanges::{ex_binance::BinanceClient, ex_bybit::BybitClient, exchange::{ExchangeClient, PrivateData}},
     util::{
         helpers::{geometric_weights, geomspace, round_step, Round},
         localorderbook::LocalBook,
@@ -515,18 +514,35 @@ impl QuoteGenerator {
         }
     }
 
-    fn check_for_fills(&mut self, book: &LocalBook) {
-        for (i, order) in self.live_buys_orders.clone().iter().enumerate() {
-            if book.best_bid.price < order.price {
-                self.position += order.price * order.qty;
-                self.live_buys_orders.remove(i);
-            }
-        }
+    fn check_for_fills(&mut self, data: PrivateData) {
+         let fills = match data {
+            PrivateData::Bybit(data) => data.executions,
+            PrivateData::Binance(data) => data.into_fastexec(),
+        };
 
-        for (i, order) in self.live_sells_orders.clone().iter().enumerate() {
-            if book.best_ask.price > order.price {
-                self.position -= order.price * order.qty;
-                self.live_sells_orders.remove(i);
+        for FastExecData {
+            order_id,
+            exec_qty,
+            side,
+            ..
+        } in fills
+        {
+            if exec_qty.parse::<f64>().unwrap() > 0.0 {
+                if side == "Buy" {
+                    for (i, order) in self.live_buys_orders.clone().iter().enumerate() {
+                        if order.order_id == order_id {
+                            self.position += order.price * order.qty;
+                            self.live_buys_orders.remove(i);
+                        }
+                    }
+                } else {
+                    for (i, order) in self.live_sells_orders.clone().iter().enumerate() {
+                        if order.order_id == order_id {
+                            self.position -= order.price * order.qty;
+                            self.live_sells_orders.remove(i);
+                        }
+                    }
+                }
             }
         }
     }
@@ -576,6 +592,7 @@ impl QuoteGenerator {
     /// * `price_flu` - Price fluctuation of the order book.
     pub async fn update_grid(
         &mut self,
+        private: PrivateData,
         skew: f64,
         imbalance: f64,
         book: LocalBook,
@@ -593,7 +610,7 @@ impl QuoteGenerator {
             }
         }
 
-        self.check_for_fills(&book);
+        self.check_for_fills(private);
         // Check if the order book is out of bounds with the given symbol.
         match self.out_of_bounds(&book, symbol.clone()).await {
             true => {

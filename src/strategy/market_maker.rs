@@ -1,5 +1,5 @@
 use bybit::model::WsTrade;
-use skeleton::exchanges::exchange::ExchangeClient;
+use skeleton::exchanges::exchange::{ExchangeClient, PrivateData};
 use skeleton::util::localorderbook::LocalBook;
 use skeleton::{exchanges::exchange::MarketMessage, ss::SharedState};
 use std::collections::{HashMap, VecDeque};
@@ -104,7 +104,7 @@ impl MarketMaker {
 
                     // Update the strategy with the new market data and private data.
                     if send > 300 {
-                        self.potentially_update(data.markets[0].clone(), rate_limit)
+                        self.potentially_update(data.private,data.markets[0].clone(), rate_limit)
                             .await;
                     } else {
                         wait.tick().await;
@@ -308,7 +308,12 @@ impl MarketMaker {
     ///
     /// * `data` - The new market data.
     /// * `private_data` - The private data for each symbol.
-    async fn potentially_update(&mut self, data: MarketMessage, rate_limit: u32) {
+    async fn potentially_update(
+        &mut self,
+        private: HashMap<String, PrivateData>,
+        data: MarketMessage,
+        rate_limit: u32,
+    ) {
         // Get the book, private data, skew, and imbalance for each symbol
         match data {
             // If the market data is from Bybit
@@ -322,10 +327,19 @@ impl MarketMaker {
                     // Get the symbol quoter for the current symbol
                     let symbol_quoter = self.generators.get_mut(&symbol).unwrap();
 
-                    // Update the symbol quoter
-                    symbol_quoter
-                        .update_grid(skew, imbalance, book, symbol, rate_limit)
-                        .await;
+                    if let Some(private_data) = private.get(&symbol) {
+                        // Update the symbol quoter
+                        symbol_quoter
+                            .update_grid(
+                                private_data.clone(),
+                                skew,
+                                imbalance,
+                                book,
+                                symbol,
+                                rate_limit,
+                            )
+                            .await;
+                    }
                 }
             }
             // If the market data is from Binance
@@ -339,10 +353,19 @@ impl MarketMaker {
                     // Get the symbol quoter for the current symbol
                     let symbol_quoter = self.generators.get_mut(&symbol).unwrap();
 
-                    // Update the symbol quoter
-                    symbol_quoter
-                        .update_grid(skew, imbalance, book, symbol, rate_limit)
-                        .await;
+                    if let Some(private_data) = private.get(&symbol) {
+                        // Update the symbol quoter
+                        symbol_quoter
+                            .update_grid(
+                                private_data.clone(),
+                                skew,
+                                imbalance,
+                                book,
+                                symbol,
+                                rate_limit,
+                            )
+                            .await;
+                    }
                 }
             }
         }
