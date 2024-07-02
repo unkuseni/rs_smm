@@ -552,6 +552,8 @@ impl QuoteGenerator {
                     if let Ok(_) = self.client.cancel_all(symbol.as_str()).await {
                         out_of_bounds = true;
                         println!("Cancelling all orders for {}", symbol);
+                        self.live_buys_orders.clear();
+                        self.live_sells_orders.clear();
                         self.last_update_price = book.mid_price;
                     }
                 }
