@@ -638,8 +638,9 @@ impl QuoteGenerator {
 
                 // Send the generated orders to the book.
                 if self.rate_limit > 1 {
-                    self.send_batch_orders(orders.clone()).await;
-                    self.rate_limit -= 1;
+                    let limit_used = (orders.len() as f64 / 10.0).ceil() as u32;
+                    self.send_batch_orders(orders).await;
+                    self.rate_limit -= limit_used;
                 }
                 //Updates the time limit
                 self.time_limit = book.last_update;
