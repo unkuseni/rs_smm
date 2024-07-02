@@ -1054,6 +1054,7 @@ impl OrderManagement {
                             index += 1;
                             bybit::model::Side::Sell
                         } else {
+                            index += 1;
                             bybit::model::Side::Buy
                         }
                     },
