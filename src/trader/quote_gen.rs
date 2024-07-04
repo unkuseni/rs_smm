@@ -430,10 +430,9 @@ impl QuoteGenerator {
     /// there is an error, it prints the error message.
     async fn send_batch_orders(&mut self, orders: Vec<BatchOrder>) {
         // Send the batch orders to the exchange and await the response.
-        let count = (orders.len() as f64 / 10.0).ceil() as usize;
-        if orders.len() <= 10 {
-            let order_response = self.client.batch_place_order(orders).await;
-
+        for order in orders.chunks(10) {
+            let order_response = self.client.batch_place_order(order.to_vec()).await;
+            self.rate_limit -= 1;
             match order_response {
                 // If the response is successful, process the orders.
                 Ok(v) => {
@@ -455,61 +454,6 @@ impl QuoteGenerator {
                 }
                 // If there is an error, print the error message.
                 _ => {}
-            }
-        } else {
-            let mut start_index = 0;
-            let mut end_index = 9;
-            for _ in 0..(count - 1) {
-                let order_response = self
-                    .client
-                    .batch_place_order(orders[start_index..end_index].to_vec())
-                    .await;
-                match order_response {
-                    // If the response is successful, process the orders.
-                    Ok(v) => {
-                        // Push the orders from the first response to the live buys queue.
-                        for order in v[0].clone() {
-                            self.live_buys_orders.push_back(order);
-                        }
-                        // Sort the live buys queue and update it.
-                        let sorted_buys = sort_grid(self.live_buys_orders.clone(), -1);
-                        self.live_buys_orders = sorted_buys;
-
-                        // Push the orders from the second response to the live sells queue.
-                        for order in v[1].clone() {
-                            self.live_sells_orders.push_back(order);
-                        }
-                        // Sort the live sells queue and update it.
-                        let sorted_sells = sort_grid(self.live_sells_orders.clone(), 1);
-                        self.live_sells_orders = sorted_sells;
-                    }
-                    // If there is an error, print the error message.
-                    _ => {}
-                }
-                start_index += 10;
-                end_index += 10;
-            }
-
-            for BatchOrder(qty, price, symbol, side) in orders[start_index..].to_vec() {
-                if side > 0 {
-                    match self.client.place_buy_limit(qty, price, &symbol).await {
-                        Ok(v) => {
-                            self.live_buys_orders.push_back(v);
-                            let sorted_buys = sort_grid(self.live_buys_orders.clone(), -1);
-                            self.live_buys_orders = sorted_buys;
-                        }
-                        _ => {}
-                    }
-                } else {
-                    match self.client.place_sell_limit(qty, price, &symbol).await {
-                        Ok(order) => {
-                            self.live_sells_orders.push_back(order);
-                            let sorted_sells = sort_grid(self.live_sells_orders.clone(), 1);
-                            self.live_sells_orders = sorted_sells;
-                        }
-                        _ => {}
-                    }
-                }
             }
         }
     }
@@ -584,9 +528,9 @@ impl QuoteGenerator {
                                     self.live_sells_orders.remove(i);
                                 }
                             }
+                            self.last_update_price = book.mid_price;
+                            self.cancel_limit -= 1;
                         }
-                        self.last_update_price = book.mid_price;
-                        self.cancel_limit -= 1;
                     } else {
                         self.cancel_limit -= 1;
                     }
@@ -638,9 +582,7 @@ impl QuoteGenerator {
 
                 // Send the generated orders to the book.
                 if self.rate_limit > 1 {
-                    let limit_used = (orders.len() as f64 / 10.0).ceil() as u32;
                     self.send_batch_orders(orders).await;
-                    self.rate_limit -= limit_used;
                 }
                 //Updates the time limit
                 self.time_limit = book.last_update;

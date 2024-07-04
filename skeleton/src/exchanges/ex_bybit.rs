@@ -114,7 +114,7 @@ impl BybitClient {
     pub fn bybit_trader(&self) -> Trader {
         let config = {
             let x = Config::default();
-            x.set_recv_window(500)
+            x.set_recv_window(2500)
         };
         let trader: Trader =
             Bybit::new_with_config(&config, Some(self.key.clone()), Some(self.secret.clone()));
