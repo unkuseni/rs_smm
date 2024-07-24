@@ -19,19 +19,56 @@ use skeleton::{
 use tokio::task;
 
 // [qty, price, symbol, side] side is -1 for sell and 1 for buy
+// The BatchOrder struct is used to represent an order that will be placed or cancelled in a batch operation.
+// It contains the following fields:
+// - qty: The quantity of the order.
+// - price: The price of the order.
+// - symbol: The symbol of the order (e.g. "BTCUSDT").
+// - side: The side of the order. It can be either -1 for a sell order or 1 for a buy order.
 #[derive(Debug, Clone)]
 pub struct BatchOrder(f64, f64, String, i32);
 
+// The new() method is used to create a new instance of BatchOrder.
+// It takes the following parameters:
+// - qty: The quantity of the order.
+// - price: The price of the order.
+// - side: The side of the order.
+// It returns an instance of BatchOrder.
 impl BatchOrder {
     pub fn new(qty: f64, price: f64, side: i32) -> Self {
+        // Create a new instance of BatchOrder with the provided parameters.
+        // The symbol field is initially an empty string.
         BatchOrder(qty, price, "".to_string(), side)
     }
 }
 
+/// The `OrderManagement` enum is used to represent the type of order management system
+/// being used by the `QuoteGenerator`. It can be either a `Bybit` or `Binance` client.
 enum OrderManagement {
+    /// The `Bybit` variant represents the Bybit order management system.
     Bybit(BybitClient),
+    /// The `Binance` variant represents the Binance order management system.
     Binance(BinanceClient),
 }
+
+/// The `QuoteGenerator` struct is used to generate quotes for a market making strategy.
+/// It contains the following fields:
+///
+/// * `asset` - The asset value.
+/// * `client` - The exchange client used to place orders. It can be either a Bybit or Binance client.
+/// * `minimum_spread` - The minimum spread that the quote generator will use.
+/// * `live_buys_orders` - A queue of live buy orders that have been placed.
+/// * `live_sells_orders` - A queue of live sell orders that have been placed.
+/// * `position` - The current position of the strategy.
+/// * `max_position_usd` - The maximum position that the strategy can hold in USD.
+/// * `inventory_delta` - The inventory delta of the strategy.
+/// * `total_order` - The total number of orders that have been placed.
+/// * `adjusted_spread` - The adjusted spread that the quote generator will use.
+/// * `final_order_distance` - The final order distance that the quote generator will use.
+/// * `last_update_price` - The last update price of the market.
+/// * `rate_limit` - The rate limit of the exchange.
+/// * `time_limit` - The time limit of the exchange.
+/// * `cancel_limit` - The cancel limit of the exchange.
 pub struct QuoteGenerator {
     asset: f64,
     client: OrderManagement,
@@ -42,6 +79,7 @@ pub struct QuoteGenerator {
     max_position_usd: f64,
     pub inventory_delta: f64,
     total_order: usize,
+    adjusted_spread: f64,
     final_order_distance: f64,
     last_update_price: f64,
     rate_limit: u32,
@@ -57,19 +95,24 @@ impl QuoteGenerator {
     /// * `client` - The exchange client used to place orders.
     /// * `asset` - The asset value.
     /// * `leverage` - The leverage value.
+    /// * `orders_per_side` - The total number of orders to be placed on each side.
+    /// * `final_order_distance` - The final order distance that the quote generator will use.
+    /// * `rate_limit` - The rate limit of the exchange.
     ///
     /// # Returns
     ///
     /// A new `QuoteGenerator` instance.
     pub fn new(
-        client: ExchangeClient,
-        asset: f64,
-        leverage: f64,
-        orders_per_side: usize,
-        final_order_distance: f64,
-        rate_limit: u32,
+        client: ExchangeClient, // The exchange client used to place orders.
+        asset: f64,             // The asset value.
+        leverage: f64,          // The leverage value.
+        orders_per_side: usize,  // The total number of orders to be placed on each side.
+        final_order_distance: f64, // The final order distance that the quote generator will use.
+        rate_limit: u32,         // The rate limit of the exchange.
     ) -> Self {
         // Create the appropriate trader based on the exchange client.
+        // If the client is a Bybit client, create a Bybit trader.
+        // If the client is a Binance client, create a Binance trader.
         let trader = match client {
             ExchangeClient::Bybit(cl) => OrderManagement::Bybit(cl),
             ExchangeClient::Binance(cl) => OrderManagement::Binance(cl),
@@ -84,65 +127,109 @@ impl QuoteGenerator {
             live_buys_orders: VecDeque::new(),
             // Create empty VecDeque for live sell orders with a capacity of 5.
             live_sells_orders: VecDeque::new(),
-            // Position
+            // Initialize the position to 0.0.
             position: 0.0,
             // Set the inventory delta to 0.0.
             inventory_delta: 0.0,
             // Set the maximum position USD to 0.0.
             max_position_usd: 0.0,
-            // Set the total order to 10.
+            // Set the total order to twice the number of orders per side.
             total_order: orders_per_side * 2,
-            // Set the preferred spread to the provided value.
+            // Set the preferred spread to 0.0.
             minimum_spread: 0.0,
-            // final order distance
+            // Set the adjusted spread to 0.0.
+            adjusted_spread: 0.0,
+            // Set the final order distance to the provided value.
             final_order_distance,
 
+            // Initialize the last update price to 0.0.
             last_update_price: 0.0,
 
+            // Set the rate limit to the provided value.
             rate_limit,
 
+            // Initialize the time limit to 0.
             time_limit: 0,
 
+            // Set the cancel limit to the provided rate limit.
             cancel_limit: rate_limit,
         }
     }
 
-    /// Updates the maximum position USD by multiplying the asset value by 0.95.
+    /// Updates the maximum position USD.
     ///
-    /// This function is used to update the maximum position USD, which is the maximum
-    /// amount of USD that can be allocated for the trading position.
+    /// This function calculates the maximum amount of USD that can be allocated for the trading position.
+    /// It multiplies the `asset` value by 0.95, which represents 5% of the total asset value as safety margin.
+    /// The result is then assigned to the `max_position_usd` field.
+    ///
+    /// # Details
+    ///
+    /// The `asset` value represents the total value of the trading position. By multiplying it by 0.95,
+    /// we leave 5% of the total asset value as a safety margin. This ensures that there is always some
+    /// buffer for potential market movements and unexpected events.
+    ///
+    /// The `max_position_usd` field is used to determine the maximum amount of USD that can be allocated
+    /// for the trading position. This value is used to calculate the maximum position quantity based on the
+    /// current market conditions.
     pub fn update_max(&mut self) {
         // Calculate the maximum position USD by multiplying the asset value by 0.95.
-        // This leaves 5% of the total asset value as safety margin.
-        self.max_position_usd = self.asset * 0.95;
+        let safety_margin: f64 = 0.95;
+        self.max_position_usd = self.asset * safety_margin;
     }
 
-    /// Set preferred spread based on mid price in the order book.
+    /// Sets the preferred spread for the quote generator.
+    ///
+    /// The preferred spread is the minimum spread that the quote generator will use when generating
+    /// quotes. It is set based on the mid price in the order book.
+    ///
+    /// # Parameters
+    ///
+    /// * `spread_in_bps`: The preferred spread in basis points (bps). This is the minimum spread that
+    ///                    the quote generator will use when generating quotes.
+    ///
+    /// # Details
+    ///
+    /// The preferred spread is used to determine the minimum spread that the quote generator will
+    /// use when generating quotes. It is the minimum spread that the quote generator will use to
+    /// ensure that the quotes it generates are profitable.
+    ///
+    /// The spread is set in basis points (bps) and is converted to a decimal representation before
+    /// it is used to calculate the minimum spread. The minimum spread is then used to calculate the
+    /// final spread that the quote generator will use.
+    ///
+    /// The final spread is calculated by multiplying the minimum spread by the mid price in the
+    /// order book. The mid price is the average of the best ask and best bid prices in the order book.
+    /// The final spread is then used to calculate the ask and bid prices for the quotes that the
+    /// quote generator generates.
     pub fn set_spread(&mut self, spread_in_bps: f64) {
+        // Set the minimum spread to the provided spread in basis points.
         self.minimum_spread = spread_in_bps;
     }
 
     /// Updates the inventory delta based on the quantity and price.
     ///
-    /// This function calculates the inventory delta by dividing the amount by the maximum position qty.
-    /// The result is then assigned to the `inventory_delta` field.
+    /// This function calculates the inventory delta by dividing the position quantity by the maximum
+    /// position quantity in USD. The resulting value represents the position's exposure to the market
+    /// as a ratio of the maximum position quantity. The maximum position quantity is calculated by
+    /// multiplying the asset value by the safety margin (95% of the total asset value).
     ///
     /// # Parameters
     ///
-    /// * `mid_price`: The mid price of the asset.
+    /// * `mid_price`: The mid price of the asset in USD.
     ///
     /// # Details
     ///
-    /// The inventory delta is a measure of the position's exposure to the market. It is calculated
-    /// by dividing the amount multiplied by the mid price by the maximum position qty. The maximum
-    /// position qty is the maximum amount of qty that can be allocated for the trading position,
-    /// after considering the safety margin of 5%.
+    /// The inventory delta is a measure of the position's exposure to the market. It represents the
+    /// ratio of the position's quantity to the maximum position quantity in USD. The maximum position
+    /// quantity is calculated by multiplying the asset value by the safety margin, which is 95%
+    /// of the total asset value. This safety margin ensures that there is a buffer for potential market
+    /// movements and unexpected events.
     ///
-    /// The result is then assigned to the `inventory_delta` field, which is a measure of the
-    /// position's exposure to the market.
+    /// The resulting inventory delta is then assigned to the `inventory_delta` field, which is a
+    /// measure of the position's exposure to the market.
     pub fn inventory_delta(&mut self) {
-        // Calculate the inventory delta by dividing the price multiplied by the quantity by the
-        // maximum position USD.
+        // Calculate the inventory delta by dividing the position quantity by the maximum position
+        // quantity in USD.
         self.inventory_delta = self.position / self.max_position_usd;
     }
 
@@ -151,7 +238,10 @@ impl QuoteGenerator {
     /// This function calculates the adjusted spread by calling the `get_spread` method on the
     /// `book` parameter and clipping the result to a minimum spread and a maximum spread.
     /// 1 bps = 0.01% = 0.0001
-    /// Calculate the preferred spread as a percentage of the start price.
+    /// The minimum spread is calculated based on the preferred spread. If the preferred spread is 0.0,
+    /// the minimum spread is 25 basis points times the mid price of the order book. Otherwise, the
+    /// minimum spread is the preferred spread converted to decimal format times the mid price of the
+    /// order book.
     ///
     /// # Parameters
     ///
@@ -164,15 +254,17 @@ impl QuoteGenerator {
     fn adjusted_spread(preferred_spread: f64, book: &LocalBook) -> f64 {
         // Calculate the minimum spread by converting the preferred spread to decimal format.
         let min_spread = {
+            // If the preferred spread is 0.0, the minimum spread is 25 basis points times the mid price of the order book.
             if preferred_spread == 0.0 {
                 bps_to_decimal(25.0) * book.get_mid_price()
-            } else {
+            } 
+            // Otherwise, the minimum spread is the preferred spread converted to decimal format times the mid price of the order book.
+            else {
                 bps_to_decimal(preferred_spread) * book.get_mid_price()
             }
         };
 
-        // Get the spread from the order book and clip it to the minimum spread and a maximum
-        // spread of 3.7 times the minimum spread.
+        // Get the spread from the order book and clip it to the minimum spread and a maximum spread of 3.7 times the minimum spread.
         book.get_spread().clip(min_spread, min_spread * 3.7)
     }
 
@@ -190,9 +282,15 @@ impl QuoteGenerator {
     ///
     /// A vector of `BatchOrder` objects representing the generated quotes.
     ///
-    /// This function generates quotes based on the given parameters. It calculates the adjusted
-    /// spread, half spread, aggression, and generates the orders based on the skew value. It
-    /// also adds the symbol to each order.
+    /// This function first gets the start price from the order book.
+    /// Then it calculates the preferred spread as a percentage of the start price.
+    /// Next, it calculates the adjusted spread by calling the `adjusted_spread` method.
+    /// After that, it calculates the half spread by dividing the spread by 2.
+    /// It also gets the minimum notional from the order book.
+    /// Then it generates the orders based on the skew value.
+    /// If skew is positive, it calls the `positive_skew_orders` method.
+    /// If skew is negative, it calls the `negative_skew_orders` method.
+    /// Finally, it adds the symbol to each order.
     ///
     /// NOTES: From Cartea, 2018
     /// If imbalance is buy heavy use positive skew quotes, for sell heavy use negative skew quotes
@@ -217,10 +315,12 @@ impl QuoteGenerator {
         // Calculate the half spread by dividing the spread by 2.
         let half_spread = curr_spread / 2.0;
 
+        // Get the minimum notional from the order book.
         let notional = book.min_notional;
 
         // Generate the orders based on the skew value.
         let mut orders = if skew >= 0.0 {
+            // If skew is positive, generate positive skew orders.
             self.positive_skew_orders(
                 half_spread,
                 curr_spread,
@@ -230,6 +330,7 @@ impl QuoteGenerator {
                 book,
             )
         } else {
+            // If skew is negative, generate negative skew orders.
             self.negative_skew_orders(
                 half_spread,
                 curr_spread,
@@ -495,7 +596,13 @@ impl QuoteGenerator {
     async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) -> bool {
         // Initialize the `out_of_bounds` boolean to `false`.
         let mut out_of_bounds = false;
-        let bounds = self.last_update_price * bps_to_decimal(self.minimum_spread * 1.5);
+        let bounds = {
+            if self.adjusted_spread > 0.0 {
+                self.last_update_price * bps_to_decimal(self.adjusted_spread * 1.5)
+            } else {
+                self.last_update_price * bps_to_decimal(self.minimum_spread * 1.5)
+            }
+        };
         let (current_bid_bounds, current_ask_bounds) = (
             self.last_update_price - bounds,
             self.last_update_price + bounds,
@@ -561,9 +668,16 @@ impl QuoteGenerator {
         symbol: String,
         rate_limit: u32,
     ) {
-        // Update the inventory delta.
+        // First, update the adjusted spread by calling the `adjusted_spread` method
+        // with the minimum spread and the order book.
+        self.adjusted_spread = QuoteGenerator::adjusted_spread(self.minimum_spread, &book);
+
+        // Next, update the inventory delta by calling the `inventory_delta` method.
         self.inventory_delta();
 
+        // If the time limit is greater than 1, check if the order book's last update
+        // is greater than the time limit minus 1000 milliseconds.
+        // If it is, update the rate limit and cancel limit to the provided rate limit.
         if self.time_limit > 1 {
             let condition = (book.last_update - self.time_limit) > 1000;
             if condition == true {
@@ -572,26 +686,29 @@ impl QuoteGenerator {
             }
         }
 
+        // Check if there are any fills in the private data by calling the
+        // `check_for_fills` method.
         self.check_for_fills(private);
-        // Check if the order book is out of bounds with the given symbol.
         match self.out_of_bounds(&book, symbol.clone()).await {
             true => {
-                // Generate quotes for the grid based on the order book, symbol, imbalance, skew,
-                // and price fluctuation.
                 let orders = self.generate_quotes(symbol.clone(), &book, imbalance, skew);
 
-                // Send the generated orders to the book.
+        // Check if the order book is out of bounds with the given symbol by calling
+        // the `out_of_bounds` method.
+        // If it is out of bounds, generate quotes for the grid based on the order book,
+        // symbol, imbalance, skew, and price fluctuation.
+        // If the rate limit is greater than 1, send the generated orders to the book.
+        // Finally, update the time limit to the order book's last update.
                 if self.rate_limit > 1 {
                     self.send_batch_orders(orders).await;
                 }
-                //Updates the time limit
+
                 self.time_limit = book.last_update;
             }
 
             false => {}
         }
 
-        // Update the time limit
     }
 }
 
