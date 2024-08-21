@@ -1309,6 +1309,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "rs_bybit"
+version = "0.3.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "61fe602f125b7533bb27e82151e570f6f465c76e7ff9ce08e17af1fec6819b71"
+dependencies = [
+ "chrono",
+ "futures",
+ "hex",
+ "hmac",
+ "itertools",
+ "once_cell",
+ "rand",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "sha2",
+ "thiserror",
+ "tokio",
+ "tokio-tungstenite",
+ "url",
+]
+
+[[package]]
 name = "rs_smm"
 version = "0.1.0"
 dependencies = [
@@ -1316,7 +1339,7 @@ dependencies = [
  "linfa",
  "linfa-linear",
  "ndarray",
- "rs_bybit",
+ "rs_bybit 0.2.4",
  "skeleton",
  "tokio",
 ]
@@ -1478,12 +1501,12 @@ dependencies = [
 
 [[package]]
 name = "skeleton"
-version = "0.1.0"
+version = "0.1.2"
 dependencies = [
  "binance",
  "num-traits",
  "ordered-float",
- "rs_bybit",
+ "rs_bybit 0.3.0",
  "serde",
  "tokio",
  "toml",

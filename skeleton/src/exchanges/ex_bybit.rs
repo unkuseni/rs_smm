@@ -12,7 +12,7 @@ use bybit::{
     trade::Trader,
     ws::Stream as BybitStream,
 };
-use std::{collections::VecDeque, time::Duration};
+use std::{borrow::Cow, collections::VecDeque, time::Duration};
 use tokio::sync::mpsc;
 
 use crate::util::localorderbook::LocalBook;
@@ -99,7 +99,7 @@ impl BybitClient {
     }
 
     pub async fn fee_rate(&self, symbol: &str) -> f64 {
-        let account: AccountManager = Bybit::new(Some(self.key.clone()), Some(self.secret.clone()));
+        let account: AccountManager = Bybit::new(Some(Cow::Borrowed(self.key)), Some(Cow::Borrowed(self.secret)));
         let rate;
         let response = account
             .get_fee_rate(Category::Linear, Some(symbol.to_string()))
