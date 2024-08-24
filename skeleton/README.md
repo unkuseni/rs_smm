@@ -15,7 +15,7 @@
 
 #### Adding clients to the shared state
 
-  The add_clients takes a key, secret, symbol and exchange(Option al: only to be use when exchange type is both) and updates shared state.
+  The add_clients takes a key, secret, symbol and exchange(Optional: only to be used when exchange type is both) and updates shared state.
 
   ss::SharedState::add_clients(key, secret, symbol, exchange)
 

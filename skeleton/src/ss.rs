@@ -10,7 +10,7 @@ use crate::{
     exchanges::{
         ex_binance::{BinanceClient, BinanceMarket},
         ex_bybit::{BybitClient, BybitMarket},
-        exchange::{ExchangeClient, MarketMessage, PrivateData},
+        exchange::{Client, Exchange, MarketMessage, PrivateData},
     },
     util::logger::Logger,
 };
@@ -19,7 +19,7 @@ use crate::{
 pub struct SharedState {
     pub exchange: String,
     pub logging: Logger,
-    pub clients: HashMap<String, ExchangeClient>,
+    pub clients: HashMap<String, Client>,
     pub private: HashMap<String, PrivateData>,
     pub markets: Vec<MarketMessage>,
     pub symbols: Vec<String>,
@@ -41,10 +41,10 @@ impl SharedState {
 
         // Initialize the `SharedState` struct with default values
         Self {
-            exchange: exchange.clone(),                // The exchange where the market is traded
-            logging: log,            // The logger for the application
-            clients: HashMap::new(), // A hashmap to store exchange clients
-            private: HashMap::new(), // A hashmap to store private data
+            exchange: exchange.clone(), // The exchange where the market is traded
+            logging: log,               // The logger for the application
+            clients: HashMap::new(),    // A hashmap to store exchange clients
+            private: HashMap::new(),    // A hashmap to store private data
             markets: match exchange.as_str() {
                 "bybit" => {
                     // If the exchange is "bybit", initialize the `markets` vector with a Bybit market
@@ -91,12 +91,12 @@ impl SharedState {
             // If the exchange is "bybit", add a BybitClient.
             "bybit" => {
                 let client = BybitClient::init(key, secret);
-                self.clients.insert(symbol, ExchangeClient::Bybit(client));
+                self.clients.insert(symbol, Client::Bybit(client));
             }
             // If the exchange is "binance", add a BinanceClient.
             "binance" => {
                 let client = BinanceClient::init(key, secret);
-                self.clients.insert(symbol, ExchangeClient::Binance(client));
+                self.clients.insert(symbol, Client::Binance(client));
             }
             // If the exchange is "both", check the `exchange` argument and add the corresponding client.
             "both" => {
@@ -105,12 +105,12 @@ impl SharedState {
                         // If the `exchange` is "bybit", add a BybitClient.
                         "bybit" => {
                             let client = BybitClient::init(key, secret);
-                            self.clients.insert(symbol, ExchangeClient::Bybit(client));
+                            self.clients.insert(symbol, Client::Bybit(client));
                         }
                         // If the `exchange` is "binance", add a BinanceClient.
                         "binance" => {
                             let client = BinanceClient::init(key, secret);
-                            self.clients.insert(symbol, ExchangeClient::Binance(client));
+                            self.clients.insert(symbol, Client::Binance(client));
                         }
                         // If the `exchange` is neither "bybit" nor "binance", panic.
                         _ => panic!("Invalid exchange"),
@@ -202,7 +202,7 @@ async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Sh
         tokio::task::spawn_blocking(move || {
             // Match the client to a Binance client and start the private subscription
             let subscriber = match client {
-                ExchangeClient::Binance(client) => client,
+                Client::Binance(client) => client,
                 _ => panic!("Invalid exchange"),
             };
 
@@ -290,7 +290,7 @@ async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<Shar
         tokio::spawn(async move {
             // Match the client to a Bybit client and start the private subscription
             let subscriber = match client {
-                ExchangeClient::Bybit(client) => client,
+                Client::Bybit(client) => client,
                 _ => panic!("Invalid exchange"),
             };
 
@@ -379,7 +379,7 @@ async fn load_both(state: SharedState, state_sender: mpsc::UnboundedSender<Share
 
         // Insert the private receiver into the state.
         match client {
-            ExchangeClient::Bybit(client) => {
+            Client::Bybit(client) => {
                 // Insert the private receiver for Bybit into the state.
                 let _ = &state
                     .lock()
@@ -392,7 +392,7 @@ async fn load_both(state: SharedState, state_sender: mpsc::UnboundedSender<Share
                     client.private_subscribe(sender_clone, symbol).await;
                 });
             }
-            ExchangeClient::Binance(client) => {
+            Client::Binance(client) => {
                 // Insert the private receiver for Binance into the state.
                 let _ = &state.lock().await.private.insert(
                     symbol.clone(),

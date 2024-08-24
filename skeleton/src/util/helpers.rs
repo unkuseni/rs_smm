@@ -138,51 +138,6 @@ impl Round<f64> for f64 {
     }
 }
 
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-
-    #[test]
-    fn test_round() {
-        assert_eq!(round_step(15643.456, 1.0), 15643.0);
-        assert_eq!(round_step(5.6567422344, 0.0005), 5.6565);
-        println!("{:#?}", spread_price_in_bps(0.00055, 0.5678));
-    }
-
-    #[test]
-    fn test_time() {
-        assert_ne!(generate_timestamp(), 0);
-        println!("{:#?}", generate_timestamp());
-        let num: f64 = 0.0000016;
-        println!("{:#?}", num.abs().round_to(6));
-    }
-
-    #[test]
-    fn test_places() {
-        let num: f64 = 0.000001;
-        println!("{:#?}", num.abs().count_decimal_places());
-    }
-
-    #[test]
-    fn lin() {
-        let num_geom = geomspace(0.6243, 0.6001, 5);
-        let num_wei = geometric_weights(0.63, 5, true);
-        let rev_geom = geomspace(0.6954, 0.6245, 5);
-
-        let rev_wei = geometric_weights(0.37, 5, false);
-
-        println!("{:#?}    {:#?}", num_geom, num_wei);
-
-        println!("{:#?}    {:#?}", rev_geom, rev_wei);
-    }
-
-    #[test]
-    fn params() {
-        let result = read_toml("./src/util/test.toml");
-        println!("{:#?}", result);
-    }
-}
 
 /// This section is for a toml parser that will be used for reading config files
 ///

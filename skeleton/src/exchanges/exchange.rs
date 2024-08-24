@@ -1,27 +1,36 @@
 use std::fmt::Debug;
 
-use binance::model::AggrTradesEvent;
-use bybit::model::WsTrade;
+use binance::{futures::account::FuturesAccount, model::AggrTradesEvent};
+use bybit::{model::WsTrade, trade::Trader};
 
 use super::{
     ex_binance::{BinanceClient, BinanceMarket, BinancePrivate},
     ex_bybit::{BybitClient, BybitMarket, BybitPrivate},
 };
 
-#[derive(Clone, Debug, PartialEq)]
-pub enum ExchangeClient {
+use std::future::Future;
+
+pub trait Exchange {
+    fn default() -> Self;
+    fn init<K: Into<String>>(key: K, secret: K) -> Self;
+    fn time(&self) -> impl Future<Output = u64>;
+    fn fees(&self) -> impl Future<Output = f64>;
+    fn trader<'a>(&'a self) -> Quoter<'a>;
+}
+
+#[derive(Clone, Debug)]
+pub enum Client {
     Bybit(BybitClient),
     Binance(BinanceClient),
 }
 
-impl ExchangeClient {
-    pub fn unwrap(self) -> Box<dyn Debug> {
-        match self {
-            Self::Bybit(v) => Box::new(v),
-            Self::Binance(v) => Box::new(v),
-        }
-    }
+
+pub enum Quoter<'a> {
+    Bybit(Trader<'a>),
+    Binance(FuturesAccount),
 }
+
+
 
 #[derive(Clone, Debug)]
 pub enum PrivateData {

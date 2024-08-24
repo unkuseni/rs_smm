@@ -17,7 +17,7 @@ use tokio::sync::mpsc;
 
 use crate::util::localorderbook::LocalBook;
 
-use super::exchange::{PrivateData, TaggedPrivate};
+use super::exchange::{Exchange, PrivateData, Quoter, TaggedPrivate};
 
 #[derive(Clone, Debug)]
 pub struct BybitMarket {
@@ -27,6 +27,19 @@ pub struct BybitMarket {
     pub trades: Vec<(String, VecDeque<WsTrade>)>,
     pub tickers: Vec<(String, VecDeque<LinearTickerData>)>,
     pub liquidations: Vec<(String, VecDeque<LiquidationData>)>,
+}
+
+impl Default for BybitMarket {
+    fn default() -> Self {
+        Self {
+            time: 0,
+            books: Vec::new(),
+            klines: Vec::new(),
+            trades: Vec::new(),
+            tickers: Vec::new(),
+            liquidations: Vec::new(),
+        }
+    }
 }
 
 unsafe impl Send for BybitMarket {}
@@ -62,34 +75,23 @@ pub struct BybitClient {
     pub secret: String,
 }
 
-impl Default for BybitMarket {
+impl Exchange for BybitClient {
     fn default() -> Self {
         Self {
-            time: 0,
-            books: Vec::new(),
-            klines: Vec::new(),
-            trades: Vec::new(),
-            tickers: Vec::new(),
-            liquidations: Vec::new(),
+            key: "".into(),
+            secret: "".into(),
         }
     }
-}
-
-impl Default for BybitClient {
-    fn default() -> Self {
+    fn init<T>(key: T, secret: T) -> Self
+    where
+        T: Into<String>,
+    {
         Self {
-            key: String::new(),
-            secret: String::new(),
+            key: key.into(),
+            secret: secret.into(),
         }
     }
-}
-
-impl BybitClient {
-    pub fn init(key: String, secret: String) -> Self {
-        Self { key, secret }
-    }
-
-    pub async fn exchange_time(&self) -> u64 {
+    async fn time(&self) -> u64 {
         let general: General = Bybit::new(None, None);
         general
             .get_server_time()
@@ -98,12 +100,13 @@ impl BybitClient {
             .unwrap_or(0)
     }
 
-    pub async fn fee_rate(&self, symbol: &str) -> f64 {
-        let account: AccountManager = Bybit::new(Some(Cow::Borrowed(self.key)), Some(Cow::Borrowed(self.secret)));
+    async fn fees(&self) -> f64 {
+        let account: AccountManager = Bybit::new(
+            Some(Cow::Borrowed(&self.key)),
+            Some(Cow::Borrowed(&self.secret)),
+        );
         let rate;
-        let response = account
-            .get_fee_rate(Category::Linear, Some(symbol.to_string()))
-            .await;
+        let response = account.get_fee_rate(Category::Linear, None).await;
         if let Ok(v) = response {
             rate = v.result.list[0].maker_fee_rate.parse().unwrap();
         } else {
@@ -111,16 +114,22 @@ impl BybitClient {
         }
         rate
     }
-    pub fn bybit_trader(&self) -> Trader {
+
+    fn trader<'a>(&'a self) -> Quoter<'a> {
         let config = {
             let x = Config::default();
             x.set_recv_window(2500)
         };
-        let trader: Trader =
-            Bybit::new_with_config(&config, Some(self.key.clone()), Some(self.secret.clone()));
-        trader
+        let trader: Trader = Bybit::new_with_config(
+            &config,
+            Some(Cow::Borrowed(&self.key)),
+            Some(Cow::Borrowed(&self.secret)),
+        );
+        Quoter::Bybit(trader)
     }
+}
 
+impl BybitClient {
     pub async fn market_subscribe(
         &self,
         symbol: Vec<String>,
@@ -280,11 +289,9 @@ impl BybitClient {
                 .await
             {
                 Ok(_) => {
-                    println!("Subscription successful");
                     tokio::time::sleep(Duration::from_millis(delay)).await;
                 }
-                Err(e) => {
-                    eprintln!("Subscription error: {}", e);
+                Err(_) => {
                     tokio::time::sleep(Duration::from_millis(delay)).await;
                 }
             }
@@ -298,8 +305,8 @@ impl BybitClient {
     ) {
         let delay = 50;
         let user_stream: BybitStream = BybitStream::new(
-            Some(self.key.clone()),    // API key
-            Some(self.secret.clone()), // Secret Key
+            Some(Cow::Borrowed(&self.key)),    // API key
+            Some(Cow::Borrowed(&self.secret)), // Secret Key
         );
         let request_args = {
             let mut args = vec![];

@@ -7,7 +7,7 @@ use binance::config::Config;
 use binance::futures::account::FuturesAccount;
 use binance::futures::general::FuturesGeneral;
 use binance::futures::model::Filters::PriceFilter;
-use binance::futures::model::{AccountInformation, OrderTradeEvent, OrderUpdate};
+use binance::futures::model::{OrderTradeEvent, OrderUpdate};
 use binance::futures::userstream::FuturesUserStream;
 use binance::model::{
     AccountUpdateEvent, Asks, Bids, BookTickerEvent, ContinuousKline, DepthOrderBookEvent,
@@ -16,10 +16,11 @@ use binance::model::{
 use binance::{api::Binance, futures::websockets::*, general::General};
 use bybit::model::{Category, FastExecData, WsTrade};
 use tokio::sync::mpsc;
+use tokio::task;
 
 use crate::util::localorderbook::{LocalBook, ProcessAsks, ProcessBids};
 
-use super::exchange::{PrivateData, ProcessTrade, TaggedPrivate};
+use super::exchange::{Exchange, PrivateData, ProcessTrade, Quoter, TaggedPrivate};
 #[derive(Clone, Debug)]
 pub struct BinanceMarket {
     pub time: u64,
@@ -76,27 +77,66 @@ pub struct BinanceClient {
     pub secret: String,
 }
 
-impl Default for BinanceClient {
+impl Exchange for BinanceClient {
     fn default() -> Self {
         Self {
-            key: String::new(),
-            secret: String::new(),
+            key: "".into(),
+            secret: "".into(),
         }
+    }
+
+    fn init<T>(key: T, secret: T) -> Self
+    where
+        T: Into<String>,
+    {
+        Self {
+            key: key.into(),
+            secret: secret.into(),
+        }
+    }
+
+    async fn time(&self) -> u64 {
+        task::spawn_blocking(move || {
+            let general: General = Binance::new(None, None);
+
+            match general.get_server_time() {
+                Ok(v) => v.server_time,
+                Err(_) => 0,
+            }
+        })
+        .await
+        .unwrap_or(0)
+    }
+    async fn fees(&self) -> f64 {
+        let key = self.key.clone();
+        let secret = self.secret.clone();
+        task::spawn_blocking(move || {
+            let client: FuturesAccount = Binance::new(Some(key), Some(secret));
+
+            match client.account_information() {
+                Ok(v) => v.fee_tier,
+                Err(_) => 0.0,
+            }
+        })
+        .await
+        .unwrap()
+    }
+
+    fn trader<'a>(&'a self) -> Quoter<'a> {
+        let config = {
+            let x = Config::default();
+            x.set_recv_window(2500)
+        };
+        let trader: FuturesAccount = Binance::new_with_config(
+            Some(self.key.to_string()),
+            Some(self.secret.to_string()),
+            &config,
+        );
+        Quoter::Binance(trader)
     }
 }
 
 impl BinanceClient {
-    pub fn init(key: String, secret: String) -> Self {
-        Self { key, secret }
-    }
-    pub fn exchange_time(&self) -> u64 {
-        let general: General = Binance::new(None, None);
-        match general.get_server_time() {
-            Ok(v) => v.server_time,
-            Err(_) => 0,
-        }
-    }
-
     pub fn market_subscribe(
         &self,
         symbol: Vec<String>,
@@ -287,20 +327,11 @@ impl BinanceClient {
             }
         }
     }
-    pub fn binance_trader(&self) -> FuturesAccount {
-        let config = {
-            let x = Config::default();
-            x.set_recv_window(2500)
-        };
-        let trader: FuturesAccount =
-            Binance::new_with_config(Some(self.key.clone()), Some(self.secret.clone()), &config);
-        trader
-    }
 
     pub fn private_subscribe(&self, sender: mpsc::UnboundedSender<TaggedPrivate>, symbol: String) {
         let mut delay = 600;
         let keep_running = AtomicBool::new(true); // Used to control the event loop
-        let user_stream: FuturesUserStream = Binance::new(Some(self.key.clone()), None);
+        let user_stream: FuturesUserStream = Binance::new(Some(self.key.to_string()), None);
 
         let mut private_data = BinancePrivate::default();
         let mut orders_keys: VecDeque<u64> = VecDeque::new();
@@ -384,13 +415,6 @@ impl BinanceClient {
         } else {
             println!("Not able to start an User Stream (Check your API_KEY)");
         }
-    }
-
-    pub fn fee_rate(&self) -> AccountInformation {
-        let client: FuturesAccount =
-            Binance::new(Some(self.key.clone()), Some(self.secret.clone()));
-        let info = client.account_information().unwrap();
-        info
     }
 }
 
