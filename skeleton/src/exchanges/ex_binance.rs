@@ -10,8 +10,8 @@ use binance::futures::model::Filters::PriceFilter;
 use binance::futures::model::{OrderTradeEvent, OrderUpdate};
 use binance::futures::userstream::FuturesUserStream;
 use binance::model::{
-    AccountUpdateEvent, Asks, Bids, BookTickerEvent, ContinuousKline, DepthOrderBookEvent,
-    EventBalance, EventPosition, LiquidationOrder,
+    AccountUpdateEvent, Asks, Bids, BookTickerEvent, DepthOrderBookEvent, EventBalance,
+    EventPosition,
 };
 use binance::{api::Binance, futures::websockets::*, general::General};
 use bybit::model::{Category, FastExecData, WsTrade};
@@ -25,10 +25,8 @@ use super::exchange::{Exchange, PrivateData, ProcessTrade, Quoter, TaggedPrivate
 pub struct BinanceMarket {
     pub time: u64,
     pub books: Vec<(String, LocalBook)>,
-    pub klines: Vec<(String, VecDeque<ContinuousKline>)>,
     pub trades: Vec<(String, VecDeque<WsTrade>)>,
     pub tickers: Vec<(String, VecDeque<BookTickerEvent>)>,
-    pub liquidations: Vec<(String, VecDeque<LiquidationOrder>)>,
 }
 
 unsafe impl Send for BinanceMarket {}
@@ -39,10 +37,8 @@ impl Default for BinanceMarket {
         Self {
             time: 0,
             books: Vec::new(),
-            klines: Vec::new(),
             trades: Vec::new(),
             tickers: Vec::new(),
-            liquidations: Vec::new(),
         }
     }
 }
@@ -181,14 +177,6 @@ impl BinanceClient {
                 }
             }
         }
-        market_data.klines = symbol
-            .iter()
-            .map(|s| (s.to_string(), VecDeque::with_capacity(2000)))
-            .collect::<Vec<(String, VecDeque<ContinuousKline>)>>();
-        market_data.liquidations = symbol
-            .iter()
-            .map(|s| (s.to_string(), VecDeque::with_capacity(2000)))
-            .collect::<Vec<(String, VecDeque<LiquidationOrder>)>>();
         market_data.trades = symbol
             .iter()
             .map(|s| (s.to_string(), VecDeque::with_capacity(5000)))
@@ -256,41 +244,6 @@ impl BinanceClient {
                     }
                     trades.push_back(agg.process_trade());
                 }
-                FuturesWebsocketEvent::Liquidation(liquidation) => {
-                    let sym = liquidation.liquidation_order.symbol.as_str();
-                    let liquidations = &mut market_data
-                        .liquidations
-                        .iter_mut()
-                        .find(|(s, _)| s == sym)
-                        .unwrap()
-                        .1;
-                    if liquidations.len() == liquidations.capacity()
-                        || (liquidations.capacity() - liquidations.len()) <= 5
-                    {
-                        for _ in 0..10 {
-                            liquidations.pop_front();
-                        }
-                    }
-                    liquidations.push_back(liquidation.liquidation_order);
-                }
-                FuturesWebsocketEvent::ContinuousKline(kline) => {
-                    let sym = kline.pair.as_str();
-                    let kline_data = &mut market_data
-                        .klines
-                        .iter_mut()
-                        .find(|(s, _)| s == sym)
-                        .unwrap()
-                        .1;
-                    if kline_data.len() == kline_data.capacity()
-                        || (kline_data.capacity() - kline_data.len()) <= 10
-                    {
-                        for _ in 0..30 {
-                            kline_data.pop_front();
-                        }
-                    }
-                    kline_data.push_back(kline.kline);
-                }
-
                 FuturesWebsocketEvent::BookTicker(ticker) => {
                     let sym = ticker.symbol.as_str();
                     let ticker_data = &mut market_data
@@ -428,13 +381,6 @@ fn bin_build_requests(symbol: &[String]) -> Vec<String> {
         .map(|sub| format!("{}@aggTrade", sub))
         .collect();
     request_args.extend(trade_req);
-    let kline_req: Vec<String> = symbol
-        .iter()
-        .map(|sub| sub.to_lowercase())
-        .flat_map(|sym| vec![("5m", sym.clone()), ("1m", sym.clone())])
-        .map(|(interval, sub)| format!("{}_perpetual@@continuousKline_{}", sub, interval))
-        .collect();
-    request_args.extend(kline_req);
     let best_book: Vec<String> = symbol
         .iter()
         .map(|sub| sub.to_lowercase())
@@ -454,12 +400,6 @@ fn bin_build_requests(symbol: &[String]) -> Vec<String> {
         .map(|sub| format!("{}@bookTicker", sub))
         .collect();
     request_args.extend(tickers);
-    let liq_req: Vec<String> = symbol
-        .iter()
-        .map(|sub| sub.to_lowercase())
-        .map(|sub| format!("{}@forceOrder", sub))
-        .collect();
-    request_args.extend(liq_req);
     request_args
 }
 

@@ -7,12 +7,15 @@ const BINANCE_SECRET: &str = "m6CU33JjFFOzxsxUcx3kbSGlqWSRDbP0LPjVxOye9pCYRhLpcG
 #[cfg(test)]
 mod tests {
 
-    use skeleton::exchanges::{
-        ex_binance::BinanceClient,
+    use std::time::Duration;
+
+    use binance::{api::Binance, futures::general::FuturesGeneral};
+    use skeleton::{exchanges::{
+        ex_binance::{BinanceClient, BinanceMarket},
         ex_bybit::BybitClient,
-        exchange::{Exchange, Quoter},
-    };
-    use tokio::{sync::mpsc, task};
+        exchange::{Exchange, PrivateData, Quoter},
+    }, ss, util::logger::Logger};
+    use tokio::{sync::mpsc, task, time::Instant};
 
     use crate::{BINANCE_KEY, BINANCE_SECRET, BYBIT_KEY, BYBIT_SECRET};
 
@@ -124,6 +127,7 @@ mod tests {
             }
         }
     }
+    
 
     #[tokio::test]
     pub async fn test_log() {

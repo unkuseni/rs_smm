@@ -5,9 +5,8 @@ use bybit::{
     general::General,
     market::MarketData,
     model::{
-        Category, FastExecData, InstrumentRequest, KlineData, LinearTickerData, LiquidationData,
-        OrderBookUpdate, OrderData, PositionData, Subscription, Tickers, WalletData,
-        WebsocketEvents, WsTrade,
+        Category, FastExecData, InstrumentRequest, LinearTickerData, OrderBookUpdate, OrderData,
+        PositionData, Subscription, Tickers, WalletData, WebsocketEvents, WsTrade,
     },
     trade::Trader,
     ws::Stream as BybitStream,
@@ -23,10 +22,8 @@ use super::exchange::{Exchange, PrivateData, Quoter, TaggedPrivate};
 pub struct BybitMarket {
     pub time: u64,
     pub books: Vec<(String, LocalBook)>,
-    pub klines: Vec<(String, VecDeque<KlineData>)>,
     pub trades: Vec<(String, VecDeque<WsTrade>)>,
     pub tickers: Vec<(String, VecDeque<LinearTickerData>)>,
-    pub liquidations: Vec<(String, VecDeque<LiquidationData>)>,
 }
 
 impl Default for BybitMarket {
@@ -34,10 +31,8 @@ impl Default for BybitMarket {
         Self {
             time: 0,
             books: Vec::new(),
-            klines: Vec::new(),
             trades: Vec::new(),
             tickers: Vec::new(),
-            liquidations: Vec::new(),
         }
     }
 }
@@ -165,15 +160,6 @@ impl BybitClient {
                 }
             }
         }
-        market_data.klines = symbol
-            .iter()
-            .map(|s| (s.to_string(), VecDeque::with_capacity(2000)))
-            .collect::<Vec<(String, VecDeque<KlineData>)>>();
-
-        market_data.liquidations = symbol
-            .iter()
-            .map(|s| (s.to_string(), VecDeque::with_capacity(2000)))
-            .collect::<Vec<(String, VecDeque<LiquidationData>)>>();
         market_data.trades = symbol
             .iter()
             .map(|s| (s.to_string(), VecDeque::with_capacity(5000)))
@@ -204,23 +190,6 @@ impl BybitClient {
                     } else {
                         book.update(data.bids, data.asks, timestamp);
                     }
-                }
-                WebsocketEvents::KlineEvent(klines) => {
-                    let sym = klines.topic.split('.').nth(2).unwrap();
-                    let kline = &mut market_data
-                        .klines
-                        .iter_mut()
-                        .find(|(s, _)| s == sym)
-                        .unwrap()
-                        .1;
-                    if kline.len() == kline.capacity()
-                        || (kline.capacity() - kline.len()) <= klines.data.len()
-                    {
-                        for _ in 0..klines.data.len() {
-                            kline.pop_front();
-                        }
-                    }
-                    kline.extend(klines.data);
                 }
                 WebsocketEvents::TickerEvent(tick) => {
                     let sym = tick.topic.split('.').nth(1).unwrap();
@@ -258,23 +227,6 @@ impl BybitClient {
                         }
                     }
                     trades.extend(data.data);
-                }
-                WebsocketEvents::LiquidationEvent(data) => {
-                    let sym = data.topic.split('.').nth(1).unwrap();
-                    let liquidations = &mut market_data
-                        .liquidations
-                        .iter_mut()
-                        .find(|(s, _)| s == sym)
-                        .unwrap()
-                        .1;
-                    if liquidations.len() == liquidations.capacity()
-                        || (liquidations.capacity() - liquidations.len()) <= 5
-                    {
-                        for _ in 0..5 {
-                            liquidations.pop_front();
-                        }
-                    }
-                    liquidations.push_back(data.data);
                 }
                 _ => {
                     eprintln!("Unhandled event: {:#?}", event);
@@ -408,15 +360,6 @@ fn build_requests(symbol: &[String]) -> Vec<String> {
         .map(|(num, sym)| format!("orderbook.{}.{}", num, sym.to_uppercase()))
         .collect();
     request_args.extend(book_req);
-
-    // Building kline requests
-    let kline_req: Vec<String> = symbol
-        .iter()
-        .flat_map(|sym| vec![("5", sym), ("1", sym)])
-        .map(|(interval, sym)| format!("kline.{}.{}", interval, sym.to_uppercase()))
-        .collect();
-    request_args.extend(kline_req);
-
     // Building tickers requests
     let tickers_req: Vec<String> = symbol
         .iter()
@@ -430,13 +373,6 @@ fn build_requests(symbol: &[String]) -> Vec<String> {
         .map(|sub| format!("publicTrade.{}", sub.to_uppercase()))
         .collect();
     request_args.extend(trade_req);
-
-    // Building liquidation requests
-    let liq_req: Vec<String> = symbol
-        .iter()
-        .map(|sub| format!("liquidation.{}", sub.to_uppercase()))
-        .collect();
-    request_args.extend(liq_req);
 
     request_args
 }
