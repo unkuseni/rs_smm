@@ -1,8 +1,8 @@
-const BYBIT_KEY: &str = "YOQUgEsTtgUYB0Y8g2";
-const BYBIT_SECRET: &str = "65TGdjNQLFXE6Ftst5hO83fXnuLnRW4XbjrP";
+const BYBIT_KEY: &str = "";
+const BYBIT_SECRET: &str = "";
 
-const BINANCE_KEY: &str = "N4qNFLgddNxqwG7tWu4b6VdgCSdIXPzFDyEfu48AkCjN3bLvXCWaRvhEcy8qX6dD";
-const BINANCE_SECRET: &str = "m6CU33JjFFOzxsxUcx3kbSGlqWSRDbP0LPjVxOye9pCYRhLpcG0TyXkHL2eHMSjZ";
+const BINANCE_KEY: &str = "";
+const BINANCE_SECRET: &str = "";
 
 #[cfg(test)]
 mod tests {
@@ -110,7 +110,7 @@ mod tests {
 
     #[tokio::test]
     pub async fn test_new_state() {
-        let exchange = "binance".to_string();
+        let exchange = "bybit".to_string();
         let mut state = ss::SharedState::new(exchange);
         state.add_symbols(["SKLUSDT".to_string(), "MATICUSDT".to_string()].to_vec());
         let (sender, mut receiver) = mpsc::unbounded_channel::<ss::SharedState>();
