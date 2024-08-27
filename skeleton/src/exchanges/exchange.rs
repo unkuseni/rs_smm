@@ -15,6 +15,7 @@ pub trait Exchange {
     fn init<K: Into<String>>(key: K, secret: K) -> Self;
     fn time(&self) -> impl Future<Output = u64>;
     fn fees(&self) -> impl Future<Output = f64>;
+    fn set_leverage(&self, symbol: &str, leverage: u16) -> impl Future<Output = Result<String, String>>;
     fn trader<'a>(&'a self) -> Quoter<'a>;
 }
 

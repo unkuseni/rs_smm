@@ -5,9 +5,11 @@ use bybit::{
     general::General,
     market::MarketData,
     model::{
-        Category, FastExecData, InstrumentRequest, LinearTickerData, OrderBookUpdate, OrderData,
-        PositionData, Subscription, Tickers, WalletData, WebsocketEvents, WsTrade,
+        Category, FastExecData, InstrumentRequest, LeverageRequest, LinearTickerData,
+        OrderBookUpdate, OrderData, PositionData, Subscription, Tickers, WalletData,
+        WebsocketEvents, WsTrade,
     },
+    position::PositionManager,
     trade::Trader,
     ws::Stream as BybitStream,
 };
@@ -108,6 +110,26 @@ impl Exchange for BybitClient {
             rate = 0.0000_f64;
         }
         rate
+    }
+
+    async fn set_leverage(
+        &self,
+        symbol: &str,
+        leverage: u16,
+    ) -> Result<String, String> {
+        let account: PositionManager = Bybit::new(
+            Some(Cow::Borrowed(&self.key)),
+            Some(Cow::Borrowed(&self.secret)),
+        );
+        let req = LeverageRequest {
+            category: Category::Linear,
+            symbol: Cow::Borrowed(symbol),
+            leverage: leverage as i8,
+        };
+       match account.set_leverage(req).await {
+        Ok(res) => Ok(res.ret_msg),
+        Err(e) => Err(e.to_string()),
+       }
     }
 
     fn trader<'a>(&'a self) -> Quoter<'a> {
@@ -386,4 +408,3 @@ fn build_requests(symbol: &[String]) -> Vec<String> {
 
     request_args
 }
-

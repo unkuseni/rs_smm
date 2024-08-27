@@ -118,6 +118,22 @@ impl Exchange for BinanceClient {
         .unwrap()
     }
 
+    async fn set_leverage(&self, symbol: &str, leverage: u16) -> Result<String, String> {
+        let key = self.key.clone();
+        let secret = self.secret.clone();
+        let symbol = symbol.to_string();
+        task::spawn_blocking(move || {
+            let client: FuturesAccount = Binance::new(Some(key), Some(secret));
+
+            match client.change_initial_leverage(symbol, leverage as u8) {
+                Ok(v) => Ok(String::from("YES")),
+                Err(_) => Err("Failed to set leverage".into()),
+            }
+        })
+        .await
+        .unwrap()
+    }
+
     fn trader<'a>(&'a self) -> Quoter<'a> {
         let config = {
             let x = Config::default();
