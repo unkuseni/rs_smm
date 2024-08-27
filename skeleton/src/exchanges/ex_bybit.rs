@@ -350,6 +350,15 @@ impl BybitClient {
     }
 }
 
+/// Builds the request arguments for the WebSocket connection.
+///
+/// # Arguments
+///
+/// * `symbol` - The symbols to request data for.
+///
+/// # Returns
+///
+/// A vector of strings, each representing a different request.
 fn build_requests(symbol: &[String]) -> Vec<String> {
     let mut request_args = vec![];
 
@@ -360,6 +369,7 @@ fn build_requests(symbol: &[String]) -> Vec<String> {
         .map(|(num, sym)| format!("orderbook.{}.{}", num, sym.to_uppercase()))
         .collect();
     request_args.extend(book_req);
+
     // Building tickers requests
     let tickers_req: Vec<String> = symbol
         .iter()
@@ -376,3 +386,4 @@ fn build_requests(symbol: &[String]) -> Vec<String> {
 
     request_args
 }
+
