@@ -110,7 +110,7 @@ mod tests {
 
     #[tokio::test]
     pub async fn test_new_state() {
-        let exchange = "bybit".to_string();
+        let exchange = "both".to_string();
         let mut state = ss::SharedState::new(exchange);
         state.add_symbols(["SKLUSDT".to_string(), "MATICUSDT".to_string()].to_vec());
         let (sender, mut receiver) = mpsc::unbounded_channel::<ss::SharedState>();
@@ -119,7 +119,16 @@ mod tests {
             ss::load_data(state, sender).await;
         });
         while let Some(v) = receiver.recv().await {
-            println!("Shared State: {:#?}", v.exchange);
+            println!("Shared State: {:#?}", {
+              match  &v.markets[0] {
+                  skeleton::exchanges::exchange::MarketMessage::Binance(m) => {
+                      m.books[1].1.get_bba()
+                  }
+                  skeleton::exchanges::exchange::MarketMessage::Bybit(m) => {
+                      m.books[1].1.get_bba()
+                  }
+              }
+            });
             v.logging.info("Received state");
             if instant.elapsed() > Duration::from_secs(60) {
                 println!("Shared State: {:#?}", v.markets[0]);

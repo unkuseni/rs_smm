@@ -1,14 +1,16 @@
 #[cfg(test)]
 mod tests {
+    use std::time::Duration;
+
     use bybit::model::{Ask, Bid, WsTrade};
     use skeleton::util::{
         candles::{TickCandle, VolumeCandle},
         helpers::{
-            generate_timestamp, geometric_weights, geomspace, read_toml, round_step,
-            spread_price_in_bps, Round,
+            generate_timestamp, geometric_weights, geomspace, read_toml, round_step, spread_price_in_bps, watch_config, Round
         },
         localorderbook::LocalBook,
     };
+    use tokio::sync::mpsc;
 
     #[test]
     fn test_tick_candle() {
@@ -176,6 +178,19 @@ mod tests {
     fn params() {
         let result = read_toml("./tests/test.toml");
         println!("{:#?}", result);
+    }
+
+
+     #[tokio::test]
+    async fn test_watch_file() {
+        let (tx, mut rx) = mpsc::unbounded_channel();
+        let path = "./tests/test.toml";
+        tokio::spawn(async move {
+            let _ = watch_config(path, Duration::from_millis(500), tx).await;
+        });
+        while let Some(v) = rx.recv().await {
+            println!("Config: {:#?}", v);
+        }
     }
 
     #[test]

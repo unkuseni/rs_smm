@@ -1,11 +1,11 @@
 use std::{
-    io::Read,
-    time::{SystemTime, UNIX_EPOCH},
+    fs, io::Read, path::Path, time::{Duration, SystemTime, UNIX_EPOCH}
 };
 
 use num_traits::{Float, Signed};
 
 use serde::Deserialize;
+use tokio::sync::mpsc;
 
 pub fn round_step<T: Float>(num: T, step: T) -> T {
     (num / step).round() * step
@@ -138,10 +138,12 @@ impl Round<f64> for f64 {
     }
 }
 
-
 /// This section is for a toml parser that will be used for reading config files
 ///
-pub fn read_toml(path: &str) -> Config {
+pub fn read_toml<T>(path: T) -> Config
+where
+    T: AsRef<Path>,
+{
     let mut file = std::fs::File::open(path).expect("Unable to open file");
     let mut contents = String::new();
     file.read_to_string(&mut contents)
@@ -149,7 +151,27 @@ pub fn read_toml(path: &str) -> Config {
     toml::from_str(&contents).expect("Unable to parse file")
 }
 
-#[derive(Deserialize, Debug)]
+pub async fn watch_config<T>(
+    path: T,
+    interval: Duration,
+    sender: mpsc::UnboundedSender<Config>,
+) -> Result<(), std::io::Error>
+where
+    T: AsRef<Path>,
+{
+    let mut last_modified = fs::metadata(path.as_ref())?.modified()?;
+    loop {
+        let metadata = fs::metadata(path.as_ref())?;
+        let current_modified = metadata.modified()?;
+        if current_modified > last_modified {
+            last_modified = current_modified;
+            let _ = sender.send(read_toml(path.as_ref()));
+        }
+        tokio::time::sleep(interval).await;
+    }
+}
+
+#[derive(Deserialize, Debug, Clone)]
 pub struct Config {
     pub exchange: String,
     pub symbols: Vec<String>,
@@ -162,4 +184,34 @@ pub struct Config {
     pub rate_limit: u32,
     pub bps: Vec<f64>,
     pub use_wmid: bool,
+}
+
+impl PartialEq for Config {
+    fn eq(&self, other: &Self) -> bool {
+        self.exchange == other.exchange
+            && self.symbols == other.symbols
+            && self.api_keys == other.api_keys
+            && self.balances == other.balances
+            && self.leverage == other.leverage
+            && self.orders_per_side == other.orders_per_side
+            && self.final_order_distance == other.final_order_distance
+            && self.depths == other.depths
+            && self.rate_limit == other.rate_limit
+            && self.bps == other.bps
+            && self.use_wmid == other.use_wmid
+    }
+
+    fn ne(&self, other: &Self) -> bool {
+        self.exchange != other.exchange
+            || self.symbols != other.symbols
+            || self.api_keys != other.api_keys
+            || self.balances != other.balances
+            || self.leverage != other.leverage
+            || self.orders_per_side != other.orders_per_side
+            || self.final_order_distance != other.final_order_distance
+            || self.depths != other.depths
+            || self.rate_limit != other.rate_limit
+            || self.bps != other.bps
+            || self.use_wmid != other.use_wmid
+    }
 }
