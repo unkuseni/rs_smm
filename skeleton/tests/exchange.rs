@@ -13,7 +13,7 @@ mod tests {
     use skeleton::{exchanges::{
         ex_binance::{BinanceClient, BinanceMarket},
         ex_bybit::BybitClient,
-        exchange::{Exchange, PrivateData, Quoter},
+        exchange::{Exchange, PrivateData},
     }, ss, util::logger::Logger};
     use tokio::{sync::mpsc, task, time::Instant};
 
@@ -62,14 +62,7 @@ mod tests {
     #[test]
     fn test_trade() {
         let client = BybitClient::init(BYBIT_KEY, BYBIT_SECRET);
-        match client.trader() {
-            Quoter::Bybit(_) => {
-                println!("Bybit");
-            }
-            Quoter::Binance(_) => {
-                println!("Binance");
-            }
-        }
+        let _ = client.trader();
     }
 
     #[tokio::test]
@@ -82,7 +75,7 @@ mod tests {
         });
 
         while let Some(v) = rx.recv().await {
-            println!("Market data: {:#?}", v.books[0].1.get_wmid());
+             println!("Market data wmid: {:.7}  Mid: {:.7} {}", v.books[0].1.get_wmid(), v.books[0].1.get_mid_price(), { if v.books[0].1.get_wmid() > v.books[0].1.get_mid_price() { "Buy" } else { "Sell" } });
         }
     }
 
@@ -95,7 +88,7 @@ mod tests {
             client.market_subscribe(symbols, tx);
         });
         while let Some(v) = rx.recv().await {
-            println!("Market data: {:#?}", v.books[0].1.get_wmid());
+            println!("Market data wmid: {:.2}  Mid: {:.2}", v.books[0].1.get_wmid(), v.books[0].1.get_mid_price());
         }
     }
 

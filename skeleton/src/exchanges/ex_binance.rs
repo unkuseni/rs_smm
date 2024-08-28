@@ -20,7 +20,7 @@ use tokio::task;
 
 use crate::util::localorderbook::{LocalBook, ProcessAsks, ProcessBids};
 
-use super::exchange::{Exchange, PrivateData, ProcessTrade, Quoter, TaggedPrivate};
+use super::exchange::{Exchange, PrivateData, ProcessTrade, TaggedPrivate};
 #[derive(Clone, Debug)]
 pub struct BinanceMarket {
     pub time: u64,
@@ -74,6 +74,8 @@ pub struct BinanceClient {
 }
 
 impl Exchange for BinanceClient {
+    type Quoter<'a> = FuturesAccount;
+
     fn default() -> Self {
         Self {
             key: "".into(),
@@ -126,7 +128,7 @@ impl Exchange for BinanceClient {
             let client: FuturesAccount = Binance::new(Some(key), Some(secret));
 
             match client.change_initial_leverage(symbol, leverage as u8) {
-                Ok(v) => Ok(String::from("YES")),
+                Ok(_) => Ok(String::from("YES")),
                 Err(_) => Err("Failed to set leverage".into()),
             }
         })
@@ -134,7 +136,7 @@ impl Exchange for BinanceClient {
         .unwrap()
     }
 
-    fn trader<'a>(&'a self) -> Quoter<'a> {
+    fn trader<'a>(&'a self) -> Self::Quoter<'a> {
         let config = {
             let x = Config::default();
             x.set_recv_window(2500)
@@ -144,7 +146,7 @@ impl Exchange for BinanceClient {
             Some(self.secret.to_string()),
             &config,
         );
-        Quoter::Binance(trader)
+        trader
     }
 }
 

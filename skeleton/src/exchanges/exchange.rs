@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
-use binance::{futures::account::FuturesAccount, model::AggrTradesEvent};
-use bybit::{model::WsTrade, trade::Trader};
+use binance::model::AggrTradesEvent;
+use bybit::model::WsTrade;
 
 use super::{
     ex_binance::{BinanceClient, BinanceMarket, BinancePrivate},
@@ -11,12 +11,20 @@ use super::{
 use std::future::Future;
 
 pub trait Exchange {
+    type Quoter<'a>
+    where
+        Self: 'a;
     fn default() -> Self;
     fn init<K: Into<String>>(key: K, secret: K) -> Self;
     fn time(&self) -> impl Future<Output = u64>;
     fn fees(&self) -> impl Future<Output = f64>;
-    fn set_leverage(&self, symbol: &str, leverage: u16) -> impl Future<Output = Result<String, String>>;
-    fn trader<'a>(&'a self) -> Quoter<'a>;
+    fn set_leverage(
+        &self,
+        symbol: &str,
+        leverage: u16,
+    ) -> impl Future<Output = Result<String, String>>;
+    fn trader<'a>(&'a self) -> Self::Quoter<'a>;
+    
 }
 
 #[derive(Clone, Debug)]
@@ -24,14 +32,6 @@ pub enum Client {
     Bybit(BybitClient),
     Binance(BinanceClient),
 }
-
-
-pub enum Quoter<'a> {
-    Bybit(Trader<'a>),
-    Binance(FuturesAccount),
-}
-
-
 
 #[derive(Clone, Debug)]
 pub enum PrivateData {

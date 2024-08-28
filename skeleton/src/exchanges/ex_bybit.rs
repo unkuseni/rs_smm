@@ -18,7 +18,7 @@ use tokio::sync::mpsc;
 
 use crate::util::localorderbook::LocalBook;
 
-use super::exchange::{Exchange, PrivateData, Quoter, TaggedPrivate};
+use super::exchange::{Exchange, PrivateData, TaggedPrivate};
 
 #[derive(Clone, Debug)]
 pub struct BybitMarket {
@@ -73,12 +73,16 @@ pub struct BybitClient {
 }
 
 impl Exchange for BybitClient {
+
+    type Quoter<'a> = Trader<'a>;
+
     fn default() -> Self {
         Self {
             key: "".into(),
             secret: "".into(),
         }
     }
+
     fn init<T>(key: T, secret: T) -> Self
     where
         T: Into<String>,
@@ -88,6 +92,7 @@ impl Exchange for BybitClient {
             secret: secret.into(),
         }
     }
+
     async fn time(&self) -> u64 {
         let general: General = Bybit::new(None, None);
         general
@@ -112,11 +117,7 @@ impl Exchange for BybitClient {
         rate
     }
 
-    async fn set_leverage(
-        &self,
-        symbol: &str,
-        leverage: u16,
-    ) -> Result<String, String> {
+    async fn set_leverage(&self, symbol: &str, leverage: u16) -> Result<String, String> {
         let account: PositionManager = Bybit::new(
             Some(Cow::Borrowed(&self.key)),
             Some(Cow::Borrowed(&self.secret)),
@@ -126,13 +127,13 @@ impl Exchange for BybitClient {
             symbol: Cow::Borrowed(symbol),
             leverage: leverage as i8,
         };
-       match account.set_leverage(req).await {
-        Ok(res) => Ok(res.ret_msg),
-        Err(e) => Err(e.to_string()),
-       }
+        match account.set_leverage(req).await {
+            Ok(res) => Ok(res.ret_msg),
+            Err(e) => Err(e.to_string()),
+        }
     }
 
-    fn trader<'a>(&'a self) -> Quoter<'a> {
+    fn trader<'a>(&'a self) -> Trader<'a> {
         let config = {
             let x = Config::default();
             x.set_recv_window(2500)
@@ -142,7 +143,7 @@ impl Exchange for BybitClient {
             Some(Cow::Borrowed(&self.key)),
             Some(Cow::Borrowed(&self.secret)),
         );
-        Quoter::Bybit(trader)
+        trader
     }
 }
 
