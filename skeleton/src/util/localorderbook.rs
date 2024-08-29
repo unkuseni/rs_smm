@@ -311,9 +311,49 @@ impl LocalBook {
         };
         (asks, bids)
     }
-    pub fn get_wmid(&self) -> f64 {
-        let imb = self.best_bid.qty / (self.best_bid.qty + self.best_ask.qty);
-        self.best_bid.price * imb + self.best_ask.price * (1.0 - imb)
+
+    /// Calculates the Weighted Mid Price (WMID) of a given LocalBook, based on the given imbalance ratio.
+    ///
+    /// # Arguments
+    ///
+    /// * `imb` - The imbalance ratio to use in the calculation.
+    ///
+    /// # Returns
+    /// The WMID as a `f64`.
+    pub fn get_wmid(&self, imb: f64) -> f64 {
+        // Convert the imbalance ratio to the absolute value, using the map_range function.
+        let abs_imb = map_range(imb);
+
+        // If the absolute imbalance ratio is not zero, calculate the WMID using the formula:
+        // WMID = (best_bid * imb) + (best_ask * (1 - imb))
+        if abs_imb != 0.0 {
+            (self.best_bid.price * imb) + (self.best_ask.price * (1.0 - imb))
+        } else {
+            // Otherwise, return the mid_price of the LocalBook.
+            self.mid_price
+        }
+    }
+
+    /// The microprice is used as a more subtle proxy for
+    /// the asset's transaction cost-free price, as it measures the tendency that the price
+    /// has to move either towards the bid or ask side as captured by number of shares
+    /// posted, and hence indicates the buy (sell) pressure in the market. If there are
+    /// a lot of buyers (sellers), then the microprice is pushed toward the best ask/bid
+    /// price to reflect the likelihood that prices are going to increase (decrease)
+    pub fn get_microprice(&self) -> f64 {
+        let bid =
+            (self.best_bid.qty / (self.best_bid.qty + self.best_ask.qty)) * self.best_ask.price;
+        let ask =
+            (self.best_ask.qty / (self.best_bid.qty + self.best_ask.qty)) * self.best_bid.price;
+        bid + ask
+    }
+
+    pub fn effective_spread(&self, is_buy_order: bool) -> f64 {
+        if is_buy_order {
+            self.best_bid.price - self.mid_price
+        } else {
+            self.mid_price - self.best_ask.price
+        }
     }
 }
 
@@ -343,4 +383,8 @@ impl ProcessBids for binance::model::Bids {
             qty: bid.qty,
         }
     }
+}
+
+pub fn map_range(value: f64) -> f64 {
+    (value + 1.0) / 2.0
 }

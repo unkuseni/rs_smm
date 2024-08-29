@@ -74,8 +74,8 @@ mod tests {
             client.market_subscribe(symbols, tx).await;
         });
 
-        while let Some(v) = rx.recv().await {
-             println!("Market data wmid: {:.7}  Mid: {:.7} {}", v.books[0].1.get_wmid(), v.books[0].1.get_mid_price(), { if v.books[0].1.get_wmid() > v.books[0].1.get_mid_price() { "Buy" } else { "Sell" } });
+        while let Some(_) = rx.recv().await {
+             println!("Market data");
         }
     }
 
@@ -87,8 +87,8 @@ mod tests {
         task::spawn_blocking(move || {
             client.market_subscribe(symbols, tx);
         });
-        while let Some(v) = rx.recv().await {
-            println!("Market data wmid: {:.2}  Mid: {:.2}", v.books[0].1.get_wmid(), v.books[0].1.get_mid_price());
+        while let Some(_) = rx.recv().await {
+            println!("Market data");
         }
     }
 
