@@ -25,7 +25,7 @@ pub fn imbalance_ratio(book: &LocalBook, depth: Option<usize>) -> f64 {
         (calculate_weighted_bid(book, depth), calculate_weighted_ask(book, depth))
     } else {
         (book.best_bid.qty, book.best_ask.qty)
-    }
+    };
 
     // Calculate the difference between the weighted bid and ask quantities.
     let diff = weighted_bid_qty - weighted_ask_qty;
