@@ -27,25 +27,10 @@ pub fn imbalance_ratio(book: &LocalBook, depth: Option<usize>) -> f64 {
 
     // If a depth is specified, calculate the weighted bid and ask quantities using the specified depth.
     if let Some(depth) = depth {
-        // Reset the weighted bid and ask quantities to 0.
-        weighted_bid_qty = 0.0;
-        weighted_ask_qty = 0.0;
-
-        // Calculate the weighted ask quantity using the specified depth.
-        for (i, (_, qty)) in book.asks.iter().take(depth).enumerate() {
-            // Calculate the weight using the exponentiation function.
-            let weight = calculate_exponent(i as f64);
-            // Add the weighted quantity to the weighted ask quantity.
-            weighted_ask_qty += weight * qty;
-        }
-
         // Calculate the weighted bid quantity using the specified depth.
-        for (i, (_, qty)) in book.bids.iter().rev().take(depth).enumerate() {
-            // Calculate the weight using the exponentiation function.
-            let weight = calculate_exponent(i as f64);
-            // Add the weighted quantity to the weighted bid quantity.
-            weighted_bid_qty += weight * qty;
-        }
+        weighted_bid_qty = calculate_weighted_bid(book, depth);
+        // Calculate the weighted ask quantity using the specified depth.
+        weighted_ask_qty = calculate_weighted_bid(book, depth);
     }
 
     // Calculate the difference between the weighted bid and ask quantities.
@@ -64,28 +49,60 @@ pub fn imbalance_ratio(book: &LocalBook, depth: Option<usize>) -> f64 {
     }
 }
 
+pub fn calculate_ofi(book: &LocalBook, prev_book: &LocalBook, depth: Option<usize>) -> f64 {
+    let bid_ofi = {
+        if book.best_bid.price > prev_book.best_bid.price {
+            if let Some(depth) = depth {
+                let weighted_bid = calculate_weighted_bid(book, depth);
+                weighted_bid
+            } else {
+                book.best_bid.qty
+            }
+        } else if book.best_bid.price == prev_book.best_bid.price {
+            if let Some(depth) = depth {
+                let weighted_bid = calculate_weighted_bid(book, depth);
+                let prev_weighted_bid = calculate_weighted_bid(prev_book, depth);
+                weighted_bid - prev_weighted_bid
+            } else {
+                book.best_bid.qty - prev_book.best_bid.qty
+            }
+        } else {
+            if let Some(depth) = depth {
+                let weighted_bid = calculate_weighted_bid(book, depth);
+                -weighted_bid
+            } else {
+                -book.best_bid.qty
+            }
+        }
+    };
+    let ask_ofi = {
+        if book.best_ask.price < prev_book.best_ask.price {
+            if let Some(depth) = depth {
+                let weighted_ask = calculate_weighted_ask(book, depth);
+                -weighted_ask
+            } else {
+                -book.best_ask.qty
+            }
+        } else if book.best_ask.price == prev_book.best_ask.price {
+            if let Some(depth) = depth {
+                let weighted_ask = calculate_weighted_ask(book, depth);
+                let prev_weighted_ask = calculate_weighted_ask(prev_book, depth);
+                prev_weighted_ask - weighted_ask
+            } else {
+                prev_book.best_ask.qty - book.best_ask.qty
+            }
+        } else {
+            if let Some(depth) = depth {
+                let weighted_ask = calculate_weighted_ask(book, depth);
+                weighted_ask
+            } else {
+                book.best_ask.qty
+            }
+        }
+    };
+    let ofi = ask_ofi + bid_ofi;
 
-/// Calculates the Weighted Mid Price (WMID) of a given LocalBook, based on the given imbalance ratio.
-///
-/// # Arguments
-///
-/// * `book` - The LocalBook to calculate the WMID from.
-/// * `imb` - The imbalance ratio to use in the calculation.
-///
-/// # Returns
-/// The WMID as a `f64`.
-pub fn wmid(book: &LocalBook, imb: f64) -> f64 {
-    // Convert the imbalance ratio to the absolute value, using the map_range function.
-    let abs_imb = map_range(imb);
-
-    // If the absolute imbalance ratio is not zero, calculate the WMID using the formula:
-    // WMID = (best_bid * imb) + (best_ask * (1 - imb))
-    if abs_imb != 0.0 {
-        (book.best_bid.price * imb) + (book.best_ask.price * (1.0 - imb))
-    } else {
-        // Otherwise, return the mid_price of the LocalBook.
-        book.mid_price
-    }
+    ofi
 }
 
 /// Calculates the Volume at the Offset (VOI) of a given LocalBook and its previous state.
@@ -105,15 +122,8 @@ pub fn voi(book: &LocalBook, prev_book: &LocalBook, depth: Option<usize>) -> f64
         x if x < prev_book.best_bid.price => 0.0,
         x if x == prev_book.best_bid.price => {
             if let Some(depth) = depth {
-                let mut curr_bid_qty = 0.0;
-                let mut prev_bid_qty = 0.0;
-                // Iterate over the depth bids in the current and previous books
-                for (i, (_, qty)) in book.bids.iter().rev().take(depth).enumerate() {
-                    curr_bid_qty += qty * calculate_exponent(i as f64);
-                }
-                for (i, (_, qty)) in prev_book.bids.iter().rev().take(depth).enumerate() {
-                    prev_bid_qty += qty * calculate_exponent(i as f64);
-                }
+                let curr_bid_qty = calculate_weighted_bid(book, depth);
+                let prev_bid_qty = calculate_weighted_bid(prev_book, depth);
                 curr_bid_qty - prev_bid_qty
             } else {
                 book.best_bid.qty - prev_book.best_bid.qty
@@ -121,11 +131,7 @@ pub fn voi(book: &LocalBook, prev_book: &LocalBook, depth: Option<usize>) -> f64
         }
         x if x > prev_book.best_bid.price => {
             if let Some(depth) = depth {
-                let mut curr_bid = 0.0;
-                // Iterate over the depth bids in the current book
-                for (i, (_, qty)) in book.bids.iter().rev().take(depth).enumerate() {
-                    curr_bid += qty * calculate_exponent(i as f64);
-                }
+                let curr_bid = calculate_weighted_bid(book, depth);
                 curr_bid
             } else {
                 book.best_bid.qty
@@ -138,11 +144,7 @@ pub fn voi(book: &LocalBook, prev_book: &LocalBook, depth: Option<usize>) -> f64
     let ask_v = match book.best_ask.price {
         x if x < prev_book.best_ask.price => {
             if let Some(depth) = depth {
-                let mut curr_ask = 0.0;
-                // Iterate over the depth asks in the current book
-                for (i, (_, qty)) in book.asks.iter().take(depth).enumerate() {
-                    curr_ask += qty * calculate_exponent(i as f64);
-                }
+                let curr_ask = calculate_weighted_ask(book, depth);
                 curr_ask
             } else {
                 book.best_ask.qty
@@ -150,15 +152,8 @@ pub fn voi(book: &LocalBook, prev_book: &LocalBook, depth: Option<usize>) -> f64
         }
         x if x == prev_book.best_ask.price => {
             if let Some(depth) = depth {
-                let mut curr_ask_qty = 0.0;
-                let mut prev_ask_qty = 0.0;
-                // Iterate over the depth asks in the current and previous books
-                for (i, (_, qty)) in book.asks.iter().take(depth).enumerate() {
-                    curr_ask_qty += qty * calculate_exponent(i as f64);
-                }
-                for (i, (_, qty)) in prev_book.bids.iter().take(depth).enumerate() {
-                    prev_ask_qty += qty * calculate_exponent(i as f64);
-                }
+                let curr_ask_qty = calculate_weighted_ask(book, depth);
+                let prev_ask_qty = calculate_weighted_ask(prev_book, depth);
                 curr_ask_qty - prev_ask_qty
             } else {
                 book.best_ask.qty - prev_book.best_ask.qty
@@ -187,17 +182,63 @@ pub fn trade_imbalance(trades: &VecDeque<WsTrade>) -> f64 {
 }
 
 fn calculate_volumes(trades: &VecDeque<WsTrade>) -> (f64, f64) {
-    let mut total_volume = 0.0;
-    let mut buy_volume = 0.0;
-    for trade in trades.iter() {
-        total_volume += trade.volume;
-        if trade.side == "Buy" {
-            buy_volume += trade.volume;
-        }
-    }
+    let (total_volume, buy_volume) = trades.iter().fold((0.0, 0.0), |(total, buy), trade| {
+        let new_total = total + trade.volume;
+        let new_buy = if trade.side == "Buy" {
+            buy + trade.volume
+        } else {
+            buy
+        };
+        (new_total, new_buy)
+    });
     (total_volume, buy_volume)
 }
 
 pub fn map_range(value: f64) -> f64 {
     (value + 1.0) / 2.0
+}
+
+/// Calculates the weighted ask quantity using the specified depth.
+///
+/// The weighted ask quantity is the sum of the ask quantities multiplied by a weight that
+/// decreases as the price moves further away from the best ask.
+///
+/// # Arguments
+///
+/// * `book`: The order book to calculate the weighted ask quantity from.
+/// * `depth`: The number of levels to calculate the weighted ask quantity from.
+///
+/// # Returns
+///
+/// The weighted ask quantity as a `f64`.
+fn calculate_weighted_ask(book: &LocalBook, depth: usize) -> f64 {
+    book.asks
+        .iter()
+        .take(depth)
+        .enumerate()
+        .map(|(i, (_, qty))| (calculate_exponent(i as f64) * qty) as f64)
+        .sum::<f64>()
+}
+
+/// Calculates the weighted bid quantity using the specified depth.
+///
+/// The weighted bid quantity is the sum of the bid quantities multiplied by a weight that
+/// decreases as the price moves further away from the best bid.
+///
+/// # Arguments
+///
+/// * `book`: The order book to calculate the weighted bid quantity from.
+/// * `depth`: The number of levels to calculate the weighted bid quantity from.
+///
+/// # Returns
+///
+/// The weighted bid quantity as a `f64`.
+fn calculate_weighted_bid(book: &LocalBook, depth: usize) -> f64 {
+    book.bids
+        .iter()
+        .rev()
+        .take(depth)
+        .enumerate()
+        .map(|(i, (_, qty))| (calculate_exponent(i as f64) * qty) as f64)
+        .sum::<f64>()
 }
