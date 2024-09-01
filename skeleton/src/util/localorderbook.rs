@@ -281,7 +281,7 @@ impl LocalBook {
         self.best_ask.price - self.best_bid.price
     }
 
-    pub fn get_spread_in_bps(&self) -> f64 {
+    pub fn get_spread_in_bps(&self) -> i32 {
         spread_price_in_bps(self.get_spread(), self.mid_price)
     }
 
