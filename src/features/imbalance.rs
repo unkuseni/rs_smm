@@ -19,18 +19,12 @@ use skeleton::util::{helpers::calculate_exponent, localorderbook::LocalBook};
 ///
 /// The imbalance ratio as a `f64`.
 pub fn imbalance_ratio(book: &LocalBook, depth: Option<usize>) -> f64 {
-    // Extract the best ask and bid from the book.
-    let (best_ask, best_bid) = (book.best_ask.qty, book.best_bid.qty);
-
     // Initialize the weighted bid and ask quantities to the quantities of the best bid and ask.
-    let (mut weighted_bid_qty, mut weighted_ask_qty) = (best_bid, best_ask);
-
-    // If a depth is specified, calculate the weighted bid and ask quantities using the specified depth.
-    if let Some(depth) = depth {
+    let (weighted_bid_qty, weighted_ask_qty) = if let Some(depth) = depth {
         // Calculate the weighted bid quantity using the specified depth.
-        weighted_bid_qty = calculate_weighted_bid(book, depth);
-        // Calculate the weighted ask quantity using the specified depth.
-        weighted_ask_qty = calculate_weighted_bid(book, depth);
+        (calculate_weighted_bid(book, depth), calculate_weighted_ask(book, depth))
+    } else {
+        (book.best_bid.qty, book.best_ask.qty)
     }
 
     // Calculate the difference between the weighted bid and ask quantities.
