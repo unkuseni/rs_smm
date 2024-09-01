@@ -13,3 +13,15 @@ rs_bybit = "0.3.0"
 serde = "1.0.197"
 tokio = "1.36.0"
 toml = "0.8.12"
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = "bench_local_book"
+harness = false
+
+
+[[bench]]
+name = "bench_numbers"
+harness = false

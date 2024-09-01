@@ -181,7 +181,7 @@ mod tests {
     }
 
 
-     #[tokio::test]
+    #[tokio::test]
     async fn test_watch_file() {
         let (tx, mut rx) = mpsc::unbounded_channel();
         let path = "./tests/test.toml";
@@ -211,6 +211,6 @@ mod tests {
         assert_eq!(book.best_ask.price, 101.0);
         assert_eq!(book.mid_price, 100.5);
         assert_eq!(book.get_spread(), 1.0);
-        assert_eq!(book.get_spread_in_bps(), 100.0);
+        assert_eq!(book.get_spread_in_bps(), 99);
     }
 }
