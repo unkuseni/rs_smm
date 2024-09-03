@@ -41,9 +41,6 @@ pub fn default_regression_single_feature(
     mid_price_array: &[f64],
     feature: &[f64],
 ) -> Result<f64, String> {
-    use ndarray::{Array1, Array2};
-    use linfa::{Dataset, traits::Fit};
-    use linfa_linear::LinearRegression;
 
     // Convert slices to Array1
     let mid_prices = Array1::from_vec(mid_price_array.to_vec());
