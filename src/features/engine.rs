@@ -1,24 +1,21 @@
 use std::collections::VecDeque;
 
 use bybit::model::WsTrade;
-use ndarray::{array, Array1, Array2};
+use ndarray::{Array1, Array2};
 use skeleton::util::localorderbook::LocalBook;
 
 use super::{
     imbalance::{calculate_ofi, imbalance_ratio, trade_imbalance, voi},
-    impact::{
-        avg_trade_price, expected_return, mid_price_basis, mid_price_change, price_flu,
-        price_impact,
-    },
+    impact::{avg_trade_price, expected_return, mid_price_basis, price_flu, price_impact},
     linear_reg::mid_price_regression,
 };
 
-const IMB_WEIGHT: f64 = 0.25;
-const TRADE_IMB_WEIGHT: f64 = 0.25;
-const EXP_RET_WEIGHT: f64 = 0.10;
-const DEEP_IMB_WEIGHT: f64 = 0.20;
-const MID_BASIS_WEIGHT: f64 = 0.10;
-const VOI_WEIGHT: f64 = 0.10;
+const IMB_WEIGHT: f64 = 0.25; // 25
+const DEEP_IMB_WEIGHT: f64 = 0.15; // 40
+const VOI_WEIGHT: f64 = 0.10; // 50
+const OFI_WEIGHT: f64 = 0.20; // 70
+const DEEP_OFI_WEIGHT: f64 = 0.15; // 85
+const PREDICT_WEIGHT: f64 = 0.15; // 100
 
 #[derive(Clone, Debug)]
 pub struct Engine {
@@ -34,6 +31,7 @@ pub struct Engine {
     pub price_flu: (VecDeque<f64>, f64), // in bps
     pub mid_price_basis: f64,
     pub avg_trade_price: f64,
+    pub predicted_price: f64,
     pub skew: f64,
     mid_prices: Vec<f64>,
     features: Vec<[f64; 3]>,
@@ -41,39 +39,61 @@ pub struct Engine {
 }
 
 impl Engine {
+    /// Create a new instance of `Engine`.
+    ///
+    /// # Returns
+    ///
+    /// A new instance of `Engine`.
     pub fn new() -> Self {
         Self {
+            // The imbalance ratio.
             imbalance_ratio: 0.0,
+            // The deep imbalance ratios.
             deep_imbalance_ratio: Vec::new(),
+            // The volume of interest.
             voi: 0.0,
+            // The deep volume of interest.
             deep_voi: Vec::new(),
+            // The order flow imbalance.
             ofi: 0.0,
+            // The deep order flow imbalance.
             deep_ofi: Vec::new(),
+            // The trade imbalance.
             trade_imb: 0.0,
+            // The price impact.
             price_impact: 0.0,
+            // The expected return.
             expected_return: 0.0,
+            // The price flu in bps.
             price_flu: (VecDeque::new(), 0.0),
+            // The mid price basis.
             mid_price_basis: 0.0,
+            // The average trade price.
             avg_trade_price: 0.0,
+            // The predicted price.
+            predicted_price: 0.0,
+            // The skew.
             skew: 0.0,
+            // The mid prices.
             mid_prices: Vec::new(),
+            // The features.
             features: Vec::new(),
+            // The tick window.
             tick_window: 0,
         }
     }
 
-    /// Updates the engine's features with the current order book and trades data.
+    /// Update the features of the `Engine` with the latest data.
     ///
     /// # Arguments
     ///
-    /// * `curr_book` - The current order book.
-    /// * `prev_book` - The previous order book.
-    /// * `curr_trades` - The current trades data.
-    /// * `prev_trades` - The previous trades data.
-    /// * `prev_avg` - The average trade price of the previous order book.
-    /// * `depth` - The depths at which to calculate imbalance and spread.
-    /// * `tick_window` - The number of ticks to consider when calculating `avg_trade_price`.
-    /// * `use_wmid` - Whether to use the weighted mid price for determining skew or not.
+    /// * `curr_book`: The current order book.
+    /// * `prev_book`: The previous order book.
+    /// * `curr_trades`: The current trades.
+    /// * `prev_trades`: The previous trades.
+    /// * `prev_avg`: The average trade price of the previous tick window.
+    /// * `depth`: The list of depths to calculate the features at.
+    /// * `use_wmid`: Whether to use the W-MID for calculating the imbalance ratio.
     pub fn update(
         &mut self,
         curr_book: &LocalBook,
@@ -82,7 +102,6 @@ impl Engine {
         prev_trades: &VecDeque<WsTrade>,
         prev_avg: &f64,
         depth: Vec<usize>,
-        use_wmid: bool,
     ) {
         // Update imbalance ratio
         self.imbalance_ratio = imbalance_ratio(curr_book, Some(depth[0]));
@@ -162,11 +181,18 @@ impl Engine {
         self.features
             .push([self.imbalance_ratio, self.voi, self.ofi]);
 
+        self.predicted_price = {
+            match self.predict_price(curr_book.get_spread_in_bps() as f64) {
+                Ok(v) => v,
+                Err(_) => curr_book.mid_price,
+            }
+        };
+
         // Generate skew
-        self.generate_skew();
+        self.generate_skew(curr_book);
     }
 
-    fn predict_price(&mut self, curr_spread: f64) -> Result<f64, String>{
+    fn predict_price(&mut self, curr_spread: f64) -> Result<f64, String> {
         let mids = self.mid_prices.clone();
         let y = Array1::from_vec(mids);
         let x = match Array2::from_shape_vec(
@@ -177,9 +203,7 @@ impl Engine {
                 .flat_map(|v| v.into_iter())
                 .collect::<Vec<f64>>(),
         ) {
-            Ok(x) => {
-                mid_price_regression(y, x, curr_spread)
-            },
+            Ok(x) => mid_price_regression(y, x, curr_spread),
             Err(e) => return Err(e.to_string()),
         };
         x
@@ -204,8 +228,35 @@ impl Engine {
     }
 
     /// Generates a  number between -1 and 1.
-    fn generate_skew(&mut self) {
+    fn generate_skew(&mut self, book: &LocalBook) {
         // generate a skew metric and update the regression model for predictions
+        let imb = self.imbalance_ratio * IMB_WEIGHT; // Ratio is -1 to 1
+        let deep_imb = (self.deep_imbalance_ratio.iter().sum::<f64>()
+            / self.deep_imbalance_ratio.len() as f64)
+            * DEEP_IMB_WEIGHT; // Ratio is -1 to 1
+
+        let voi = self.voi * VOI_WEIGHT;
+        let ofi = match self.ofi {
+            v if v > 0.0 => 1.0 * OFI_WEIGHT,
+            v if v < 0.0 => -1.0 * DEEP_OFI_WEIGHT,
+            _ => 0.0,
+        };
+        let deep_ofi = {
+            let value = self.deep_ofi.iter().sum::<f64>() / self.deep_ofi.len() as f64;
+            match value {
+                v if v > 0.0 => 1.0 * DEEP_OFI_WEIGHT,
+                v if v < 0.0 => -1.0 * DEEP_OFI_WEIGHT,
+                _ => 0.0,
+            }
+        };
+
+        let predicted_value = match self.predicted_price {
+            v if v > book.get_wmid(self.imbalance_ratio) => 1.0 * PREDICT_WEIGHT,
+            v if v < book.get_wmid(self.imbalance_ratio) => -1.0 * PREDICT_WEIGHT,
+            _ => 0.0,
+        };
+
+        self.skew = imb + deep_imb + voi + ofi + deep_ofi + predicted_value;
     }
 }
 

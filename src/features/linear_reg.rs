@@ -1,5 +1,5 @@
 use linfa::{
-    dataset, traits::{Fit, Predict}, Dataset
+     traits::{Fit, Predict}, Dataset
 };
 use linfa_linear::LinearRegression;
 use ndarray::{Array1, Array2};

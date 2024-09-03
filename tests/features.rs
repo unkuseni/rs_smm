@@ -1,8 +1,6 @@
 #[cfg(test)]
 mod tests {
 
-    use std::collections::VecDeque;
-
     use ndarray::{array, Array2};
     use rs_smm::{
         features::{
@@ -158,6 +156,16 @@ mod tests {
     }
 
     #[test]
+    fn test_deep() {
+        let v = vec![
+            -1.0, -0.8, -0.6, -0.4, -0.2, 0.0, 0.2, 0.4, 0.6, 0.8, 1.0, 0.99, 0.50, -0.23, 0.81,
+            0.94,
+        ];
+        let norm = v.iter().sum::<f64>() / v.len() as f64;
+        println!("Value: {:#?}", norm);
+    }
+
+    #[test]
     fn test_future_value() {
         let value = vec![
             expected_value(0.4076, 0.4079, 0.66),
@@ -223,10 +231,9 @@ mod tests {
     #[test]
     fn test_flatten() {
         let data = vec![[2, 2, 2], [3, 3, 3], [4, 4, 4], [5, 5, 5], [6, 6, 6]];
-        let  result = match Array2::from_shape_vec(
+        let result = match Array2::from_shape_vec(
             (data.len(), data[0].len()),
-            data
-                .into_iter()
+            data.into_iter()
                 .flat_map(|v| v.into_iter())
                 .collect::<Vec<i32>>(),
         ) {
