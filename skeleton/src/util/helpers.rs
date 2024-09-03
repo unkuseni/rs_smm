@@ -284,7 +284,7 @@ pub struct Config {
     pub depths: Vec<usize>,
     pub rate_limit: u32,
     pub bps: Vec<f64>,
-    pub use_wmid: bool,
+    pub tick_window: usize,
 }
 
 impl PartialEq for Config {
@@ -299,7 +299,7 @@ impl PartialEq for Config {
             && self.depths == other.depths
             && self.rate_limit == other.rate_limit
             && self.bps == other.bps
-            && self.use_wmid == other.use_wmid
+            && self.tick_window == other.tick_window
     }
 
     fn ne(&self, other: &Self) -> bool {
@@ -313,6 +313,7 @@ impl PartialEq for Config {
             || self.depths != other.depths
             || self.rate_limit != other.rate_limit
             || self.bps != other.bps
-            || self.use_wmid != other.use_wmid
+            || self.tick_window != other.tick_window
+    
     }
 }

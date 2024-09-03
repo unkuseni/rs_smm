@@ -35,7 +35,7 @@ pub struct Engine {
     pub skew: f64,
     mid_prices: Vec<f64>,
     features: Vec<[f64; 3]>,
-    tick_window: usize,
+    pub tick_window: usize,
 }
 
 impl Engine {
@@ -44,7 +44,7 @@ impl Engine {
     /// # Returns
     ///
     /// A new instance of `Engine`.
-    pub fn new() -> Self {
+    pub fn new(tick_window: usize) -> Self {
         Self {
             // The imbalance ratio.
             imbalance_ratio: 0.0,
@@ -79,7 +79,7 @@ impl Engine {
             // The features.
             features: Vec::new(),
             // The tick window.
-            tick_window: 0,
+            tick_window
         }
     }
 
@@ -93,7 +93,6 @@ impl Engine {
     /// * `prev_trades`: The previous trades.
     /// * `prev_avg`: The average trade price of the previous tick window.
     /// * `depth`: The list of depths to calculate the features at.
-    /// * `use_wmid`: Whether to use the W-MID for calculating the imbalance ratio.
     pub fn update(
         &mut self,
         curr_book: &LocalBook,
