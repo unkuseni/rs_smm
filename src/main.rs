@@ -1,25 +1,17 @@
-use std::{collections::HashMap, hash::Hash};
+use std::collections::HashMap;
 
 use rs_smm::{parameters::parameters::use_toml, strategy::market_maker::MarketMaker};
 use skeleton::ss;
 use tokio::sync::mpsc;
-
 
 // Start the program
 #[tokio::main]
 async fn main() {
     // Pull the contents of the config file
     let config = use_toml();
-    // initialize shared state and pass in  exchange, clients, symbols 
+    // initialize shared state and pass in  exchange, clients, symbols
     let mut state = ss::SharedState::new(config.exchange);
-    let symbols: Vec<String> = {
-        let mut arr = vec![];
-        for v in config.symbols {
-            arr.push(v);
-        }
-        arr
-    };
-    state.add_symbols(symbols);
+    state.add_symbols(config.symbols);
     let clients = config.api_keys;
     for (key, secret, symbol) in clients {
         state.add_clients(key, secret, symbol, None);
@@ -37,11 +29,11 @@ async fn main() {
         config.final_order_distance,
         config.depths,
         config.rate_limit,
+        config.tick_window,
     );
 
     // sets the  base spread in bps for profit
     market_maker.set_spread_toml(config.bps);
-
 
     // create an unbounded channel
     let (sender, receiver) = mpsc::unbounded_channel();
@@ -52,12 +44,8 @@ async fn main() {
     });
 
     // passes in the data receiver to the market maker and starts the loop
-    market_maker
-        .start_loop(receiver, config.use_wmid, config.rate_limit)
-        .await;
+    market_maker.start_loop(receiver).await;
 }
-
-
 
 fn balances(arr: Vec<(String, f64)>) -> HashMap<String, f64> {
     let mut new_map = HashMap::new();
