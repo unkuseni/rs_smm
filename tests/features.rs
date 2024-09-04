@@ -72,6 +72,15 @@ mod tests {
         }
     }
 
+    #[test]
+    fn test_skew() {
+        let skew: f64 = 0.5;
+        let delta: f64 = -0.50;
+        let corrected = skew * (1.0 - delta.abs());
+        let sq_corrected = skew * (1.0 - delta.abs().sqrt());
+        println!("skew: {:.5} delta: {:.5} corrected: {:.5} sq_corrected: {:.5}", skew, delta, corrected, sq_corrected);
+    }
+
     #[tokio::test]
     async fn test_price() {
         let mut receiver = setup();
