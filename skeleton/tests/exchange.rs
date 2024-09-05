@@ -10,11 +10,15 @@ mod tests {
     use std::time::Duration;
 
     use binance::{api::Binance, futures::general::FuturesGeneral};
-    use skeleton::{exchanges::{
-        ex_binance::{BinanceClient, BinanceMarket},
-        ex_bybit::BybitClient,
-        exchange::{Exchange, PrivateData},
-    }, ss, util::logger::Logger};
+    use skeleton::{
+        exchanges::{
+            ex_binance::{BinanceClient, BinanceMarket},
+            ex_bybit::BybitClient,
+            exchange::{Exchange, PrivateData},
+        },
+        ss,
+        util::logger::Logger,
+    };
     use tokio::{sync::mpsc, task, time::Instant};
 
     use crate::{BINANCE_KEY, BINANCE_SECRET, BYBIT_KEY, BYBIT_SECRET};
@@ -75,7 +79,7 @@ mod tests {
         });
 
         while let Some(_) = rx.recv().await {
-             println!("Market data");
+            println!("Market data");
         }
     }
 
@@ -113,14 +117,14 @@ mod tests {
         });
         while let Some(v) = receiver.recv().await {
             println!("Shared State: {:#?}", {
-              match  &v.markets[0] {
-                  skeleton::exchanges::exchange::MarketMessage::Binance(m) => {
-                      m.books[1].1.get_bba()
-                  }
-                  skeleton::exchanges::exchange::MarketMessage::Bybit(m) => {
-                      m.books[1].1.get_bba()
-                  }
-              }
+                match &v.markets[0] {
+                    skeleton::exchanges::exchange::MarketMessage::Binance(m) => {
+                        m.books[1].1.get_bba()
+                    }
+                    skeleton::exchanges::exchange::MarketMessage::Bybit(m) => {
+                        m.books[1].1.get_bba()
+                    }
+                }
             });
             v.logging.info("Received state");
             if instant.elapsed() > Duration::from_secs(60) {
@@ -129,7 +133,6 @@ mod tests {
             }
         }
     }
-    
 
     #[tokio::test]
     pub async fn test_log() {

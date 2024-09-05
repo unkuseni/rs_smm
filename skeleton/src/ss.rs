@@ -15,13 +15,29 @@ use crate::{
     util::logger::Logger,
 };
 
+/// A struct to hold the shared state of the program.
+///
+/// This struct is used to share data between threads. It contains the following fields:
+///
+/// * `exchange`: The exchange where the market is traded. Can be "bybit", "binance", or "both".
+/// * `logging`: The logger to use for logging events.
+/// * `clients`: A mapping of symbols to clients. The client is used to access the private data.
+/// * `private`: A mapping of symbols to the private data for that symbol.
+/// * `markets`: A vector of market messages.
+/// * `symbols`: A vector of symbols.
 #[derive(Debug, Clone)]
 pub struct SharedState {
+    /// The exchange where the market is traded. Can be "bybit", "binance", or "both".
     pub exchange: String,
+    /// The logger to use for logging events.
     pub logging: Logger,
+    /// A mapping of symbols to clients. The client is used to access the private data.
     pub clients: HashMap<String, Client>,
+    /// A mapping of symbols to the private data for that symbol.
     pub private: HashMap<String, PrivateData>,
+    /// A vector of market messages.
     pub markets: Vec<MarketMessage>,
+    /// A vector of symbols.
     pub symbols: Vec<String>,
 }
 
