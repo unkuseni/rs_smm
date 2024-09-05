@@ -74,11 +74,10 @@ mod tests {
 
     #[test]
     fn test_skew() {
-        let skew: f64 = 0.5;
-        let delta: f64 = -0.50;
-        let corrected = skew * (1.0 - delta.abs());
+        let skew: f64 = 0.70;
+        let delta: f64 = -0.37;
         let sq_corrected = skew * (1.0 - delta.abs().sqrt());
-        println!("skew: {:.5} delta: {:.5} corrected: {:.5} sq_corrected: {:.5}", skew, delta, corrected, sq_corrected);
+        println!("skew: {:.5} delta: {:.5} sq_corrected: {:.5}", skew, delta, sq_corrected);
     }
 
     #[tokio::test]

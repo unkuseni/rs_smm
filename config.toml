@@ -3,19 +3,19 @@
 exchange = "bybit" # Name of the exchange you're connecting to
 
 # List of symbols to track and trade
-symbols = ["BTCUSD", "ETHUSD"] # Replace with your desired symbols
+symbols = ["ETHUSDT"] # Replace with your desired symbols
 
 # API keys for authentication (potentially multiple keys for redundancy)
 api_keys = [
   [
     "api_key_1",
     "api_secret_1",
-    "symbol",
+    "NOTUSDT",
   ],
   [
     "api_key_2",
     "api_secret_2",
-    "symbol",
+    "DOGSUSDT",
   ],
 ]
 
@@ -42,3 +42,6 @@ rate_limit = 1000
 
 # Profit spread for  (e.g., 1 for 0.01% profit spread)
 bps = [27, 25]
+
+# use wmid when calculating 
+use_wmid = true

@@ -1,7 +1,7 @@
 workspace = { members = ["skeleton"] }
 [package]
 name = "rs_smm"
-version = "0.1.0"
+version = "0.1.2"
 edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
@@ -9,8 +9,16 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1.36.0", features = ["full"] }
 skeleton = { path = "./skeleton" }
-rs_bybit = "0.2.3"
+rs_bybit = "0.3.0"
 linfa-linear = "0.7.0"
 linfa = "0.7.0"
-ndarray = "0.15.6"
+ndarray = "0.15"
 binance = "0.21.0"
+
+
+[dev-dependencies]
+criterion = "0.5.1"
+
+[[bench]]
+name = 'bench_lin_reg'
+harness = false
