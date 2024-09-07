@@ -1,39 +1,38 @@
 # Configuration for your trading application
 
-exchange = "bybit" # Name of the exchange you're connecting to
+exchange = "bybit" # Name of the exchange you're connecting to (e.g., bybit, binance, both)
 
 # List of symbols to track and trade
-symbols = ["BTCUSDT", "ETHUSDT"] # Replace with your desired symbols
+symbols = ["NOTUSDT", "DOGSUSDT"] # Replace with your desired symbols
 
 # API keys for authentication (potentially multiple keys for redundancy)
 api_keys = [
   [
     "api_key_1",
     "api_secret_1",
-    "BTCUSDT",
+    "NOTUSDT",
   ],
   [
     "api_key_2",
     "api_secret_2",
-    "ETHUSDT",
+    "DOGSUSDT",
   ],
 ]
 
-# Initial balances for tracked symbols (symbol, balance in usd)
-balances = [["BTCUSDT", 1000.0], ["ETHUSDT", 1000.0]]
+# Initial balances for tracked symbols (symbol, balance)
+balances = [["NOTUSDT", 100.0], ["NOTUSDT", 100.0]]
 
 # Leverage for trading positions (e.g., 5.0 for 5x leverage)
 leverage = 10.0
 
 # Maximum number of orders to place on each side of the market
-orders_per_side = 30
+orders_per_side = 6
 
-# Final order distance for trailing stop orders (e.g., 0.01 for 1% price difference)
-final_order_distance = 35
+# Final order distance for orders (e.g., 10 for 10 * 25bps = 250bps or 2.5%)
+final_order_distance = 10
 
 # Number of order book levels (depth) to request from the exchange
-depths = [25, 125] # You can have multiple depths for different symbols
-
+depths = [4, 13, 32] # You can have multiple depths for different symbols
 
 # Rate limit for API calls (in milliseconds)
 rate_limit = 1000
@@ -41,5 +40,5 @@ rate_limit = 1000
 # Profit spread for  (e.g., 1 for 0.01% profit spread)
 bps = [27, 25]
 
-# Maximum number of orders to place on each side of the market
-use_wmid = true
+# use tick window for waiting and lookback period
+tick_window = 610

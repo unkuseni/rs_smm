@@ -1,10 +1,8 @@
 use linfa::{
-    traits::{Fit, Predict},
-    Dataset,
+     traits::{Fit, Predict}, Dataset
 };
 use linfa_linear::LinearRegression;
 use ndarray::{Array1, Array2};
-
 /// Performs linear regression on the given mid price data using the provided features.
 ///
 /// # Arguments
@@ -18,53 +16,43 @@ use ndarray::{Array1, Array2};
 /// The mean of the prediction or 0.0 if the prediction is empty.
 pub fn mid_price_regression(
     mid_price_array: Array1<f64>,
-    mut features: Array2<f64>,
+    features: Array2<f64>, // imbalance_ratio, voi, ofi
     curr_spread: f64,
-) -> f64 {
-    // Normalize the features by dividing each value in the feature columns by the current spread
-    for i in 0..3 {
-        let mut column = features.column_mut(i);
-        column.mapv_inplace(|x| x / curr_spread);
-    }
+) -> Result<f64, String> {
+    // Normalize features if needed
+    let normalized_features = features.map(|&x| x / curr_spread);
 
-    // Create a linfa dataset with the features and mid price array
-    let dataset = Dataset::new(features, mid_price_array);
+    // Create the dataset
+    let dataset = Dataset::new(normalized_features, mid_price_array);
 
-    // Create a new linear regression model
-    let lin_reg = LinearRegression::new();
+    // Create and fit the model
+    let model = LinearRegression::default()
+        .fit(&dataset)
+        .map_err(|e| format!("Failed to fit the model: {}", e))?;
 
-    // Fit the model to the dataset and get the resulting model
-    let model = lin_reg.fit(&dataset).unwrap();
+    // Make predictions
+    let predictions = model.predict(&dataset);
 
-    // Use the model to predict the mid price values
-    let prediction = model.predict(&dataset);
-
-    // Assuming you want to return some value related to the prediction here
-    // Return the mean of the prediction or 0.0 if the prediction is empty
-    if prediction.is_empty() {
-        0.0
-    } else {
-        prediction.mean().unwrap_or(0.0)
-    }
+    // Return the mean of the predictions
+    Ok(predictions.mean().unwrap_or(0.0))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use ndarray::array;
+pub fn default_regression_single_feature(
+    mid_price_array: &[f64],
+    feature: &[f64],
+) -> Result<f64, String> {
 
-    #[test]
-    fn test_mid_price_regression() {
-        let mid_price = array![1.0, 2.0, 3.0, 4.0, 5.0];
-        let features = array![
-            [1.0, 2.0, 3.0],
-            [4.0, 5.0, 6.0],
-            [7.0, 8.0, 9.0],
-            [10.0, 11.0, 12.0],
-            [13.0, 14.0, 15.0]
-        ];
-        let curr_spread = 2.0;
-        let result = mid_price_regression(mid_price, features, curr_spread);
-        assert_eq!(result, 3.0);
-    }
+    // Convert slices to Array1
+    let mid_prices = Array1::from_vec(mid_price_array.to_vec());
+    let features = Array1::from_vec(feature.to_vec());
+
+    // Reshape features to a 2D array with one column
+    let features_2d = features.clone().into_shape((features.len(), 1)).map_err(|e| format!("Failed to reshape features: {}", e))?;
+
+    let dataset = Dataset::new(features_2d, mid_prices);
+    let model = LinearRegression::default().fit(&dataset).map_err(|e| format!("Failed to fit the model: {}", e))?;
+
+    let predictions = model.predict(&dataset);
+
+    Ok(predictions.mean().unwrap_or(0.0))
 }

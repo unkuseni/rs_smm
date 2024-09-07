@@ -7,27 +7,26 @@ use binance::config::Config;
 use binance::futures::account::FuturesAccount;
 use binance::futures::general::FuturesGeneral;
 use binance::futures::model::Filters::PriceFilter;
-use binance::futures::model::{AccountInformation, OrderTradeEvent, OrderUpdate};
+use binance::futures::model::{OrderTradeEvent, OrderUpdate};
 use binance::futures::userstream::FuturesUserStream;
 use binance::model::{
-    AccountUpdateEvent, Asks, Bids, BookTickerEvent, ContinuousKline, DepthOrderBookEvent,
-    EventBalance, EventPosition, LiquidationOrder,
+    AccountUpdateEvent, Asks, Bids, BookTickerEvent, DepthOrderBookEvent, EventBalance,
+    EventPosition,
 };
 use binance::{api::Binance, futures::websockets::*, general::General};
 use bybit::model::{Category, FastExecData, WsTrade};
 use tokio::sync::mpsc;
+use tokio::task;
 
 use crate::util::localorderbook::{LocalBook, ProcessAsks, ProcessBids};
 
-use super::exchange::{PrivateData, ProcessTrade, TaggedPrivate};
+use super::exchange::{Exchange, PrivateData, ProcessTrade, TaggedPrivate};
 #[derive(Clone, Debug)]
 pub struct BinanceMarket {
     pub time: u64,
     pub books: Vec<(String, LocalBook)>,
-    pub klines: Vec<(String, VecDeque<ContinuousKline>)>,
     pub trades: Vec<(String, VecDeque<WsTrade>)>,
     pub tickers: Vec<(String, VecDeque<BookTickerEvent>)>,
-    pub liquidations: Vec<(String, VecDeque<LiquidationOrder>)>,
 }
 
 unsafe impl Send for BinanceMarket {}
@@ -38,10 +37,8 @@ impl Default for BinanceMarket {
         Self {
             time: 0,
             books: Vec::new(),
-            klines: Vec::new(),
             trades: Vec::new(),
             tickers: Vec::new(),
-            liquidations: Vec::new(),
         }
     }
 }
@@ -76,27 +73,84 @@ pub struct BinanceClient {
     pub secret: String,
 }
 
-impl Default for BinanceClient {
+impl Exchange for BinanceClient {
+    type Quoter<'a> = FuturesAccount;
+
     fn default() -> Self {
         Self {
-            key: String::new(),
-            secret: String::new(),
+            key: "".into(),
+            secret: "".into(),
         }
+    }
+
+    fn init<T>(key: T, secret: T) -> Self
+    where
+        T: Into<String>,
+    {
+        Self {
+            key: key.into(),
+            secret: secret.into(),
+        }
+    }
+
+    async fn time(&self) -> u64 {
+        task::spawn_blocking(move || {
+            let general: General = Binance::new(None, None);
+
+            match general.get_server_time() {
+                Ok(v) => v.server_time,
+                Err(_) => 0,
+            }
+        })
+        .await
+        .unwrap_or(0)
+    }
+    async fn fees(&self) -> f64 {
+        let key = self.key.clone();
+        let secret = self.secret.clone();
+        task::spawn_blocking(move || {
+            let client: FuturesAccount = Binance::new(Some(key), Some(secret));
+
+            match client.account_information() {
+                Ok(v) => v.fee_tier,
+                Err(_) => 0.0,
+            }
+        })
+        .await
+        .unwrap()
+    }
+
+    async fn set_leverage(&self, symbol: &str, leverage: u16) -> Result<String, String> {
+        let key = self.key.clone();
+        let secret = self.secret.clone();
+        let symbol = symbol.to_string();
+        task::spawn_blocking(move || {
+            let client: FuturesAccount = Binance::new(Some(key), Some(secret));
+
+            match client.change_initial_leverage(symbol, leverage as u8) {
+                Ok(_) => Ok(String::from("YES")),
+                Err(_) => Err("Failed to set leverage".into()),
+            }
+        })
+        .await
+        .unwrap()
+    }
+
+    fn trader<'a>(&'a self) -> Self::Quoter<'a> {
+        let config = {
+            let x = Config::default();
+            x.set_recv_window(2500)
+        };
+        let trader: FuturesAccount = Binance::new_with_config(
+            Some(self.key.to_string()),
+            Some(self.secret.to_string()),
+            &config,
+        );
+        trader
     }
 }
 
 impl BinanceClient {
-    pub fn init(key: String, secret: String) -> Self {
-        Self { key, secret }
-    }
-    pub fn exchange_time(&self) -> u64 {
-        let general: General = Binance::new(None, None);
-        match general.get_server_time() {
-            Ok(v) => v.server_time,
-            Err(_) => 0,
-        }
-    }
-
     pub fn market_subscribe(
         &self,
         symbol: Vec<String>,
@@ -141,14 +195,6 @@ impl BinanceClient {
                 }
             }
         }
-        market_data.klines = symbol
-            .iter()
-            .map(|s| (s.to_string(), VecDeque::with_capacity(2000)))
-            .collect::<Vec<(String, VecDeque<ContinuousKline>)>>();
-        market_data.liquidations = symbol
-            .iter()
-            .map(|s| (s.to_string(), VecDeque::with_capacity(2000)))
-            .collect::<Vec<(String, VecDeque<LiquidationOrder>)>>();
         market_data.trades = symbol
             .iter()
             .map(|s| (s.to_string(), VecDeque::with_capacity(5000)))
@@ -216,41 +262,6 @@ impl BinanceClient {
                     }
                     trades.push_back(agg.process_trade());
                 }
-                FuturesWebsocketEvent::Liquidation(liquidation) => {
-                    let sym = liquidation.liquidation_order.symbol.as_str();
-                    let liquidations = &mut market_data
-                        .liquidations
-                        .iter_mut()
-                        .find(|(s, _)| s == sym)
-                        .unwrap()
-                        .1;
-                    if liquidations.len() == liquidations.capacity()
-                        || (liquidations.capacity() - liquidations.len()) <= 5
-                    {
-                        for _ in 0..10 {
-                            liquidations.pop_front();
-                        }
-                    }
-                    liquidations.push_back(liquidation.liquidation_order);
-                }
-                FuturesWebsocketEvent::ContinuousKline(kline) => {
-                    let sym = kline.pair.as_str();
-                    let kline_data = &mut market_data
-                        .klines
-                        .iter_mut()
-                        .find(|(s, _)| s == sym)
-                        .unwrap()
-                        .1;
-                    if kline_data.len() == kline_data.capacity()
-                        || (kline_data.capacity() - kline_data.len()) <= 10
-                    {
-                        for _ in 0..30 {
-                            kline_data.pop_front();
-                        }
-                    }
-                    kline_data.push_back(kline.kline);
-                }
-
                 FuturesWebsocketEvent::BookTicker(ticker) => {
                     let sym = ticker.symbol.as_str();
                     let ticker_data = &mut market_data
@@ -287,20 +298,11 @@ impl BinanceClient {
             }
         }
     }
-    pub fn binance_trader(&self) -> FuturesAccount {
-        let config = {
-            let x = Config::default();
-            x.set_recv_window(2500)
-        };
-        let trader: FuturesAccount =
-            Binance::new_with_config(Some(self.key.clone()), Some(self.secret.clone()), &config);
-        trader
-    }
 
     pub fn private_subscribe(&self, sender: mpsc::UnboundedSender<TaggedPrivate>, symbol: String) {
         let mut delay = 600;
         let keep_running = AtomicBool::new(true); // Used to control the event loop
-        let user_stream: FuturesUserStream = Binance::new(Some(self.key.clone()), None);
+        let user_stream: FuturesUserStream = Binance::new(Some(self.key.to_string()), None);
 
         let mut private_data = BinancePrivate::default();
         let mut orders_keys: VecDeque<u64> = VecDeque::new();
@@ -385,13 +387,6 @@ impl BinanceClient {
             println!("Not able to start an User Stream (Check your API_KEY)");
         }
     }
-
-    pub fn fee_rate(&self) -> AccountInformation {
-        let client: FuturesAccount =
-            Binance::new(Some(self.key.clone()), Some(self.secret.clone()));
-        let info = client.account_information().unwrap();
-        info
-    }
 }
 
 fn bin_build_requests(symbol: &[String]) -> Vec<String> {
@@ -404,13 +399,6 @@ fn bin_build_requests(symbol: &[String]) -> Vec<String> {
         .map(|sub| format!("{}@aggTrade", sub))
         .collect();
     request_args.extend(trade_req);
-    let kline_req: Vec<String> = symbol
-        .iter()
-        .map(|sub| sub.to_lowercase())
-        .flat_map(|sym| vec![("5m", sym.clone()), ("1m", sym.clone())])
-        .map(|(interval, sub)| format!("{}_perpetual@@continuousKline_{}", sub, interval))
-        .collect();
-    request_args.extend(kline_req);
     let best_book: Vec<String> = symbol
         .iter()
         .map(|sub| sub.to_lowercase())
@@ -430,12 +418,6 @@ fn bin_build_requests(symbol: &[String]) -> Vec<String> {
         .map(|sub| format!("{}@bookTicker", sub))
         .collect();
     request_args.extend(tickers);
-    let liq_req: Vec<String> = symbol
-        .iter()
-        .map(|sub| sub.to_lowercase())
-        .map(|sub| format!("{}@forceOrder", sub))
-        .collect();
-    request_args.extend(liq_req);
     request_args
 }
 

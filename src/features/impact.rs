@@ -71,6 +71,8 @@ pub fn price_impact(new_book: &LocalBook, old_book: &LocalBook, depth: Option<us
     bid_impact + ask_impact
 }
 
+
+
 /// Calculates the expected value of a trade based on the old price, current price, and imbalance.
 ///
 /// # Arguments
@@ -83,19 +85,27 @@ pub fn price_impact(new_book: &LocalBook, old_book: &LocalBook, depth: Option<us
 /// The expected value of the trade.
 pub fn expected_value(old_price: f64, curr_price: f64, imbalance: f64) -> f64 {
     let norm_imb = imbalance.abs() / 100.0;
-    let price_change = if old_price == curr_price {
-        norm_imb * curr_price
-    } else {
-        let diff = curr_price - old_price;
-        diff * norm_imb
-    };
-
-    if imbalance > 0.0 || (imbalance < 0.0 && curr_price != old_price) {
-        curr_price + price_change
-    } else {
-        curr_price - price_change
-    }
+    let price_change = (curr_price - old_price) * norm_imb;
+    curr_price + price_change.copysign(imbalance)
 }
+
+
+pub fn improved_expected_value(old_price: f64, curr_price: f64, imbalance: f64) -> f64 {
+    // Input validation
+    if !((-1.0..=1.0).contains(&imbalance)) {
+        panic!("Imbalance must be between -1 and 1");
+    }
+
+    let norm_imb = imbalance.abs();
+
+    // Non-linear scaling: This will make small imbalances less impactful
+    // and large imbalances more impactful
+    let scaled_imb = norm_imb.powf(1.5);
+
+    let price_change = (curr_price - old_price) * scaled_imb;
+    curr_price + price_change.copysign(imbalance)
+}
+
 
 /// Calculates the change in the mid price relative to the average tick.
 ///
@@ -109,11 +119,7 @@ pub fn expected_value(old_price: f64, curr_price: f64, imbalance: f64) -> f64 {
 ///
 /// The change in the mid price relative to the average spread.
 pub fn mid_price_change(old_price: f64, curr_price: f64, avg_tick: f64) -> f64 {
-    // Calculate the difference in price between the old and current prices.
-    let diff = curr_price - old_price;
-
-    // Calculate the change in the mid price relative to the average tick_size.
-    diff / avg_tick
+    (curr_price - old_price) / avg_tick
 }
 
 /// Calculates the difference between the current price and the old price.
@@ -141,9 +147,9 @@ pub fn mid_price_diff(old_price: f64, curr_price: f64) -> f64 {
 /// # Returns
 ///
 /// The average of the two prices.
-pub fn mid_price_avg(old_price: f64, curr_price: f64) -> f64 {
-    // Calculate the average of the two prices by adding them together and dividing by two.
-    (old_price + curr_price) / 2.0
+pub fn mid_price_avg(old_mid: f64, curr_mid: f64) -> f64 {
+    // Calculate the average of the two  midprices by adding them together and dividing by two.
+    (old_mid + curr_mid) / 2.0
 }
 
 /// Calculates the basis of the average trade price relative to the mid price.
@@ -202,12 +208,9 @@ pub fn expected_return(old_price: f64, curr_price: f64) -> f64 {
 ///
 /// The price fluctuation as a logarithmic value.
 pub fn price_flu(old_price: f64, curr_price: f64) -> f64 {
-    // Calculate the absolute difference between the current price and the old price.
-    let diff = curr_price - old_price;
-
     // Calculate the price fluctuation by dividing the absolute difference by the current price,
     // multiplying by 10,000.
-    (diff / curr_price) * 10000.0
+    (curr_price - old_price).abs() * 10000.0 / curr_price
 }
 
 /// Calculates the average trade price based on the current mid price, the old trades,

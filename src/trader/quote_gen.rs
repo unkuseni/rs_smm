@@ -9,10 +9,10 @@ use skeleton::{
     exchanges::{
         ex_binance::BinanceClient,
         ex_bybit::BybitClient,
-        exchange::{ExchangeClient, PrivateData},
+        exchange::{Client, Exchange, PrivateData},
     },
     util::{
-        helpers::{geometric_weights, geomspace, round_step, Round},
+        helpers::{geometric_weights, geomspace, nbsqrt, round_step, Round},
         localorderbook::LocalBook,
     },
 };
@@ -54,7 +54,6 @@ enum OrderManagement {
 /// The `QuoteGenerator` struct is used to generate quotes for a market making strategy.
 /// It contains the following fields:
 ///
-/// * `asset` - The asset value.
 /// * `client` - The exchange client used to place orders. It can be either a Bybit or Binance client.
 /// * `minimum_spread` - The minimum spread that the quote generator will use.
 /// * `live_buys_orders` - A queue of live buy orders that have been placed.
@@ -70,7 +69,6 @@ enum OrderManagement {
 /// * `time_limit` - The time limit of the exchange.
 /// * `cancel_limit` - The cancel limit of the exchange.
 pub struct QuoteGenerator {
-    asset: f64,
     client: OrderManagement,
     minimum_spread: f64,
     pub live_buys_orders: VecDeque<LiveOrder>,
@@ -82,6 +80,7 @@ pub struct QuoteGenerator {
     adjusted_spread: f64,
     final_order_distance: f64,
     last_update_price: f64,
+    initial_limit: u32,
     rate_limit: u32,
     time_limit: u64,
     cancel_limit: u32,
@@ -103,24 +102,22 @@ impl QuoteGenerator {
     ///
     /// A new `QuoteGenerator` instance.
     pub fn new(
-        client: ExchangeClient, // The exchange client used to place orders.
-        asset: f64,             // The asset value.
-        leverage: f64,          // The leverage value.
-        orders_per_side: usize,  // The total number of orders to be placed on each side.
+        client: Client,            // The exchange client used to place orders.
+        asset: f64,                // The asset value.
+        leverage: f64,             // The leverage value.
+        orders_per_side: usize,    // The total number of orders to be placed on each side.
         final_order_distance: f64, // The final order distance that the quote generator will use.
-        rate_limit: u32,         // The rate limit of the exchange.
+        rate_limit: u32,           // The rate limit of the exchange.
     ) -> Self {
         // Create the appropriate trader based on the exchange client.
         // If the client is a Bybit client, create a Bybit trader.
         // If the client is a Binance client, create a Binance trader.
         let trader = match client {
-            ExchangeClient::Bybit(cl) => OrderManagement::Bybit(cl),
-            ExchangeClient::Binance(cl) => OrderManagement::Binance(cl),
+            Client::Bybit(cl) => OrderManagement::Bybit(cl),
+            Client::Binance(cl) => OrderManagement::Binance(cl),
         };
         // Create a new `QuoteGenerator` instance.
         QuoteGenerator {
-            // Set the asset value multiplied by the leverage.
-            asset: asset * leverage,
             // Set the client to the created trader.
             client: trader,
             // Create empty VecDeque for live buy orders with a capacity of 5.
@@ -132,7 +129,7 @@ impl QuoteGenerator {
             // Set the inventory delta to 0.0.
             inventory_delta: 0.0,
             // Set the maximum position USD to 0.0.
-            max_position_usd: 0.0,
+            max_position_usd: QuoteGenerator::update_max(asset, leverage),
             // Set the total order to twice the number of orders per side.
             total_order: orders_per_side * 2,
             // Set the preferred spread to 0.0.
@@ -145,6 +142,8 @@ impl QuoteGenerator {
             // Initialize the last update price to 0.0.
             last_update_price: 0.0,
 
+            // Set the intial rate limit to the provided value.
+            initial_limit: rate_limit,
             // Set the rate limit to the provided value.
             rate_limit,
 
@@ -171,10 +170,10 @@ impl QuoteGenerator {
     /// The `max_position_usd` field is used to determine the maximum amount of USD that can be allocated
     /// for the trading position. This value is used to calculate the maximum position quantity based on the
     /// current market conditions.
-    pub fn update_max(&mut self) {
+    pub fn update_max(asset: f64, leverage: f64) -> f64 {
         // Calculate the maximum position USD by multiplying the asset value by 0.95.
-        let safety_margin: f64 = 0.95;
-        self.max_position_usd = self.asset * safety_margin;
+        let safety_margin: f64 = 0.93;
+        (asset * leverage) * safety_margin
     }
 
     /// Sets the preferred spread for the quote generator.
@@ -227,10 +226,10 @@ impl QuoteGenerator {
     ///
     /// The resulting inventory delta is then assigned to the `inventory_delta` field, which is a
     /// measure of the position's exposure to the market.
-    pub fn inventory_delta(&mut self) {
+    pub fn inventory_delta(&mut self, book: &LocalBook) {
         // Calculate the inventory delta by dividing the position quantity by the maximum position
         // quantity in USD.
-        self.inventory_delta = self.position / self.max_position_usd;
+        self.inventory_delta = (self.position * book.get_mid_price()) / self.max_position_usd;
     }
 
     /// Adjusts the spread by clipping it to a minimum spread and a maximum spread.
@@ -256,8 +255,8 @@ impl QuoteGenerator {
         let min_spread = {
             // If the preferred spread is 0.0, the minimum spread is 25 basis points times the mid price of the order book.
             if preferred_spread == 0.0 {
-                bps_to_decimal(25.0) * book.get_mid_price()
-            } 
+                bps_to_decimal(27.0) * book.get_mid_price()
+            }
             // Otherwise, the minimum spread is the preferred spread converted to decimal format times the mid price of the order book.
             else {
                 bps_to_decimal(preferred_spread) * book.get_mid_price()
@@ -296,13 +295,7 @@ impl QuoteGenerator {
     /// If imbalance is buy heavy use positive skew quotes, for sell heavy use negative skew quotes
     /// but for liquidations use the opposite, buy = negative skew & sell = positive skew meaning
     /// sell orders are easily filled in these periods and buy orders also
-    fn generate_quotes(
-        &mut self,
-        symbol: String,
-        book: &LocalBook,
-        imbalance: f64,
-        skew: f64,
-    ) -> Vec<BatchOrder> {
+    fn generate_quotes(&mut self, symbol: String, book: &LocalBook, skew: f64) -> Vec<BatchOrder> {
         // Get the start price from the order book.
         let start = book.get_mid_price();
 
@@ -318,27 +311,15 @@ impl QuoteGenerator {
         // Get the minimum notional from the order book.
         let notional = book.min_notional;
 
+        // Get the corrected skew value.
+        let corrected_skew = skew * (1.0 - nbsqrt(self.inventory_delta));
         // Generate the orders based on the skew value.
-        let mut orders = if skew >= 0.0 {
+        let mut orders = if corrected_skew >= 0.00 {
             // If skew is positive, generate positive skew orders.
-            self.positive_skew_orders(
-                half_spread,
-                curr_spread,
-                start,
-                imbalance.abs(),
-                notional,
-                book,
-            )
+            self.positive_skew_orders(half_spread, curr_spread, start, skew.abs(), notional, book)
         } else {
             // If skew is negative, generate negative skew orders.
-            self.negative_skew_orders(
-                half_spread,
-                curr_spread,
-                start,
-                imbalance.abs(),
-                notional,
-                book,
-            )
+            self.negative_skew_orders(half_spread, curr_spread, start, skew.abs(), notional, book)
         };
 
         // Add the symbol to each order.
@@ -372,7 +353,7 @@ impl QuoteGenerator {
         book: &LocalBook,
     ) -> Vec<BatchOrder> {
         // Calculate the best bid and ask prices.
-        let best_bid = start - (half_spread * (1.0 - aggression));
+        let best_bid = start - (half_spread * (1.0 - aggression.sqrt()));
         let best_ask = best_bid + curr_spread;
 
         // Calculate the end prices for bid and ask prices.
@@ -385,14 +366,17 @@ impl QuoteGenerator {
         let mut ask_prices = geomspace(ask_end, best_ask, self.total_order / 2);
         ask_prices.reverse();
 
+        let clipped_r = aggression.clip(0.27, 0.73);
+
         // Generate the bid sizes.
-        let bid_sizes = if bid_prices.is_empty() {
+        let bid_sizes = if bid_prices.is_empty() || self.inventory_delta >= 0.90 {
             vec![]
         } else {
             // Calculate the maximum buy quantity.
-            let max_buy_qty = (self.max_position_usd / 2.0) - self.position;
+            let max_buy_qty =
+                (self.max_position_usd / 2.0) - (self.position * book.get_mid_price());
             // Calculate the size weights.
-            let size_weights = geometric_weights(0.63, self.total_order / 2, true);
+            let size_weights = geometric_weights(clipped_r, self.total_order / 2, true);
             // Calculate the sizes.
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_buy_qty).collect();
 
@@ -404,7 +388,8 @@ impl QuoteGenerator {
             vec![]
         } else {
             // Calculate the maximum sell quantity.
-            let max_sell_qty = (self.max_position_usd / 2.0) + self.position;
+            let max_sell_qty =
+                (self.max_position_usd / 2.0) + (self.position * book.get_mid_price());
             // Calculate the size weights.
             let size_weights = geometric_weights(0.37, self.total_order / 2, false);
             // Calculate the sizes.
@@ -418,11 +403,13 @@ impl QuoteGenerator {
         let mut orders = vec![];
         for (i, bid) in bid_prices.iter().enumerate() {
             // Create a new batch order with the bid size, price, and quantity.
-            orders.push(BatchOrder::new(
-                round_size(bid_sizes[i] / *bid, book),
-                round_price(book, *bid),
-                1,
-            ));
+            if bid_sizes.len() >= 1 {
+                orders.push(BatchOrder::new(
+                    round_size(bid_sizes[i] / *bid, book),
+                    round_price(book, *bid),
+                    1,
+                ));
+            }
             // Create a new batch order with the ask size, price, and quantity.
             orders.push(BatchOrder::new(
                 round_size(ask_sizes[i] / ask_prices[i], book),
@@ -460,7 +447,7 @@ impl QuoteGenerator {
         book: &LocalBook,
     ) -> Vec<BatchOrder> {
         // Calculate the best bid and ask prices.
-        let best_ask = start + (half_spread * (1.0 - aggression));
+        let best_ask = start + (half_spread * (1.0 - aggression.sqrt()));
         let best_bid = best_ask - curr_spread;
 
         // Calculate the end prices for bid and ask prices.
@@ -473,22 +460,25 @@ impl QuoteGenerator {
         let mut ask_prices = geomspace(ask_end, best_ask, self.total_order / 2);
         ask_prices.reverse();
 
+        let clipped_r = aggression.clip(0.27, 0.73);
         // Generate the bid sizes.
         let bid_sizes = if bid_prices.is_empty() {
             vec![]
         } else {
-            let max_bid_qty = (self.max_position_usd / 2.0) - self.position;
+            let max_bid_qty =
+                (self.max_position_usd / 2.0) - (self.position * book.get_mid_price());
             let size_weights = geometric_weights(0.37, self.total_order / 2, true);
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_bid_qty).collect();
 
             sizes
         };
         // Generate the ask sizes.
-        let ask_sizes = if ask_prices.is_empty() {
+        let ask_sizes = if ask_prices.is_empty() || self.inventory_delta <= -0.90 {
             vec![]
         } else {
-            let max_sell_qty = (self.max_position_usd / 2.0) + self.position;
-            let size_weights = geometric_weights(0.63, self.total_order / 2, false);
+            let max_sell_qty =
+                (self.max_position_usd / 2.0) + (self.position * book.get_mid_price());
+            let size_weights = geometric_weights(clipped_r, self.total_order / 2, false);
             let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
             sizes.reverse();
 
@@ -504,13 +494,14 @@ impl QuoteGenerator {
                 round_price(book, *bid),
                 1,
             ));
-
-            // Create a new batch order with the ask size, price, and quantity.
-            orders.push(BatchOrder::new(
-                round_size(ask_sizes[i] / ask_prices[i], book),
-                round_price(book, ask_prices[i]),
-                -1,
-            ));
+            if ask_sizes.len() >= 1 {
+                // Create a new batch order with the ask size, price, and quantity.
+                orders.push(BatchOrder::new(
+                    round_size(ask_sizes[i] / ask_prices[i], book),
+                    round_price(book, ask_prices[i]),
+                    -1,
+                ));
+            }
         }
 
         // filter orders  based on notional      // filter orders  based on notional
@@ -542,7 +533,7 @@ impl QuoteGenerator {
                         self.live_buys_orders.push_back(order);
                     }
                     // Sort the live buys queue and update it.
-                    let sorted_buys = sort_grid(self.live_buys_orders.clone(), -1);
+                    let sorted_buys = sort_grid(&mut self.live_buys_orders, -1);
                     self.live_buys_orders = sorted_buys;
 
                     // Push the orders from the second response to the live sells queue.
@@ -550,11 +541,13 @@ impl QuoteGenerator {
                         self.live_sells_orders.push_back(order);
                     }
                     // Sort the live sells queue and update it.
-                    let sorted_sells = sort_grid(self.live_sells_orders.clone(), 1);
+                    let sorted_sells = sort_grid(&mut self.live_sells_orders, 1);
                     self.live_sells_orders = sorted_sells;
                 }
                 // If there is an error, print the error message.
-                _ => {}
+                Err(_) => {
+                    println!("Batch order error");
+                }
             }
         }
     }
@@ -577,14 +570,22 @@ impl QuoteGenerator {
                 if side == "Buy" {
                     for (i, order) in self.live_buys_orders.clone().iter().enumerate() {
                         if order.order_id == order_id {
-                            self.position += order.price * order.qty;
+                            self.position += order.qty;
+                            println!(
+                                "Buy order filled: ID {}, Qty {}, New position {}",
+                                order_id, exec_qty, self.position
+                            );
                             self.live_buys_orders.remove(i);
                         }
                     }
                 } else {
                     for (i, order) in self.live_sells_orders.clone().iter().enumerate() {
                         if order.order_id == order_id {
-                            self.position -= order.price * order.qty;
+                            self.position -= order.qty;
+                            println!(
+                                "Sell order filled: ID {}, Qty {}, New position {}",
+                                order_id, exec_qty, self.position
+                            );
                             self.live_sells_orders.remove(i);
                         }
                     }
@@ -593,7 +594,12 @@ impl QuoteGenerator {
         }
     }
 
-    async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) -> bool {
+    async fn out_of_bounds(
+        &mut self,
+        book: &LocalBook,
+        symbol: String,
+        private: PrivateData,
+    ) -> bool {
         // Initialize the `out_of_bounds` boolean to `false`.
         let mut out_of_bounds = false;
         let bounds = {
@@ -604,14 +610,37 @@ impl QuoteGenerator {
             }
         };
         let (current_bid_bounds, current_ask_bounds) = (
-            self.last_update_price - bounds,
-            self.last_update_price + bounds,
+            self.live_sells_orders
+                .front()
+                .unwrap_or(&LiveOrder {
+                    price: self.last_update_price + bounds,
+                    qty: 0.0,
+                    order_id: "default".to_string(),
+                })
+                .clone()
+                .price,
+            self.live_buys_orders
+                .front()
+                .unwrap_or(&LiveOrder {
+                    price: self.last_update_price - bounds,
+                    qty: 0.0,
+                    order_id: "default".to_string(),
+                })
+                .clone()
+                .price,
         );
+
+        // Check if there are any fills in the private data by calling the
+        // `check_for_fills` method.
+        self.check_for_fills(private);
 
         // If there are no live orders, return `true`.
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
+            // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
+            // Set the `last_update_price` to the mid price of the order book.
             self.last_update_price = book.mid_price;
+            //  Return the `out_of_bounds` boolean.
             return out_of_bounds;
         } else if self.last_update_price != 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
@@ -619,7 +648,7 @@ impl QuoteGenerator {
                 if book.mid_price < current_bid_bounds || book.mid_price > current_ask_bounds {
                     if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
                         out_of_bounds = true;
-                        println!("Cancelling all orders for {}", symbol);
+
                         for cancelled_order in v.clone() {
                             for (i, live_order) in
                                 self.live_buys_orders.clone().iter_mut().enumerate()
@@ -655,25 +684,18 @@ impl QuoteGenerator {
     ///
     /// * `wallet` - Private data of the wallet.
     /// * `skew` - Skew of the order book.
-    /// * `imbalance` - Imbalance of the order book.
     /// * `book` - Current order book.
     /// * `symbol` - String representing the symbol.
-    /// * `price_flu` - Price fluctuation of the order book.
     pub async fn update_grid(
         &mut self,
         private: PrivateData,
         skew: f64,
-        imbalance: f64,
         book: LocalBook,
         symbol: String,
-        rate_limit: u32,
     ) {
         // First, update the adjusted spread by calling the `adjusted_spread` method
         // with the minimum spread and the order book.
         self.adjusted_spread = QuoteGenerator::adjusted_spread(self.minimum_spread, &book);
-
-        // Next, update the inventory delta by calling the `inventory_delta` method.
-        self.inventory_delta();
 
         // If the time limit is greater than 1, check if the order book's last update
         // is greater than the time limit minus 1000 milliseconds.
@@ -681,24 +703,23 @@ impl QuoteGenerator {
         if self.time_limit > 1 {
             let condition = (book.last_update - self.time_limit) > 1000;
             if condition == true {
-                self.rate_limit = rate_limit;
-                self.cancel_limit = rate_limit;
+                self.rate_limit = self.initial_limit;
+                self.cancel_limit = self.initial_limit;
             }
         }
 
-        // Check if there are any fills in the private data by calling the
-        // `check_for_fills` method.
-        self.check_for_fills(private);
-        match self.out_of_bounds(&book, symbol.clone()).await {
+        match self.out_of_bounds(&book, symbol.clone(), private).await {
             true => {
-                let orders = self.generate_quotes(symbol.clone(), &book, imbalance, skew);
+                // Next, update the inventory delta by calling the `inventory_delta` method.
+                self.inventory_delta(&book);
+                let orders = self.generate_quotes(symbol.clone(), &book, skew);
 
-        // Check if the order book is out of bounds with the given symbol by calling
-        // the `out_of_bounds` method.
-        // If it is out of bounds, generate quotes for the grid based on the order book,
-        // symbol, imbalance, skew, and price fluctuation.
-        // If the rate limit is greater than 1, send the generated orders to the book.
-        // Finally, update the time limit to the order book's last update.
+                // Check if the order book is out of bounds with the given symbol by calling
+                // the `out_of_bounds` method.
+                // If it is out of bounds, generate quotes for the grid based on the order book,
+                // symbol, imbalance, skew, and price fluctuation.
+                // If the rate limit is greater than 1, send the generated orders to the book.
+                // Finally, update the time limit to the order book's last update.
                 if self.rate_limit > 1 {
                     self.send_batch_orders(orders).await;
                 }
@@ -708,7 +729,6 @@ impl QuoteGenerator {
 
             false => {}
         }
-
     }
 }
 
@@ -770,29 +790,26 @@ fn round_size(qty: f64, book: &LocalBook) -> f64 {
 /// It sorts the `VecDeque` in ascending order if the `side` is greater than 1.
 /// Otherwise, it sorts the `VecDeque` in descending order.
 /// It then returns a new `VecDeque` with the sorted orders.
-fn sort_grid(orders: VecDeque<LiveOrder>, side: i32) -> VecDeque<LiveOrder> {
-    // Create a new `Vec` by consuming the `VecDeque`
-    let mut vec = Vec::from(orders);
-
-    // Sort the `Vec` either in ascending or descending order based on the `side`
-    if side > 0 {
-        vec.sort_by(|a, b| a.partial_cmp(b).unwrap()); // Sort the Vec in ascending order
-    } else {
-        vec.sort_by(|a, b| b.partial_cmp(a).unwrap()); // Sort the Vec in descending order
-    }
-
-    // Create a new `VecDeque` by consuming the sorted `Vec`
-    let sorted_vecdeque: VecDeque<LiveOrder> = VecDeque::from(vec);
-
-    // Return the sorted `VecDeque`
-    sorted_vecdeque
+fn sort_grid(orders: &mut VecDeque<LiveOrder>, side: i32) -> VecDeque<LiveOrder> {
+    orders.make_contiguous().sort_by(|a, b| {
+        if side > 0 {
+            a.price
+                .partial_cmp(&b.price)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        } else {
+            b.price
+                .partial_cmp(&a.price)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }
+    });
+    orders.clone()
 }
 
 impl OrderManagement {
     async fn place_buy_limit(&self, qty: f64, price: f64, symbol: &str) -> Result<LiveOrder, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
-                let client = trader.clone().bybit_trader();
+                let client = trader.trader();
                 if let Ok(v) = client
                     .place_futures_limit_order(
                         bybit::model::Category::Linear,
@@ -813,7 +830,7 @@ impl OrderManagement {
                 let symbol = symbol.to_owned();
                 let client = trader.clone();
                 let task = task::spawn_blocking(move || {
-                    if let Ok(v) = client.binance_trader().limit_buy(
+                    if let Ok(v) = client.trader().limit_buy(
                         symbol,
                         qty,
                         price,
@@ -832,7 +849,7 @@ impl OrderManagement {
     async fn place_sell_limit(&self, qty: f64, price: f64, symbol: &str) -> Result<LiveOrder, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
-                let client = trader.clone().bybit_trader();
+                let client = trader.trader();
                 if let Ok(v) = client
                     .place_futures_limit_order(
                         bybit::model::Category::Linear,
@@ -853,7 +870,7 @@ impl OrderManagement {
                 let symbol = symbol.to_owned();
                 let client = trader.clone();
                 let task = tokio::task::spawn_blocking(move || {
-                    if let Ok(v) = client.binance_trader().limit_sell(
+                    if let Ok(v) = client.trader().limit_sell(
                         symbol,
                         qty,
                         price,
@@ -872,7 +889,7 @@ impl OrderManagement {
     async fn market_buy(&self, qty: f64, symbol: &str) -> Result<LiveOrder, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
-                let client = trader.clone().bybit_trader();
+                let client = trader.trader();
                 let req = OrderRequest {
                     category: bybit::model::Category::Linear,
                     symbol: Cow::Owned(symbol.to_string()),
@@ -892,7 +909,7 @@ impl OrderManagement {
                 let symbol = symbol.to_owned();
                 let client = trader.clone();
                 let task = tokio::task::spawn_blocking(move || {
-                    if let Ok(v) = client.binance_trader().market_buy(symbol, qty) {
+                    if let Ok(v) = client.trader().market_buy(symbol, qty) {
                         Ok(LiveOrder::new(v.avg_price, qty, v.order_id.to_string()))
                     } else {
                         println!("Could not place market order for {} qty", qty);
@@ -907,7 +924,7 @@ impl OrderManagement {
     async fn market_sell(&self, qty: f64, symbol: &str) -> Result<LiveOrder, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
-                let client = trader.clone().bybit_trader();
+                let client = trader.trader();
                 let req = OrderRequest {
                     category: bybit::model::Category::Linear,
                     symbol: Cow::Owned(symbol.to_string()),
@@ -928,7 +945,7 @@ impl OrderManagement {
                 let symbol = symbol.to_owned();
                 let client = trader.clone();
                 let task = tokio::task::spawn_blocking(move || {
-                    if let Ok(v) = client.binance_trader().market_sell(symbol, qty) {
+                    if let Ok(v) = client.trader().market_sell(symbol, qty) {
                         Ok(LiveOrder::new(v.avg_price, qty, v.order_id.to_string()))
                     } else {
                         println!("Could not place market order for {} qty", qty);
@@ -949,7 +966,7 @@ impl OrderManagement {
     ) -> Result<LiveOrder, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
-                let client = trader.clone().bybit_trader();
+                let client = trader.trader();
                 let req = AmendOrderRequest {
                     category: bybit::model::Category::Linear,
                     order_id: Some(Cow::Borrowed(order.order_id.as_str())),
@@ -973,10 +990,10 @@ impl OrderManagement {
                 let client = trader.clone();
                 let task = tokio::task::spawn_blocking(move || {
                     if let Ok(_) = client
-                        .binance_trader()
+                        .trader()
                         .cancel_order(symbol.clone(), order.order_id.parse::<u64>().unwrap())
                     {
-                        if let Ok(v) = client.binance_trader().limit_sell(
+                        if let Ok(v) = client.trader().limit_sell(
                             symbol,
                             qty,
                             price.unwrap(),
@@ -998,7 +1015,7 @@ impl OrderManagement {
     async fn cancel_order(&self, order: LiveOrder, symbol: &str) -> Result<LiveOrder, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
-                let client = trader.clone().bybit_trader();
+                let client = trader.trader();
                 let req = CancelOrderRequest {
                     category: bybit::model::Category::Linear,
                     symbol: Cow::Borrowed(symbol),
@@ -1018,7 +1035,7 @@ impl OrderManagement {
                 let client = trader.clone();
                 let task = task::spawn_blocking(move || {
                     if let Ok(v) = client
-                        .binance_trader()
+                        .trader()
                         .cancel_order(symbol, order.order_id.parse::<u64>().unwrap())
                     {
                         Ok(LiveOrder::new(
@@ -1039,7 +1056,7 @@ impl OrderManagement {
         let mut arr = vec![];
         match self {
             OrderManagement::Bybit(trader) => {
-                let client = trader.clone().bybit_trader();
+                let client = trader.trader();
                 let req = CancelallRequest {
                     category: bybit::model::Category::Linear,
                     symbol: symbol,
@@ -1059,7 +1076,7 @@ impl OrderManagement {
                 let symbol = symbol.to_owned();
                 let client = trader.clone();
                 let task = task::spawn_blocking(move || {
-                    if let Ok(_) = client.binance_trader().cancel_all_open_orders(symbol) {
+                    if let Ok(_) = client.trader().cancel_all_open_orders(symbol) {
                         Ok(arr)
                     } else {
                         Err(())
@@ -1078,7 +1095,7 @@ impl OrderManagement {
         let mut arr = vec![];
         match self {
             OrderManagement::Bybit(trader) => {
-                let client = trader.clone().bybit_trader();
+                let client = trader.trader();
                 let req = BatchCancelRequest {
                     category: bybit::model::Category::Linear,
                     requests: {
@@ -1165,7 +1182,7 @@ impl OrderManagement {
         // Place the orders with Bybit
         match self {
             OrderManagement::Bybit(trader) => {
-                let client = trader.clone().bybit_trader();
+                let client = trader.trader();
                 let od_clone = order_array.clone();
                 let req = BatchPlaceRequest {
                     category: bybit::model::Category::Linear,
@@ -1231,7 +1248,7 @@ impl OrderManagement {
                 };
                 let task = task::spawn_blocking(move || {
                     if let Ok(_) = client
-                        .binance_trader()
+                        .trader()
                         .custom_batch_orders(order_array.len().try_into().unwrap(), order_requests)
                     {
                         // TODO: Implement live order tracking for Binance
@@ -1253,7 +1270,7 @@ impl OrderManagement {
     ) -> Result<Vec<LiveOrder>, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
-                let client = trader.clone().bybit_trader();
+                let client = trader.trader();
                 let order_clone = orders.clone();
                 let req = BatchAmendRequest {
                     category: bybit::model::Category::Linear,

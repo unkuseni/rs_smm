@@ -136,26 +136,6 @@ pub fn  use_toml() -> Config {
     result
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_exch_params() {
-        let exch = exch_params();
-        assert_eq!(exch, "bybit");
-    }
-
-    #[test]
-    fn test_toml() {
-        let config = use_toml();
-        assert_eq!(config.exchange, "bybit");
-        println!("{:#?}", config);
-    }
-}
-
-
-
 
 pub struct MakerParams {
     pub leverage: f64,

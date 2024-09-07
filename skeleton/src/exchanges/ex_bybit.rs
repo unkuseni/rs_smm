@@ -5,28 +5,38 @@ use bybit::{
     general::General,
     market::MarketData,
     model::{
-        Category, FastExecData, InstrumentRequest, KlineData, LinearTickerData, LiquidationData,
+        Category, FastExecData, InstrumentRequest, LeverageRequest, LinearTickerData,
         OrderBookUpdate, OrderData, PositionData, Subscription, Tickers, WalletData,
         WebsocketEvents, WsTrade,
     },
+    position::PositionManager,
     trade::Trader,
     ws::Stream as BybitStream,
 };
-use std::{collections::VecDeque, time::Duration};
+use std::{borrow::Cow, collections::VecDeque, time::Duration};
 use tokio::sync::mpsc;
 
 use crate::util::localorderbook::LocalBook;
 
-use super::exchange::{PrivateData, TaggedPrivate};
+use super::exchange::{Exchange, PrivateData, TaggedPrivate};
 
 #[derive(Clone, Debug)]
 pub struct BybitMarket {
     pub time: u64,
     pub books: Vec<(String, LocalBook)>,
-    pub klines: Vec<(String, VecDeque<KlineData>)>,
     pub trades: Vec<(String, VecDeque<WsTrade>)>,
     pub tickers: Vec<(String, VecDeque<LinearTickerData>)>,
-    pub liquidations: Vec<(String, VecDeque<LiquidationData>)>,
+}
+
+impl Default for BybitMarket {
+    fn default() -> Self {
+        Self {
+            time: 0,
+            books: Vec::new(),
+            trades: Vec::new(),
+            tickers: Vec::new(),
+        }
+    }
 }
 
 unsafe impl Send for BybitMarket {}
@@ -62,34 +72,28 @@ pub struct BybitClient {
     pub secret: String,
 }
 
-impl Default for BybitMarket {
+impl Exchange for BybitClient {
+
+    type Quoter<'a> = Trader<'a>;
+
     fn default() -> Self {
         Self {
-            time: 0,
-            books: Vec::new(),
-            klines: Vec::new(),
-            trades: Vec::new(),
-            tickers: Vec::new(),
-            liquidations: Vec::new(),
+            key: "".into(),
+            secret: "".into(),
         }
     }
-}
 
-impl Default for BybitClient {
-    fn default() -> Self {
+    fn init<T>(key: T, secret: T) -> Self
+    where
+        T: Into<String>,
+    {
         Self {
-            key: String::new(),
-            secret: String::new(),
+            key: key.into(),
+            secret: secret.into(),
         }
     }
-}
 
-impl BybitClient {
-    pub fn init(key: String, secret: String) -> Self {
-        Self { key, secret }
-    }
-
-    pub async fn exchange_time(&self) -> u64 {
+    async fn time(&self) -> u64 {
         let general: General = Bybit::new(None, None);
         general
             .get_server_time()
@@ -98,12 +102,13 @@ impl BybitClient {
             .unwrap_or(0)
     }
 
-    pub async fn fee_rate(&self, symbol: &str) -> f64 {
-        let account: AccountManager = Bybit::new(Some(self.key.clone()), Some(self.secret.clone()));
+    async fn fees(&self) -> f64 {
+        let account: AccountManager = Bybit::new(
+            Some(Cow::Borrowed(&self.key)),
+            Some(Cow::Borrowed(&self.secret)),
+        );
         let rate;
-        let response = account
-            .get_fee_rate(Category::Linear, Some(symbol.to_string()))
-            .await;
+        let response = account.get_fee_rate(Category::Linear, None).await;
         if let Ok(v) = response {
             rate = v.result.list[0].maker_fee_rate.parse().unwrap();
         } else {
@@ -111,16 +116,38 @@ impl BybitClient {
         }
         rate
     }
-    pub fn bybit_trader(&self) -> Trader {
+
+    async fn set_leverage(&self, symbol: &str, leverage: u16) -> Result<String, String> {
+        let account: PositionManager = Bybit::new(
+            Some(Cow::Borrowed(&self.key)),
+            Some(Cow::Borrowed(&self.secret)),
+        );
+        let req = LeverageRequest {
+            category: Category::Linear,
+            symbol: Cow::Borrowed(symbol),
+            leverage: leverage as i8,
+        };
+        match account.set_leverage(req).await {
+            Ok(res) => Ok(res.ret_msg),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+
+    fn trader<'a>(&'a self) -> Trader<'a> {
         let config = {
             let x = Config::default();
             x.set_recv_window(2500)
         };
-        let trader: Trader =
-            Bybit::new_with_config(&config, Some(self.key.clone()), Some(self.secret.clone()));
+        let trader: Trader = Bybit::new_with_config(
+            &config,
+            Some(Cow::Borrowed(&self.key)),
+            Some(Cow::Borrowed(&self.secret)),
+        );
         trader
     }
+}
 
+impl BybitClient {
     pub async fn market_subscribe(
         &self,
         symbol: Vec<String>,
@@ -156,15 +183,6 @@ impl BybitClient {
                 }
             }
         }
-        market_data.klines = symbol
-            .iter()
-            .map(|s| (s.to_string(), VecDeque::with_capacity(2000)))
-            .collect::<Vec<(String, VecDeque<KlineData>)>>();
-
-        market_data.liquidations = symbol
-            .iter()
-            .map(|s| (s.to_string(), VecDeque::with_capacity(2000)))
-            .collect::<Vec<(String, VecDeque<LiquidationData>)>>();
         market_data.trades = symbol
             .iter()
             .map(|s| (s.to_string(), VecDeque::with_capacity(5000)))
@@ -195,23 +213,6 @@ impl BybitClient {
                     } else {
                         book.update(data.bids, data.asks, timestamp);
                     }
-                }
-                WebsocketEvents::KlineEvent(klines) => {
-                    let sym = klines.topic.split('.').nth(2).unwrap();
-                    let kline = &mut market_data
-                        .klines
-                        .iter_mut()
-                        .find(|(s, _)| s == sym)
-                        .unwrap()
-                        .1;
-                    if kline.len() == kline.capacity()
-                        || (kline.capacity() - kline.len()) <= klines.data.len()
-                    {
-                        for _ in 0..klines.data.len() {
-                            kline.pop_front();
-                        }
-                    }
-                    kline.extend(klines.data);
                 }
                 WebsocketEvents::TickerEvent(tick) => {
                     let sym = tick.topic.split('.').nth(1).unwrap();
@@ -250,23 +251,6 @@ impl BybitClient {
                     }
                     trades.extend(data.data);
                 }
-                WebsocketEvents::LiquidationEvent(data) => {
-                    let sym = data.topic.split('.').nth(1).unwrap();
-                    let liquidations = &mut market_data
-                        .liquidations
-                        .iter_mut()
-                        .find(|(s, _)| s == sym)
-                        .unwrap()
-                        .1;
-                    if liquidations.len() == liquidations.capacity()
-                        || (liquidations.capacity() - liquidations.len()) <= 5
-                    {
-                        for _ in 0..5 {
-                            liquidations.pop_front();
-                        }
-                    }
-                    liquidations.push_back(data.data);
-                }
                 _ => {
                     eprintln!("Unhandled event: {:#?}", event);
                 }
@@ -280,11 +264,9 @@ impl BybitClient {
                 .await
             {
                 Ok(_) => {
-                    println!("Subscription successful");
                     tokio::time::sleep(Duration::from_millis(delay)).await;
                 }
-                Err(e) => {
-                    eprintln!("Subscription error: {}", e);
+                Err(_) => {
                     tokio::time::sleep(Duration::from_millis(delay)).await;
                 }
             }
@@ -298,8 +280,8 @@ impl BybitClient {
     ) {
         let delay = 50;
         let user_stream: BybitStream = BybitStream::new(
-            Some(self.key.clone()),    // API key
-            Some(self.secret.clone()), // Secret Key
+            Some(Cow::Borrowed(&self.key)),    // API key
+            Some(Cow::Borrowed(&self.secret)), // Secret Key
         );
         let request_args = {
             let mut args = vec![];
@@ -391,6 +373,15 @@ impl BybitClient {
     }
 }
 
+/// Builds the request arguments for the WebSocket connection.
+///
+/// # Arguments
+///
+/// * `symbol` - The symbols to request data for.
+///
+/// # Returns
+///
+/// A vector of strings, each representing a different request.
 fn build_requests(symbol: &[String]) -> Vec<String> {
     let mut request_args = vec![];
 
@@ -401,14 +392,6 @@ fn build_requests(symbol: &[String]) -> Vec<String> {
         .map(|(num, sym)| format!("orderbook.{}.{}", num, sym.to_uppercase()))
         .collect();
     request_args.extend(book_req);
-
-    // Building kline requests
-    let kline_req: Vec<String> = symbol
-        .iter()
-        .flat_map(|sym| vec![("5", sym), ("1", sym)])
-        .map(|(interval, sym)| format!("kline.{}.{}", interval, sym.to_uppercase()))
-        .collect();
-    request_args.extend(kline_req);
 
     // Building tickers requests
     let tickers_req: Vec<String> = symbol
@@ -423,13 +406,6 @@ fn build_requests(symbol: &[String]) -> Vec<String> {
         .map(|sub| format!("publicTrade.{}", sub.to_uppercase()))
         .collect();
     request_args.extend(trade_req);
-
-    // Building liquidation requests
-    let liq_req: Vec<String> = symbol
-        .iter()
-        .map(|sub| format!("liquidation.{}", sub.to_uppercase()))
-        .collect();
-    request_args.extend(liq_req);
 
     request_args
 }

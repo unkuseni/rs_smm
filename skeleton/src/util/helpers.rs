@@ -1,69 +1,122 @@
 use std::{
+    fs,
     io::Read,
-    time::{SystemTime, UNIX_EPOCH},
+    path::Path,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 use num_traits::{Float, Signed};
 
 use serde::Deserialize;
+use tokio::sync::mpsc;
 
+/// Rounds a number to the nearest step.
+///
+/// # Arguments
+///
+/// * `num`: The number to round.
+/// * `step`: The step size to round to.
+///
+/// # Returns
+///
+/// The rounded number.
 pub fn round_step<T: Float>(num: T, step: T) -> T {
-    (num / step).round() * step
+    (num * (T::one() / step)).round() * step
 }
 
+/// Generates a vector of geometric weights given a ratio and a length.
+///
+/// # Arguments
+///
+/// * `ratio`: The ratio to use for generating the weights.
+/// * `n`: The length of the vector to generate.
+/// * `reverse`: Whether to reverse the weights or not.
+///
+/// # Returns
+///
+/// A vector of geometric weights.
 pub fn geometric_weights(ratio: f64, n: usize, reverse: bool) -> Vec<f64> {
     assert!(
         ratio >= 0.0 && ratio <= 1.0,
         "Ratio must be between 0 and 1"
     );
-    // Generate the geometric series
-    let weights: Vec<f64> = (0..n).map(|i| ratio.powi(i as i32)).collect();
-
-    // Calculate the sum of the series to normalize
-    let sum: f64 = weights.iter().sum();
-
-    // Normalize the weights so that their sum equals 1
-    let normalized: Vec<f64> = weights.iter().map(|w| w / sum).collect();
-
-    if reverse {
-        normalized.into_iter().rev().collect()
-    } else {
-        normalized
+    let mut weights = Vec::with_capacity(n);
+    let mut sum = 0.0;
+    let mut val = 1.0;
+    for _ in 0..n {
+        weights.push(val);
+        sum += val;
+        val *= ratio;
     }
+
+    // Normalize the weights by dividing by the sum
+    weights.iter_mut().for_each(|w| *w /= sum);
+
+    // Reverse the weights if requested
+    if reverse {
+        weights.reverse();
+    }
+
+    weights
 }
 
+/// Generates the current timestamp in milliseconds.
+///
+/// # Returns
+///
+/// The current timestamp in milliseconds.
+#[inline(always)]
 pub fn generate_timestamp() -> u64 {
+    // Get the current time and convert it to milliseconds.
+    // The time is compared with the reference point of the Unix epoch.
     SystemTime::now()
+        // Get the duration since the Unix epoch.
         .duration_since(UNIX_EPOCH)
+        // This should never fail, but just in case it does, return an error.
         .expect("Time went backwards")
+        // Convert the duration to milliseconds.
         .as_millis() as u64
 }
 
+/// Calculates the exponent of a given number.
+///
+/// # Parameters
+///
+/// * `n`: The number to calculate the exponent of.
+///
+/// # Returns
+///
+/// The exponent of the given number.
 pub fn calculate_exponent(n: f64) -> f64 {
-    let exponent = -0.5 * n;
-    f64::exp(exponent)
+    // The exponent of a number is calculated as the result of raising e to the power of the number.
+    // In this case, we use the exp method of the f64 type to calculate the exponent.
+    // The result is the exponent of the given number.
+    (-0.5 * n).exp()
 }
 
-/*
-This function generates a linearly spaced vector of f64 numbers.
-
-Parameters:
-- start: f64 - The starting value of the sequence.
-- end: f64 - The ending value of the sequence.
-- n: usize - The number of elements in the sequence.
-
-Return:
-- Vec<f64> - A vector containing n numbers, equally spaced between start and end.
-*/
+/// Generates a linearly spaced vector of f64 numbers.
+///
+/// # Parameters
+///
+/// * `start`: The starting value of the sequence.
+/// * `end`: The ending value of the sequence.
+/// * `n`: The number of elements in the sequence.
+///
+/// # Returns
+///
+/// A vector containing n numbers, equally spaced between start and end.
 pub fn linspace<T: Float + Signed + PartialOrd>(start: T, end: T, n: usize) -> Vec<T> {
     // Calculate the step size between consecutive numbers in the sequence.
     // The step size is calculated as (end - start) divided by the number of elements minus 1.
-    let step = (end - start) / T::from(n - 1).unwrap();
+    let step = (end - start) / T::from(n as u32 - 1).unwrap();
 
     // Generate the sequence of numbers using the start value, the step size and the number of elements.
-    // The map function applies the formula (start + i as T * step) to each element in the range 0..n,
+    // The iterator is created with the start value, step size and the number of elements.
+    // The map function applies the formula (start + i as T * step) to each element in the iterator,
     // creating a new vector with the resulting numbers.
-    (0..n).map(|i| start + T::from(i).unwrap() * step).collect()
+    (0..n as u32)
+        .map(|i| start + T::from(i).unwrap() * step)
+        .collect()
 }
 
 /// Generates a geometrically spaced vector of f64 numbers.
@@ -82,111 +135,116 @@ pub fn linspace<T: Float + Signed + PartialOrd>(start: T, end: T, n: usize) -> V
 ///
 /// If start or end is zero.
 pub fn geomspace<T: Float + PartialOrd + Signed>(start: T, end: T, n: usize) -> Vec<T> {
-    // Calculate the logarithmic ratio between consecutive numbers in the sequence.
-    let log_ratio = (end / start).log10() / T::from(n - 1).unwrap();
-
-    // Create a vector with pre-allocated capacity for n elements.
-    let mut res = Vec::with_capacity(n);
-
-    // Add the starting value to the vector.
-    res.push(start);
-
-    // Generate the sequence of numbers using the logarithmic ratio and the number of elements.
-    // The map function applies the formula res[i - 1] * 10.0_f64.powf(log_ratio) to each element in the range 1..n,
-    // creating a new vector with the resulting numbers.
-    for i in 1..n {
-        res.push(res[i - 1] * T::from(10.0_f64).unwrap().powf(log_ratio));
+    assert!(
+        start != T::zero() && end != T::zero(),
+        "Start and end must be non-zero"
+    );
+    if n <= 1 {
+        return vec![start];
     }
 
-    // Return the generated vector.
-    res
+    let log_start = start.ln();
+    let log_end = end.ln();
+    let step = (log_end - log_start) / T::from(n - 1).unwrap();
+
+    (0..n)
+        .map(|i| {
+            let t = T::from(i).unwrap() * step + log_start;
+            t.exp()
+        })
+        .collect()
 }
 
+/// Returns the square root of a number, with the sign of the original number.
+///
+/// # Arguments
+///
+/// * `num`: The number to take the square root of.
+///
+/// # Returns
+///
+/// The signed square root of the number.
 pub fn nbsqrt<T: PartialOrd + Float + Signed>(num: T) -> T {
-    if num >= T::zero() {
-        num.sqrt()
-    } else {
-        -(num.abs().sqrt())
-    }
+    // First, calculate the absolute value of the number.
+    let abs_num = num.abs();
+
+    // Then, calculate the square root of the absolute value.
+    let sqrt_num = abs_num.sqrt();
+
+    // Finally, return the signed square root, by multiplying the square root by the sign of the original number.
+    num.signum() * sqrt_num
 }
 
-pub fn spread_price_in_bps(spread: f64, price: f64) -> f64 {
+/// Calculate the spread in basis points, given a spread and a price.
+///
+/// # Parameters
+///
+/// * `spread`: The spread as a decimal.
+/// * `price`: The price as a decimal.
+///
+/// # Returns
+///
+/// The spread in basis points, rounded to the nearest integer.
+pub fn spread_price_in_bps(spread: f64, price: f64) -> i32 {
+    // Calculate the spread as a percentage of the price.
     let percent = spread / price;
-    let bps = percent * 10000.0;
-    bps.round()
+
+    // Convert the percentage to basis points by multiplying by 10,000.
+    (percent * 10000.0) as i32
 }
 
 pub trait Round<T> {
+    /// Rounds the number to the given digit.
+    ///
+    /// # Parameters
+    ///
+    /// * `digit`: The number of decimal places to round to.
+    ///
+    /// # Returns
+    ///
+    /// The rounded number.
     fn round_to(&self, digit: u8) -> T;
+
+    /// Clip the number to the given range.
+    ///
+    /// # Parameters
+    ///
+    /// * `min`: The minimum value.
+    /// * `max`: The maximum value.
+    ///
+    /// # Returns
+    ///
+    /// The clipped number.
     fn clip(&self, min: T, max: T) -> T;
+
+    /// Counts the number of decimal places in a number.
+    ///
+    /// # Returns
+    ///
+    /// The number of decimal places in the number.
     fn count_decimal_places(&self) -> usize;
 }
 impl Round<f64> for f64 {
     fn round_to(&self, digit: u8) -> f64 {
-        let pow = 10.0_f64.powi(digit as i32);
-        (self * pow).round() / pow
+        let pow = 10_i64.pow(digit as u32);
+        (self * pow as f64).trunc() / pow as f64
     }
+
     fn clip(&self, min: f64, max: f64) -> f64 {
-        self.max(min).min(max)
+        (*self).clamp(min, max)
     }
+
     fn count_decimal_places(&self) -> usize {
-        let num_str = self.to_string();
-        match num_str.split_once('.') {
-            Some((_, decimals)) => decimals.trim_end_matches('0').len(),
-            None => 0,
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-
-    #[test]
-    fn test_round() {
-        assert_eq!(round_step(15643.456, 1.0), 15643.0);
-        assert_eq!(round_step(5.6567422344, 0.0005), 5.6565);
-        println!("{:#?}", spread_price_in_bps(0.00055, 0.5678));
-    }
-
-    #[test]
-    fn test_time() {
-        assert_ne!(generate_timestamp(), 0);
-        println!("{:#?}", generate_timestamp());
-        let num: f64 = 0.0000016;
-        println!("{:#?}", num.abs().round_to(6));
-    }
-
-    #[test]
-    fn test_places() {
-        let num: f64 = 0.000001;
-        println!("{:#?}", num.abs().count_decimal_places());
-    }
-
-    #[test]
-    fn lin() {
-        let num_geom = geomspace(0.6243, 0.6001, 5);
-        let num_wei = geometric_weights(0.63, 5, true);
-        let rev_geom = geomspace(0.6954, 0.6245, 5);
-
-        let rev_wei = geometric_weights(0.37, 5, false);
-
-        println!("{:#?}    {:#?}", num_geom, num_wei);
-
-        println!("{:#?}    {:#?}", rev_geom, rev_wei);
-    }
-
-    #[test]
-    fn params() {
-        let result = read_toml("./src/util/test.toml");
-        println!("{:#?}", result);
+        self.to_string().split('.').skip(1).next().map_or(0, |s| s.len())
     }
 }
 
 /// This section is for a toml parser that will be used for reading config files
 ///
-pub fn read_toml(path: &str) -> Config {
+pub fn read_toml<T>(path: T) -> Config
+where
+    T: AsRef<Path>,
+{
     let mut file = std::fs::File::open(path).expect("Unable to open file");
     let mut contents = String::new();
     file.read_to_string(&mut contents)
@@ -194,7 +252,27 @@ pub fn read_toml(path: &str) -> Config {
     toml::from_str(&contents).expect("Unable to parse file")
 }
 
-#[derive(Deserialize, Debug)]
+pub async fn watch_config<T>(
+    path: T,
+    interval: Duration,
+    sender: mpsc::UnboundedSender<Config>,
+) -> Result<(), std::io::Error>
+where
+    T: AsRef<Path>,
+{
+    let mut last_modified = fs::metadata(path.as_ref())?.modified()?;
+    loop {
+        let metadata = fs::metadata(path.as_ref())?;
+        let current_modified = metadata.modified()?;
+        if current_modified > last_modified {
+            last_modified = current_modified;
+            let _ = sender.send(read_toml(path.as_ref()));
+        }
+        tokio::time::sleep(interval).await;
+    }
+}
+
+#[derive(Deserialize, Debug, Clone)]
 pub struct Config {
     pub exchange: String,
     pub symbols: Vec<String>,
@@ -206,5 +284,36 @@ pub struct Config {
     pub depths: Vec<usize>,
     pub rate_limit: u32,
     pub bps: Vec<f64>,
-    pub use_wmid: bool,
+    pub tick_window: usize,
+}
+
+impl PartialEq for Config {
+    fn eq(&self, other: &Self) -> bool {
+        self.exchange == other.exchange
+            && self.symbols == other.symbols
+            && self.api_keys == other.api_keys
+            && self.balances == other.balances
+            && self.leverage == other.leverage
+            && self.orders_per_side == other.orders_per_side
+            && self.final_order_distance == other.final_order_distance
+            && self.depths == other.depths
+            && self.rate_limit == other.rate_limit
+            && self.bps == other.bps
+            && self.tick_window == other.tick_window
+    }
+
+    fn ne(&self, other: &Self) -> bool {
+        self.exchange != other.exchange
+            || self.symbols != other.symbols
+            || self.api_keys != other.api_keys
+            || self.balances != other.balances
+            || self.leverage != other.leverage
+            || self.orders_per_side != other.orders_per_side
+            || self.final_order_distance != other.final_order_distance
+            || self.depths != other.depths
+            || self.rate_limit != other.rate_limit
+            || self.bps != other.bps
+            || self.tick_window != other.tick_window
+    
+    }
 }

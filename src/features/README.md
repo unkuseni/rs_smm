@@ -23,3 +23,6 @@
 - Price fluctuation or Volatility
 - Trade Classifier
 - Mean Reversion of Midprice
+
+
+For the regression, lagged and instantaneous order imbalances are fed into the dataset at a set tick interval. it is then used to predict mid price changes for the forecast window.
