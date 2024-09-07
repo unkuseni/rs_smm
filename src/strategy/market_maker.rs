@@ -92,17 +92,12 @@ impl MarketMaker {
             match data.exchange.as_str() {
                 "bybit" | "binance" => {
                     // Update features with the first market data in the received data.
-                    // self.update_features(
-                    //     data.markets[0].clone(),
-                    //     self.depths.clone(),
-                    //     use_wmid,
-                    //     610,
-                    // );
+                    self.update_features(data.markets[0].clone(), self.depths.clone());
 
                     // Update the strategy with the new market data and private data.
                     if send > self.tick_window {
-                        // self.potentially_update(data.private,data.markets[0].clone(), rate_limit)
-                        //     .await;
+                        self.potentially_update(data.private, data.markets[0].clone())
+                            .await;
                     } else {
                         wait.tick().await;
                         send += 1;
@@ -334,28 +329,6 @@ impl MarketMaker {
         for (_, v) in self.generators.iter_mut() {
             v.set_spread(bps[index]);
             index += 1;
-        }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use skeleton::util::logger::Logger;
-    use tokio::time::Duration;
-
-    use tokio::time;
-
-    use super::*;
-
-    #[tokio::test]
-    async fn test_tick() {
-        let mut interval = time::interval(Duration::from_millis(500));
-        let log = Logger;
-        let arr: VecDeque<f64> = VecDeque::with_capacity(100);
-        loop {
-            interval.tick().await;
-            log.info("Test log");
-            println!("arr.len(): {}", arr.len());
         }
     }
 }

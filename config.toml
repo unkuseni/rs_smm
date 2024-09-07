@@ -20,7 +20,7 @@ api_keys = [
 ]
 
 # Initial balances for tracked symbols (symbol, balance)
-balances = [["NOTUSDT", 100.0], ["NOTUSDT", 100.0]]
+balances = [["NOTUSDT", 100.0], ["DOGSUSDT", 100.0]]
 
 # Leverage for trading positions (e.g., 5.0 for 5x leverage)
 leverage = 10.0
@@ -40,5 +40,5 @@ rate_limit = 1000
 # Profit spread for  (e.g., 1 for 0.01% profit spread)
 bps = [27, 25]
 
-# use tick window for waiting and lookback period
-tick_window = 610
+# use tick window for waiting and lookback period 1 tick = 10ms  or  1sec = 1000ms = 100ticks,  120secs = 120,000 = 12000ticks
+tick_window = 610  # 6.1 sec

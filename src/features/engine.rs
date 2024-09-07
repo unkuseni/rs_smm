@@ -79,7 +79,7 @@ impl Engine {
             // The features.
             features: Vec::new(),
             // The tick window.
-            tick_window
+            tick_window,
         }
     }
 
@@ -162,31 +162,32 @@ impl Engine {
         );
 
         // Update mid price array for regression
-        if self.mid_prices.len() > self.tick_window {
+        if self.mid_prices.len() > (self.tick_window + 11) {
             for _ in 0..10 {
-                self.mid_prices.pop();
+                self.mid_prices.remove(0);
             }
         }
 
         self.mid_prices.push(curr_book.get_mid_price());
 
         // Update feature values
-        if self.features.len() > self.tick_window {
+        if self.features.len() > (self.tick_window + 11) {
             for _ in 0..10 {
-                self.features.pop();
+                self.features.remove(0);
             }
         }
 
         self.features
             .push([self.imbalance_ratio, self.voi, self.ofi]);
 
-        self.predicted_price = {
-            match self.predict_price(curr_book.get_spread_in_bps() as f64) {
-                Ok(v) => v,
-                Err(_) => curr_book.mid_price,
-            }
-        };
-
+        if self.features.len() >= self.tick_window {
+            self.predicted_price = {
+                match self.predict_price(curr_book.get_spread_in_bps() as f64) {
+                    Ok(v) => v,
+                    Err(_) => curr_book.mid_price,
+                }
+            };
+        }
         // Generate skew
         self.generate_skew(curr_book);
     }

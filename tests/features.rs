@@ -1,10 +1,10 @@
 #[cfg(test)]
 mod tests {
 
-    use ndarray::{array, Array2};
+    use ndarray::{array, Array1, Array2};
     use rs_smm::{
         features::{
-            imbalance::imbalance_ratio,
+            imbalance::{calculate_ofi, imbalance_ratio, voi},
             impact::{expected_return, expected_value, mid_price_change, price_flu},
             linear_reg::{default_regression_single_feature, mid_price_regression},
         },
@@ -13,6 +13,7 @@ mod tests {
     use skeleton::{
         exchanges::exchange::MarketMessage,
         ss::{self, SharedState},
+        util::localorderbook::LocalBook,
     };
     use tokio::sync::mpsc::{self, UnboundedReceiver};
 
@@ -77,7 +78,10 @@ mod tests {
         let skew: f64 = 0.70;
         let delta: f64 = -0.37;
         let sq_corrected = skew * (1.0 - delta.abs().sqrt());
-        println!("skew: {:.5} delta: {:.5} sq_corrected: {:.5}", skew, delta, sq_corrected);
+        println!(
+            "skew: {:.5} delta: {:.5} sq_corrected: {:.5}",
+            skew, delta, sq_corrected
+        );
     }
 
     #[tokio::test]
@@ -124,9 +128,10 @@ mod tests {
     #[tokio::test]
     async fn test_def_reg() {
         let mut receiver = setup();
-        let mut imbalance = Vec::new();
+        let mut tick = 0;
         let mut mid_prices = Vec::new();
-
+        let mut old_book = LocalBook::new();
+        let mut features = Vec::new();
         while let Some(v) = receiver.recv().await {
             let market = &v.markets[0];
             match market {
@@ -134,28 +139,49 @@ mod tests {
                     let books = &m.books;
                     for b in books {
                         let symbol = &b.0;
-                        let depth = 5;
-                        mid_prices.push(b.1.mid_price);
-                        imbalance.push(imbalance_ratio(&b.1, Some(3)));
-                        println!(
-                            "{} W-MID AT DEPTH {}: {:.6}",
-                            symbol,
-                            depth,
-                            b.1.get_wmid(imbalance_ratio(&b.1, Some(depth)))
-                        );
-                        if imbalance.len() > 610 {
+                        let depth = 3;
+                        if tick > 0 {
+                            mid_prices.push(b.1.mid_price);
+                            features.push(vec![
+                                imbalance_ratio(&b.1, Some(depth)),
+                                voi(&b.1, &old_book, Some(depth)),
+                                calculate_ofi(&b.1, &old_book, Some(depth)),
+                            ]);
+
                             println!(
-                                "{}: {:.6}",
+                                "{} W-MID AT DEPTH {}: {:.6}",
                                 symbol,
-                                default_regression_single_feature(&mid_prices, &imbalance).unwrap()
+                                depth,
+                                b.1.get_wmid(imbalance_ratio(&b.1, Some(depth)))
                             );
-                        };
-                        if imbalance.len() > 987 {
-                            for _ in 0..110 {
-                                imbalance.remove(0);
-                                mid_prices.remove(0);
+                            if features.len() > 610 {
+                                let mids = mid_prices.clone();
+                                let y = Array1::from_vec(mids);
+                                let x = match Array2::from_shape_vec(
+                                    (features.len(), 3),
+                                    features
+                                        .clone()
+                                        .into_iter()
+                                        .flat_map(|v| v.into_iter())
+                                        .collect::<Vec<f64>>(),
+                                ) {
+                                    Ok(x) => {
+                                        println!("{}: {:.6}", symbol, mid_price_regression(y, x, b.1.get_spread_in_bps() as f64).unwrap_or(0.0));
+                                    },
+                                    Err(_) =>{},
+                                };
+                            
                             }
+                            if features.len() > 987 {
+                                for _ in 0..210 {
+                                    features.remove(0);
+                                    mid_prices.remove(0);
+                                }
+                            }
+                        } else {
+                            tick += 1;
                         }
+                        old_book = b.1.clone();
                     }
                 }
                 _ => {}

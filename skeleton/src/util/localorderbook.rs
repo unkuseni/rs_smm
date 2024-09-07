@@ -2,7 +2,7 @@ use bybit::model::{Ask, Bid};
 use ordered_float::OrderedFloat;
 use std::collections::BTreeMap;
 
-use super::helpers::spread_price_in_bps;
+use super::helpers::{calculate_exponent, spread_price_in_bps};
 #[derive(Debug, Clone)]
 pub struct LocalBook {
     pub asks: BTreeMap<OrderedFloat<f64>, f64>,
@@ -327,7 +327,7 @@ impl LocalBook {
         // If the absolute imbalance ratio is not zero, calculate the WMID using the formula:
         // WMID = (best_bid * imb) + (best_ask * (1 - imb))
         if abs_imb != 0.0 {
-            (self.best_bid.price * imb) + (self.best_ask.price * (1.0 - imb))
+            (self.best_bid.price * (1.0 - imb)) + (self.best_ask.price * imb)
         } else {
             // Otherwise, return the mid_price of the LocalBook.
             self.mid_price
@@ -340,11 +340,25 @@ impl LocalBook {
     /// posted, and hence indicates the buy (sell) pressure in the market. If there are
     /// a lot of buyers (sellers), then the microprice is pushed toward the best ask/bid
     /// price to reflect the likelihood that prices are going to increase (decrease)
-    pub fn get_microprice(&self) -> f64 {
-        let bid =
-            (self.best_bid.qty / (self.best_bid.qty + self.best_ask.qty)) * self.best_ask.price;
+    pub fn get_microprice(&self, depth: Option<usize>) -> f64 {
+        let (bid_price, ask_price, best_bid_qty, best_ask_qty) = match depth {
+            Some(depth) => (
+                self.best_bid.price,
+                self.best_ask.price,
+                calculate_weighted_bid(self, depth),
+                calculate_weighted_ask(self, depth),
+            ),
+            None => (
+                self.best_bid.price,
+                self.best_ask.price,
+                self.best_bid.qty,
+                self.best_ask.qty,
+            ),
+        };
         let ask =
-            (self.best_ask.qty / (self.best_bid.qty + self.best_ask.qty)) * self.best_bid.price;
+            (best_bid_qty / (best_bid_qty + best_ask_qty)) * ask_price;
+        let bid =
+            (best_ask_qty / (best_bid_qty + best_ask_qty)) * bid_price;
         bid + ask
     }
 
@@ -387,4 +401,49 @@ impl ProcessBids for binance::model::Bids {
 
 pub fn map_range(value: f64) -> f64 {
     (value + 1.0) / 2.0
+}
+
+/// Calculates the weighted ask quantity using the specified depth.
+///
+/// The weighted ask quantity is the sum of the ask quantities multiplied by a weight that
+/// decreases as the price moves further away from the best ask.
+///
+/// # Arguments
+///
+/// * `book`: The order book to calculate the weighted ask quantity from.
+/// * `depth`: The number of levels to calculate the weighted ask quantity from.
+///
+/// # Returns
+///
+/// The weighted ask quantity as a `f64`.
+fn calculate_weighted_ask(book: &LocalBook, depth: usize) -> f64 {
+    book.asks
+        .iter()
+        .take(depth)
+        .enumerate()
+        .map(|(i, (_, qty))| (calculate_exponent(i as f64) * qty) as f64)
+        .sum::<f64>()
+}
+
+/// Calculates the weighted bid quantity using the specified depth.
+///
+/// The weighted bid quantity is the sum of the bid quantities multiplied by a weight that
+/// decreases as the price moves further away from the best bid.
+///
+/// # Arguments
+///
+/// * `book`: The order book to calculate the weighted bid quantity from.
+/// * `depth`: The number of levels to calculate the weighted bid quantity from.
+///
+/// # Returns
+///
+/// The weighted bid quantity as a `f64`.
+fn calculate_weighted_bid(book: &LocalBook, depth: usize) -> f64 {
+    book.bids
+        .iter()
+        .rev()
+        .take(depth)
+        .enumerate()
+        .map(|(i, (_, qty))| (calculate_exponent(i as f64) * qty) as f64)
+        .sum::<f64>()
 }
