@@ -3,8 +3,6 @@
 mod tests {
     use rs_smm::parameters::parameters::{exch_params, use_toml};
 
-    use super::*;
-
     #[test]
     fn test_exch_params() {
         let exch = exch_params();

@@ -11,11 +11,11 @@ use super::{
 };
 
 const IMB_WEIGHT: f64 = 0.25; // 25
-const DEEP_IMB_WEIGHT: f64 = 0.15; // 40
+const DEEP_IMB_WEIGHT: f64 = 0.10; // 40
 const VOI_WEIGHT: f64 = 0.10; // 50
 const OFI_WEIGHT: f64 = 0.20; // 70
-const DEEP_OFI_WEIGHT: f64 = 0.15; // 85
-const PREDICT_WEIGHT: f64 = 0.15; // 100
+const DEEP_OFI_WEIGHT: f64 = 0.10; // 85
+const PREDICT_WEIGHT: f64 = 0.25; // 100
 
 #[derive(Clone, Debug)]
 pub struct Engine {
@@ -143,7 +143,10 @@ impl Engine {
         self.price_flu.1 = self.avg_flu_value();
 
         // Update expected return
-        self.expected_return = expected_return(prev_book.mid_price, curr_book.mid_price);
+        self.expected_return = expected_return(
+            prev_book.get_microprice(Some(depth[0])),
+            curr_book.get_microprice(Some(depth[0])),
+        );
 
         // Update average trade price
         self.avg_trade_price = avg_trade_price(
@@ -168,7 +171,8 @@ impl Engine {
             }
         }
 
-        self.mid_prices.push(curr_book.get_mid_price());
+        self.mid_prices
+            .push(curr_book.get_microprice(Some(depth[0])));
 
         // Update feature values
         if self.features.len() > (self.tick_window + 11) {
@@ -189,7 +193,7 @@ impl Engine {
             };
         }
         // Generate skew
-        self.generate_skew(curr_book);
+        self.generate_skew(curr_book, depth[0]);
     }
 
     fn predict_price(&mut self, curr_spread: f64) -> Result<f64, String> {
@@ -228,7 +232,7 @@ impl Engine {
     }
 
     /// Generates a  number between -1 and 1.
-    fn generate_skew(&mut self, book: &LocalBook) {
+    fn generate_skew(&mut self, book: &LocalBook, depth: usize) {
         // generate a skew metric and update the regression model for predictions
         let imb = self.imbalance_ratio * IMB_WEIGHT; // Ratio is -1 to 1
         let deep_imb = (self.deep_imbalance_ratio.iter().sum::<f64>()
@@ -250,9 +254,20 @@ impl Engine {
             }
         };
 
+        let distance_to_ask = (book.get_microprice(Some(depth)) - book.get_best_ask().price).abs();
+        let distance_to_bid = (book.get_microprice(Some(depth)) - book.get_best_bid().price).abs();
+
         let predicted_value = match self.predicted_price {
-            v if v > book.get_wmid(self.imbalance_ratio) => 1.0 * PREDICT_WEIGHT,
-            v if v < book.get_wmid(self.imbalance_ratio) => -1.0 * PREDICT_WEIGHT,
+            v if expected_return(book.get_mid_price(), v) >= 0.0005
+                || distance_to_ask < distance_to_bid =>
+            {
+                1.0 * PREDICT_WEIGHT
+            }
+            v if expected_return(book.get_mid_price(), v) >= -0.0005
+                || distance_to_bid < distance_to_ask =>
+            {
+                -1.0 * PREDICT_WEIGHT
+            }
             _ => 0.0,
         };
 

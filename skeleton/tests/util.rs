@@ -6,7 +6,7 @@ mod tests {
     use skeleton::util::{
         candles::{TickCandle, VolumeCandle},
         helpers::{
-            generate_timestamp, geometric_weights, geomspace, read_toml, round_step, spread_price_in_bps, watch_config, Round
+            generate_timestamp, geometric_weights, geomspace, nbsqrt, read_toml, round_step, spread_price_in_bps, watch_config, Round
         },
         localorderbook::LocalBook,
     };
@@ -159,6 +159,12 @@ mod tests {
     fn test_places() {
         let num: f64 = 0.000001;
         println!("{:#?}", num.abs().count_decimal_places());
+    }
+
+    #[test]
+    fn test_sqrt() {
+        println!("{:#?}", nbsqrt(-5.0));
+        println!("{:#?}", nbsqrt(5.0));
     }
 
     #[test]

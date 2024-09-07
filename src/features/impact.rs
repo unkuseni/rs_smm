@@ -71,6 +71,8 @@ pub fn price_impact(new_book: &LocalBook, old_book: &LocalBook, depth: Option<us
     bid_impact + ask_impact
 }
 
+
+
 /// Calculates the expected value of a trade based on the old price, current price, and imbalance.
 ///
 /// # Arguments
@@ -86,6 +88,24 @@ pub fn expected_value(old_price: f64, curr_price: f64, imbalance: f64) -> f64 {
     let price_change = (curr_price - old_price) * norm_imb;
     curr_price + price_change.copysign(imbalance)
 }
+
+
+pub fn improved_expected_value(old_price: f64, curr_price: f64, imbalance: f64) -> f64 {
+    // Input validation
+    if !((-1.0..=1.0).contains(&imbalance)) {
+        panic!("Imbalance must be between -1 and 1");
+    }
+
+    let norm_imb = imbalance.abs();
+
+    // Non-linear scaling: This will make small imbalances less impactful
+    // and large imbalances more impactful
+    let scaled_imb = norm_imb.powf(1.5);
+
+    let price_change = (curr_price - old_price) * scaled_imb;
+    curr_price + price_change.copysign(imbalance)
+}
+
 
 /// Calculates the change in the mid price relative to the average tick.
 ///

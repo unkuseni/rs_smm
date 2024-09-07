@@ -1,12 +1,14 @@
 #[cfg(test)]
 mod tests {
 
+    use std::collections::HashMap;
+
     use ndarray::{array, Array1, Array2};
     use rs_smm::{
         features::{
             imbalance::{calculate_ofi, imbalance_ratio, voi},
             impact::{expected_return, expected_value, mid_price_change, price_flu},
-            linear_reg::{default_regression_single_feature, mid_price_regression},
+            linear_reg::mid_price_regression,
         },
         parameters::parameters::use_toml,
     };
@@ -97,10 +99,13 @@ mod tests {
                         let symbol = &b.0;
                         let depth = 3;
                         println!(
-                            "{} MID PRICE AT BBA: {:.8} \nMICROPRICE:  {:.8} \nWMID: {:.8}",
+                            "{} MID PRICE AT BBA: {:.6} \nMICROPRICE:  {:.6}  pred: {} \nWMID: {:.6}",
                             symbol,
                             b.1.get_mid_price(),
-                            b.1.get_microprice(),
+                            b.1.get_microprice(Some(depth)),
+                            if  b.1.get_microprice(Some(depth)) - b.1.best_bid.price >
+                           (b.1.get_microprice(Some(depth)) - b.1.best_ask.price).abs() { "BUY" } else  if  b.1.get_microprice(Some(depth)) - b.1.best_bid.price <
+                           (b.1.get_microprice(Some(depth)) - b.1.best_ask.price).abs() { "SELL" } else { "HOLD" },
                             b.1.get_wmid(imbalance_ratio(&b.1, Some(depth)))
                         );
                     }
@@ -129,9 +134,14 @@ mod tests {
     async fn test_def_reg() {
         let mut receiver = setup();
         let mut tick = 0;
-        let mut mid_prices = Vec::new();
-        let mut old_book = LocalBook::new();
-        let mut features = Vec::new();
+        let mut mid_prices = HashMap::new();
+        let mut old_book = HashMap::new();
+        let mut features = HashMap::new();
+        for v in use_toml().symbols {
+            features.insert(v.clone(), Vec::new());
+            old_book.insert(v.clone(), LocalBook::new());
+            mid_prices.insert(v, Vec::new());
+        }
         while let Some(v) = receiver.recv().await {
             let market = &v.markets[0];
             match market {
@@ -140,48 +150,59 @@ mod tests {
                     for b in books {
                         let symbol = &b.0;
                         let depth = 3;
+
                         if tick > 0 {
-                            mid_prices.push(b.1.mid_price);
-                            features.push(vec![
+                            mid_prices.get_mut(symbol).unwrap().push(b.1.mid_price);
+                            features.get_mut(symbol).unwrap().push(vec![
                                 imbalance_ratio(&b.1, Some(depth)),
-                                voi(&b.1, &old_book, Some(depth)),
-                                calculate_ofi(&b.1, &old_book, Some(depth)),
+                                voi(&b.1, &old_book.get(symbol).unwrap(), Some(depth)),
+                                calculate_ofi(&b.1, &old_book.get(symbol).unwrap(), Some(depth)),
                             ]);
 
                             println!(
                                 "{} W-MID AT DEPTH {}: {:.6}",
                                 symbol,
                                 depth,
-                                b.1.get_wmid(imbalance_ratio(&b.1, Some(depth)))
+                                b.1.get_microprice(Some(depth))
                             );
                             if features.len() > 610 {
-                                let mids = mid_prices.clone();
+                                let mids = mid_prices.get(symbol).unwrap().clone();
                                 let y = Array1::from_vec(mids);
-                                let x = match Array2::from_shape_vec(
-                                    (features.len(), 3),
+                                match Array2::from_shape_vec(
+                                    (features.get(symbol).unwrap().len(), 3),
                                     features
+                                        .get(symbol)
+                                        .unwrap()
                                         .clone()
                                         .into_iter()
                                         .flat_map(|v| v.into_iter())
                                         .collect::<Vec<f64>>(),
                                 ) {
                                     Ok(x) => {
-                                        println!("{}: {:.6}", symbol, mid_price_regression(y, x, b.1.get_spread_in_bps() as f64).unwrap_or(0.0));
-                                    },
-                                    Err(_) =>{},
+                                        println!(
+                                            "{}: {:.6}",
+                                            symbol,
+                                            mid_price_regression(
+                                                y,
+                                                x,
+                                                b.1.get_spread_in_bps() as f64
+                                            )
+                                            .unwrap_or(0.0)
+                                        );
+                                    }
+                                    Err(_) => {}
                                 };
-                            
                             }
-                            if features.len() > 987 {
+                            if features.get(symbol).unwrap().len() > 987 {
                                 for _ in 0..210 {
-                                    features.remove(0);
-                                    mid_prices.remove(0);
+                                    features.get_mut(symbol).unwrap().remove(0);
+                                    mid_prices.get_mut(symbol).unwrap().remove(0);
                                 }
                             }
                         } else {
                             tick += 1;
                         }
-                        old_book = b.1.clone();
+                        old_book.insert(symbol.to_string(), b.1.clone());
                     }
                 }
                 _ => {}

@@ -12,7 +12,7 @@ use skeleton::{
         exchange::{Client, Exchange, PrivateData},
     },
     util::{
-        helpers::{geometric_weights, geomspace, round_step, Round},
+        helpers::{geometric_weights, geomspace, nbsqrt, round_step, Round},
         localorderbook::LocalBook,
     },
 };
@@ -255,7 +255,7 @@ impl QuoteGenerator {
         let min_spread = {
             // If the preferred spread is 0.0, the minimum spread is 25 basis points times the mid price of the order book.
             if preferred_spread == 0.0 {
-                bps_to_decimal(25.0) * book.get_mid_price()
+                bps_to_decimal(27.0) * book.get_mid_price()
             }
             // Otherwise, the minimum spread is the preferred spread converted to decimal format times the mid price of the order book.
             else {
@@ -310,29 +310,16 @@ impl QuoteGenerator {
 
         // Get the minimum notional from the order book.
         let notional = book.min_notional;
+
         // Get the corrected skew value.
-        let corrected_skew = skew * (1.0 - self.inventory_delta.abs().sqrt());
+        let corrected_skew = skew * (1.0 - nbsqrt(self.inventory_delta));
         // Generate the orders based on the skew value.
-        let mut orders = if corrected_skew >= 0.0 {
+        let mut orders = if corrected_skew >= 0.00 {
             // If skew is positive, generate positive skew orders.
-            self.positive_skew_orders(
-                half_spread,
-                curr_spread,
-                start,
-                corrected_skew.abs(),
-                notional,
-                book,
-            )
+            self.positive_skew_orders(half_spread, curr_spread, start, skew.abs(), notional, book)
         } else {
             // If skew is negative, generate negative skew orders.
-            self.negative_skew_orders(
-                half_spread,
-                curr_spread,
-                start,
-                corrected_skew.abs(),
-                notional,
-                book,
-            )
+            self.negative_skew_orders(half_spread, curr_spread, start, skew.abs(), notional, book)
         };
 
         // Add the symbol to each order.
@@ -366,7 +353,7 @@ impl QuoteGenerator {
         book: &LocalBook,
     ) -> Vec<BatchOrder> {
         // Calculate the best bid and ask prices.
-        let best_bid = start - (half_spread * (1.0 - aggression));
+        let best_bid = start - (half_spread * (1.0 - aggression.sqrt()));
         let best_ask = best_bid + curr_spread;
 
         // Calculate the end prices for bid and ask prices.
@@ -379,15 +366,17 @@ impl QuoteGenerator {
         let mut ask_prices = geomspace(ask_end, best_ask, self.total_order / 2);
         ask_prices.reverse();
 
+        let clipped_r = aggression.clip(0.27, 0.73);
+
         // Generate the bid sizes.
-        let bid_sizes = if bid_prices.is_empty() {
+        let bid_sizes = if bid_prices.is_empty() || self.inventory_delta >= 0.90 {
             vec![]
         } else {
             // Calculate the maximum buy quantity.
             let max_buy_qty =
                 (self.max_position_usd / 2.0) - (self.position * book.get_mid_price());
             // Calculate the size weights.
-            let size_weights = geometric_weights(0.63, self.total_order / 2, true);
+            let size_weights = geometric_weights(clipped_r, self.total_order / 2, true);
             // Calculate the sizes.
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_buy_qty).collect();
 
@@ -414,11 +403,13 @@ impl QuoteGenerator {
         let mut orders = vec![];
         for (i, bid) in bid_prices.iter().enumerate() {
             // Create a new batch order with the bid size, price, and quantity.
-            orders.push(BatchOrder::new(
-                round_size(bid_sizes[i] / *bid, book),
-                round_price(book, *bid),
-                1,
-            ));
+            if bid_sizes.len() >= 1 {
+                orders.push(BatchOrder::new(
+                    round_size(bid_sizes[i] / *bid, book),
+                    round_price(book, *bid),
+                    1,
+                ));
+            }
             // Create a new batch order with the ask size, price, and quantity.
             orders.push(BatchOrder::new(
                 round_size(ask_sizes[i] / ask_prices[i], book),
@@ -456,7 +447,7 @@ impl QuoteGenerator {
         book: &LocalBook,
     ) -> Vec<BatchOrder> {
         // Calculate the best bid and ask prices.
-        let best_ask = start + (half_spread * (1.0 - aggression));
+        let best_ask = start + (half_spread * (1.0 - aggression.sqrt()));
         let best_bid = best_ask - curr_spread;
 
         // Calculate the end prices for bid and ask prices.
@@ -469,6 +460,7 @@ impl QuoteGenerator {
         let mut ask_prices = geomspace(ask_end, best_ask, self.total_order / 2);
         ask_prices.reverse();
 
+        let clipped_r = aggression.clip(0.27, 0.73);
         // Generate the bid sizes.
         let bid_sizes = if bid_prices.is_empty() {
             vec![]
@@ -481,12 +473,12 @@ impl QuoteGenerator {
             sizes
         };
         // Generate the ask sizes.
-        let ask_sizes = if ask_prices.is_empty() {
+        let ask_sizes = if ask_prices.is_empty() || self.inventory_delta <= -0.90 {
             vec![]
         } else {
             let max_sell_qty =
                 (self.max_position_usd / 2.0) + (self.position * book.get_mid_price());
-            let size_weights = geometric_weights(0.63, self.total_order / 2, false);
+            let size_weights = geometric_weights(clipped_r, self.total_order / 2, false);
             let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
             sizes.reverse();
 
@@ -502,13 +494,14 @@ impl QuoteGenerator {
                 round_price(book, *bid),
                 1,
             ));
-
-            // Create a new batch order with the ask size, price, and quantity.
-            orders.push(BatchOrder::new(
-                round_size(ask_sizes[i] / ask_prices[i], book),
-                round_price(book, ask_prices[i]),
-                -1,
-            ));
+            if ask_sizes.len() >= 1 {
+                // Create a new batch order with the ask size, price, and quantity.
+                orders.push(BatchOrder::new(
+                    round_size(ask_sizes[i] / ask_prices[i], book),
+                    round_price(book, ask_prices[i]),
+                    -1,
+                ));
+            }
         }
 
         // filter orders  based on notional      // filter orders  based on notional
@@ -540,7 +533,7 @@ impl QuoteGenerator {
                         self.live_buys_orders.push_back(order);
                     }
                     // Sort the live buys queue and update it.
-                    let sorted_buys = sort_grid(self.live_buys_orders.clone(), -1);
+                    let sorted_buys = sort_grid(&mut self.live_buys_orders, -1);
                     self.live_buys_orders = sorted_buys;
 
                     // Push the orders from the second response to the live sells queue.
@@ -548,11 +541,13 @@ impl QuoteGenerator {
                         self.live_sells_orders.push_back(order);
                     }
                     // Sort the live sells queue and update it.
-                    let sorted_sells = sort_grid(self.live_sells_orders.clone(), 1);
+                    let sorted_sells = sort_grid(&mut self.live_sells_orders, 1);
                     self.live_sells_orders = sorted_sells;
                 }
                 // If there is an error, print the error message.
-                _ => {}
+                Err(_) => {
+                    println!("Batch order error");
+                }
             }
         }
     }
@@ -576,6 +571,10 @@ impl QuoteGenerator {
                     for (i, order) in self.live_buys_orders.clone().iter().enumerate() {
                         if order.order_id == order_id {
                             self.position += order.qty;
+                            println!(
+                                "Buy order filled: ID {}, Qty {}, New position {}",
+                                order_id, exec_qty, self.position
+                            );
                             self.live_buys_orders.remove(i);
                         }
                     }
@@ -583,6 +582,10 @@ impl QuoteGenerator {
                     for (i, order) in self.live_sells_orders.clone().iter().enumerate() {
                         if order.order_id == order_id {
                             self.position -= order.qty;
+                            println!(
+                                "Sell order filled: ID {}, Qty {}, New position {}",
+                                order_id, exec_qty, self.position
+                            );
                             self.live_sells_orders.remove(i);
                         }
                     }
@@ -591,7 +594,12 @@ impl QuoteGenerator {
         }
     }
 
-    async fn out_of_bounds(&mut self, book: &LocalBook, symbol: String) -> bool {
+    async fn out_of_bounds(
+        &mut self,
+        book: &LocalBook,
+        symbol: String,
+        private: PrivateData,
+    ) -> bool {
         // Initialize the `out_of_bounds` boolean to `false`.
         let mut out_of_bounds = false;
         let bounds = {
@@ -602,25 +610,45 @@ impl QuoteGenerator {
             }
         };
         let (current_bid_bounds, current_ask_bounds) = (
-            self.last_update_price - bounds,
-            self.last_update_price + bounds,
+            self.live_sells_orders
+                .front()
+                .unwrap_or(&LiveOrder {
+                    price: self.last_update_price + bounds,
+                    qty: 0.0,
+                    order_id: "default".to_string(),
+                })
+                .clone()
+                .price,
+            self.live_buys_orders
+                .front()
+                .unwrap_or(&LiveOrder {
+                    price: self.last_update_price - bounds,
+                    qty: 0.0,
+                    order_id: "default".to_string(),
+                })
+                .clone()
+                .price,
         );
+
+        // Check if there are any fills in the private data by calling the
+        // `check_for_fills` method.
+        self.check_for_fills(private);
 
         // If there are no live orders, return `true`.
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
+            // Set the `out_of_bounds` boolean to `true`.
             out_of_bounds = true;
+            // Set the `last_update_price` to the mid price of the order book.
             self.last_update_price = book.mid_price;
+            //  Return the `out_of_bounds` boolean.
             return out_of_bounds;
         } else if self.last_update_price != 0.0 {
             // Set the `out_of_bounds` boolean to `true`.
             if self.cancel_limit > 1 {
-                if book.mid_price < current_bid_bounds
-                    || book.mid_price > current_ask_bounds
-                    || self.live_sells_orders.len() != self.live_buys_orders.len()
-                {
+                if book.mid_price < current_bid_bounds || book.mid_price > current_ask_bounds {
                     if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
                         out_of_bounds = true;
-                        println!("Cancelling all orders for {}", symbol);
+
                         for cancelled_order in v.clone() {
                             for (i, live_order) in
                                 self.live_buys_orders.clone().iter_mut().enumerate()
@@ -669,9 +697,6 @@ impl QuoteGenerator {
         // with the minimum spread and the order book.
         self.adjusted_spread = QuoteGenerator::adjusted_spread(self.minimum_spread, &book);
 
-        // Next, update the inventory delta by calling the `inventory_delta` method.
-        self.inventory_delta(&book);
-
         // If the time limit is greater than 1, check if the order book's last update
         // is greater than the time limit minus 1000 milliseconds.
         // If it is, update the rate limit and cancel limit to the provided rate limit.
@@ -683,11 +708,10 @@ impl QuoteGenerator {
             }
         }
 
-        // Check if there are any fills in the private data by calling the
-        // `check_for_fills` method.
-        self.check_for_fills(private);
-        match self.out_of_bounds(&book, symbol.clone()).await {
+        match self.out_of_bounds(&book, symbol.clone(), private).await {
             true => {
+                // Next, update the inventory delta by calling the `inventory_delta` method.
+                self.inventory_delta(&book);
                 let orders = self.generate_quotes(symbol.clone(), &book, skew);
 
                 // Check if the order book is out of bounds with the given symbol by calling
@@ -766,22 +790,19 @@ fn round_size(qty: f64, book: &LocalBook) -> f64 {
 /// It sorts the `VecDeque` in ascending order if the `side` is greater than 1.
 /// Otherwise, it sorts the `VecDeque` in descending order.
 /// It then returns a new `VecDeque` with the sorted orders.
-fn sort_grid(orders: VecDeque<LiveOrder>, side: i32) -> VecDeque<LiveOrder> {
-    // Create a new `Vec` by consuming the `VecDeque`
-    let mut vec = Vec::from(orders);
-
-    // Sort the `Vec` either in ascending or descending order based on the `side`
-    if side > 0 {
-        vec.sort_by(|a, b| a.partial_cmp(b).unwrap()); // Sort the Vec in ascending order
-    } else {
-        vec.sort_by(|a, b| b.partial_cmp(a).unwrap()); // Sort the Vec in descending order
-    }
-
-    // Create a new `VecDeque` by consuming the sorted `Vec`
-    let sorted_vecdeque: VecDeque<LiveOrder> = VecDeque::from(vec);
-
-    // Return the sorted `VecDeque`
-    sorted_vecdeque
+fn sort_grid(orders: &mut VecDeque<LiveOrder>, side: i32) -> VecDeque<LiveOrder> {
+    orders.make_contiguous().sort_by(|a, b| {
+        if side > 0 {
+            a.price
+                .partial_cmp(&b.price)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        } else {
+            b.price
+                .partial_cmp(&a.price)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        }
+    });
+    orders.clone()
 }
 
 impl OrderManagement {
