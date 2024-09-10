@@ -324,10 +324,21 @@ impl MarketMaker {
         }
     }
 
+    /// Sets the spread for each generator using values from a TOML configuration file.
+    ///
+    /// # Arguments
+    ///
+    /// * `bps` - A vector of f64 values representing the spread in basis points for each generator.
+    ///
+    /// # Note
+    ///
+    /// This function assumes that the order of values in `bps` corresponds to the order of generators.
     pub fn set_spread_toml(&mut self, bps: Vec<f64>) {
         let mut index = 0;
         for (_, v) in self.generators.iter_mut() {
+            // Set the spread for the current generator
             v.set_spread(bps[index]);
+            // Move to the next spread value
             index += 1;
         }
     }
