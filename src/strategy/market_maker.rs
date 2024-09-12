@@ -1,5 +1,5 @@
 use bybit::model::WsTrade;
-use skeleton::exchanges::exchange::{Client, PrivateData};
+use skeleton::exchanges::exchange::{Client, Exchange, PrivateData};
 use skeleton::util::localorderbook::LocalBook;
 use skeleton::{exchanges::exchange::MarketMessage, ss::SharedState};
 use std::collections::{HashMap, VecDeque};
@@ -37,7 +37,7 @@ impl MarketMaker {
     /// # Returns
     ///
     /// A new `MarketMaker` instance.
-    pub fn new(
+    pub async fn new(
         ss: SharedState,
         assets: HashMap<String, f64>,
         leverage: f64,
@@ -67,7 +67,8 @@ impl MarketMaker {
                 leverage,
                 final_order_distance,
                 rate_limit,
-            ),
+            )
+            .await,
             // Initialize the `depths` field with the provided depths.
             depths,
             tick_window,
@@ -148,7 +149,7 @@ impl MarketMaker {
     /// # Returns
     ///
     /// A `HashMap` containing the symbol names as keys and `QuoteGenerator` instances as values.
-    fn build_generators(
+    async fn build_generators(
         clients: HashMap<String, Client>,
         assets: HashMap<String, f64>,
         orders_per_side: usize,
@@ -163,6 +164,25 @@ impl MarketMaker {
         for (k, v) in clients {
             // Get the asset value for the current symbol.
             let asset = assets.get(&k).unwrap().clone();
+
+            match v.clone() {
+                Client::Bybit(cl) => match cl.set_leverage(&k, leverage as u16).await {
+                    Ok(_) => {
+                        println!("Set leverage for {} to {}", k, leverage);
+                    }
+                    Err(_) => {
+                        println!("Failed to set leverage for {}", k);
+                    }
+                },
+                Client::Binance(cl) => match cl.set_leverage(&k, leverage as u16).await {
+                    Ok(_) => {
+                        println!("Set leverage for {} to {}", k, leverage);
+                    }
+                    Err(_) => {
+                        println!("Failed to set leverage for {}", k);
+                    }
+                },
+            }
 
             // Insert a new `QuoteGenerator` instance into the HashMap.
             hash.insert(
