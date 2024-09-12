@@ -18,22 +18,22 @@ use skeleton::{
 };
 use tokio::task;
 
-// [qty, price, symbol, side] side is -1 for sell and 1 for buy
-// The BatchOrder struct is used to represent an order that will be placed or cancelled in a batch operation.
-// It contains the following fields:
-// - qty: The quantity of the order.
-// - price: The price of the order.
-// - symbol: The symbol of the order (e.g. "BTCUSDT").
-// - side: The side of the order. It can be either -1 for a sell order or 1 for a buy order.
+/// [qty, price, symbol, side] side is -1 for sell and 1 for buy
+/// The BatchOrder struct is used to represent an order that will be placed or cancelled in a batch operation.
+/// It contains the following fields:
+/// - qty: The quantity of the order.
+/// - price: The price of the order.
+/// - symbol: The symbol of the order (e.g. "BTCUSDT").
+/// - side: The side of the order. It can be either -1 for a sell order or 1 for a buy order.
 #[derive(Debug, Clone)]
 pub struct BatchOrder(f64, f64, String, i32);
 
-// The new() method is used to create a new instance of BatchOrder.
-// It takes the following parameters:
-// - qty: The quantity of the order.
-// - price: The price of the order.
-// - side: The side of the order.
-// It returns an instance of BatchOrder.
+/// The new() method is used to create a new instance of BatchOrder.
+/// It takes the following parameters:
+/// - qty: The quantity of the order.
+/// - price: The price of the order.
+/// - side: The side of the order.
+/// It returns an instance of BatchOrder.
 impl BatchOrder {
     pub fn new(qty: f64, price: f64, side: i32) -> Self {
         // Create a new instance of BatchOrder with the provided parameters.
