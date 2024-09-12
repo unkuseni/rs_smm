@@ -269,80 +269,95 @@ impl QuoteGenerator {
 
     /// Generates quotes based on the given parameters.
     ///
+    /// This function is responsible for generating a set of orders (quotes) based on the current market conditions
+    /// and the strategy parameters. It takes into account the order book state, market skew, and the current
+    /// inventory position to create a balanced set of buy and sell orders.
+    ///
     /// # Parameters
     ///
-    /// * `symbol`: The symbol of the quote.
-    /// * `book`: The order book to get the mid price from.
-    /// * `imbalance`: The imbalance of the order book.
-    /// * `skew`: The skew value.
-    /// * `price_flu`: The price fluctuation.
+    /// * `symbol`: The trading symbol (e.g., "BTCUSD") for which quotes are being generated.
+    /// * `book`: A reference to the `LocalBook` struct, which contains the current order book state.
+    /// * `skew`: A float value representing the current market skew. Positive values indicate a buy-heavy market,
+    ///           while negative values indicate a sell-heavy market.
     ///
     /// # Returns
     ///
-    /// A vector of `BatchOrder` objects representing the generated quotes.
+    /// A vector of `BatchOrder` objects representing the generated quotes. Each `BatchOrder` contains
+    /// information about the order quantity, price, symbol, and side (buy or sell).
     ///
-    /// This function first gets the start price from the order book.
-    /// Then it calculates the preferred spread as a percentage of the start price.
-    /// Next, it calculates the adjusted spread by calling the `adjusted_spread` method.
-    /// After that, it calculates the half spread by dividing the spread by 2.
-    /// It also gets the minimum notional from the order book.
-    /// Then it generates the orders based on the skew value.
-    /// If skew is positive, it calls the `positive_skew_orders` method.
-    /// If skew is negative, it calls the `negative_skew_orders` method.
-    /// Finally, it adds the symbol to each order.
+    /// # Algorithm Overview
     ///
-    /// NOTES: From Cartea, 2018
-    /// If imbalance is buy heavy use positive skew quotes, for sell heavy use negative skew quotes
-    /// but for liquidations use the opposite, buy = negative skew & sell = positive skew meaning
-    /// sell orders are easily filled in these periods and buy orders also
+    /// 1. Calculate the starting price (mid price) from the order book.
+    /// 2. Determine the preferred spread based on the minimum spread setting.
+    /// 3. Calculate an adjusted spread based on current market conditions.
+    /// 4. Compute a corrected skew value that takes into account the current inventory position.
+    /// 5. Generate orders using either positive or negative skew strategies based on the corrected skew.
+    /// 6. Add the trading symbol to each generated order.
+    ///
+    /// # Notes
+    ///
+    /// This implementation is based on the approach described by Cartea et al. (2018). The strategy
+    /// adapts to market conditions by adjusting the skew of the orders:
+    /// - In a buy-heavy market (positive skew), it generates quotes with a positive skew.
+    /// - In a sell-heavy market (negative skew), it generates quotes with a negative skew.
+    /// - For liquidation scenarios, the opposite approach is used to facilitate order filling.
+    ///
+    /// The function also considers the current inventory position to avoid over-exposure in any direction.
     fn generate_quotes(&mut self, symbol: String, book: &LocalBook, skew: f64) -> Vec<BatchOrder> {
-        // Get the start price from the order book.
+        // Get the start price (mid price) from the order book.
         let start = book.get_mid_price();
 
-        // Calculate the preferred spread as a percentage of the start price.
+        // Use the minimum spread as the preferred spread. This could be adjusted based on market conditions.
         let preferred_spread = self.minimum_spread;
 
-        // Calculate the adjusted spread by calling the `adjusted_spread` method.
+        // Calculate the adjusted spread, which may differ from the preferred spread based on market conditions.
         let curr_spread = QuoteGenerator::adjusted_spread(preferred_spread, book);
 
-        // Calculate the half spread by dividing the spread by 2.
+        // Calculate half of the current spread, used for positioning orders around the mid price.
         let half_spread = curr_spread / 2.0;
 
-        // Get the minimum notional from the order book.
+        // Get the minimum notional value allowed for orders from the order book.
         let notional = book.min_notional;
 
-        // Get the corrected skew value.
+        // Calculate a corrected skew value that takes into account the current inventory position.
+        // This helps to avoid building up too large a position in one direction.
         let corrected_skew = skew * (1.0 - nbsqrt(self.inventory_delta));
-        // Generate the orders based on the skew value.
+
+        // Generate the orders based on the corrected skew value.
         let mut orders = if corrected_skew >= 0.00 {
-            // If skew is positive, generate positive skew orders.
+            // If skew is positive (buy-heavy market), generate positive skew orders.
             self.positive_skew_orders(half_spread, curr_spread, start, skew.abs(), notional, book)
         } else {
-            // If skew is negative, generate negative skew orders.
+            // If skew is negative (sell-heavy market), generate negative skew orders.
             self.negative_skew_orders(half_spread, curr_spread, start, skew.abs(), notional, book)
         };
 
-        // Add the symbol to each order.
-        for v in orders.iter_mut() {
-            v.2 = symbol.clone();
+        // Add the trading symbol to each generated order.
+        for order in orders.iter_mut() {
+            order.2 = symbol.clone();
         }
 
+        // Return the vector of generated orders.
         orders
     }
 
     /// Generates a list of batch orders for positive skew.
     ///
+    /// This function creates a set of buy and sell orders optimized for a market with positive skew.
+    /// Positive skew indicates a tendency towards higher prices, so the function adjusts order placement accordingly.
+    ///
     /// # Arguments
     ///
-    /// * `half_spread` - The half spread.
-    /// * `curr_spread` - The current spread.
-    /// * `skew` - The skew value.
-    /// * `start` - The start price.
-    /// * `aggression` - The aggression value.
+    /// * `half_spread` - Half of the current bid-ask spread.
+    /// * `curr_spread` - The full current bid-ask spread.
+    /// * `start` - The starting price, typically the mid-market price.
+    /// * `aggression` - A factor determining how aggressively to place orders (0.0 to 1.0).
+    /// * `notional` - The minimum notional value for an order to be considered valid.
+    /// * `book` - Reference to the current order book state.
     ///
     /// # Returns
     ///
-    /// A vector of batch orders.
+    /// A vector of `BatchOrder` objects representing the generated orders.
     fn positive_skew_orders(
         &self,
         half_spread: f64,
@@ -352,91 +367,112 @@ impl QuoteGenerator {
         notional: f64,
         book: &LocalBook,
     ) -> Vec<BatchOrder> {
-        // Calculate the best bid and ask prices.
+        // Calculate the best bid price, adjusting for market skew
         let best_bid = start - (half_spread * (1.0 - aggression.sqrt()));
+        // Calculate the best ask price based on the best bid and current spread
         let best_ask = best_bid + curr_spread;
 
-        // Calculate the end prices for bid and ask prices.
+        // Calculate the range of prices for order placement
         let end = curr_spread * self.final_order_distance;
         let bid_end = best_bid - end;
         let ask_end = best_ask + end;
 
-        // Generate the bid and ask prices.
+        // Generate a geometric distribution of prices for bids and asks
         let bid_prices = geomspace(best_bid, bid_end, self.total_order / 2);
         let mut ask_prices = geomspace(ask_end, best_ask, self.total_order / 2);
-        ask_prices.reverse();
+        ask_prices.reverse(); // Reverse ask prices to match bid price order
 
+        // Clip the aggression factor to a reasonable range
         let clipped_r = aggression.clip(0.27, 0.73);
 
-        // Generate the bid sizes.
+        // Generate bid sizes based on current inventory and market conditions
         let bid_sizes = if bid_prices.is_empty() || self.inventory_delta >= 0.90 {
+            // If no bid prices or inventory is too high, don't place buy orders
             vec![]
         } else {
-            // Calculate the maximum buy quantity.
+            // Calculate the maximum buy quantity based on position limits
             let max_buy_qty =
                 (self.max_position_usd / 2.0) - (self.position * book.get_mid_price());
-            // Calculate the size weights.
+            // Generate size weights for a geometric distribution
             let size_weights = geometric_weights(clipped_r, self.total_order / 2, true);
-            // Calculate the sizes.
+            // Apply weights to the maximum buy quantity
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_buy_qty).collect();
 
             sizes
         };
 
-        // Generate the ask sizes.
+        // Generate ask sizes based on current inventory and market conditions
         let ask_sizes = if ask_prices.is_empty() {
             vec![]
         } else {
-            // Calculate the maximum sell quantity.
+            // Calculate the maximum sell quantity based on position limits
             let max_sell_qty =
                 (self.max_position_usd / 2.0) + (self.position * book.get_mid_price());
-            // Calculate the size weights.
+            // Generate size weights for a geometric distribution
             let size_weights = geometric_weights(0.37, self.total_order / 2, false);
-            // Calculate the sizes.
+            // Apply weights to the maximum sell quantity
             let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
 
-            sizes.reverse();
+            sizes.reverse(); // Reverse sizes to match ask price order
             sizes
         };
 
-        // Generate the batch orders.
+        // Generate the batch orders
         let mut orders = vec![];
         for (i, bid) in bid_prices.iter().enumerate() {
-            // Create a new batch order with the bid size, price, and quantity.
+            // Create buy orders if bid sizes are available
             if bid_sizes.len() >= 1 {
                 orders.push(BatchOrder::new(
-                    round_size(bid_sizes[i] / *bid, book),
-                    round_price(book, *bid),
-                    1,
+                    round_size(bid_sizes[i] / *bid, book), // Calculate and round the order size
+                    round_price(book, *bid),               // Round the bid price
+                    1,                                     // Indicate a buy order
                 ));
             }
-            // Create a new batch order with the ask size, price, and quantity.
+            // Create sell orders
             orders.push(BatchOrder::new(
-                round_size(ask_sizes[i] / ask_prices[i], book),
-                round_price(book, ask_prices[i]),
-                -1,
+                round_size(ask_sizes[i] / ask_prices[i], book), // Calculate and round the order size
+                round_price(book, ask_prices[i]),               // Round the ask price
+                -1,                                             // Indicate a sell order
             ));
         }
 
-        // filter orders  based on notional
+        // Filter out orders that don't meet the minimum notional value
         orders.retain(|o| (o.0 * o.1) > notional);
 
-        orders
+        orders // Return the generated and filtered orders
     }
 
-    /// Generate a list of batch orders based on negative skew.
+    /// Generates a list of batch orders for negative skew scenarios.
+    ///
+    /// This function creates a set of buy and sell orders optimized for a market with negative skew.
+    /// Negative skew indicates a tendency towards lower prices, so the function adjusts order placement accordingly.
     ///
     /// # Arguments
     ///
-    /// * `half_spread` - The half spread between best ask and best bid prices.
-    /// * `curr_spread` - The current spread between best ask and best bid prices.
-    /// * `skew` - The skew value.
-    /// * `start` - The starting price.
-    /// * `aggression` - The aggression value.
+    /// * `half_spread` - Half of the current bid-ask spread.
+    /// * `curr_spread` - The full current bid-ask spread.
+    /// * `start` - The starting price, typically the mid-market price.
+    /// * `aggression` - A factor determining how aggressively to place orders (0.0 to 1.0).
+    /// * `notional` - The minimum notional value for an order to be considered valid.
+    /// * `book` - Reference to the current order book state.
     ///
     /// # Returns
     ///
-    /// A vector of batch orders.
+    /// A vector of `BatchOrder` objects representing the generated orders.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Calculate best ask and bid prices, adjusting for market skew.
+    /// 2. Determine the range of prices for order placement.
+    /// 3. Generate geometric distributions of prices for bids and asks.
+    /// 4. Calculate bid and ask sizes based on current inventory and market conditions.
+    /// 5. Create batch orders for both buy and sell sides.
+    /// 6. Filter out orders that don't meet the minimum notional value.
+    ///
+    /// # Note
+    ///
+    /// This function is designed to work in tandem with `positive_skew_orders` to provide a
+    /// comprehensive market making strategy that adapts to different market conditions.
     fn negative_skew_orders(
         &self,
         half_spread: f64,
@@ -446,118 +482,203 @@ impl QuoteGenerator {
         notional: f64,
         book: &LocalBook,
     ) -> Vec<BatchOrder> {
-        // Calculate the best bid and ask prices.
+        // Calculate the best ask price, adjusting for market skew
+        // In a negative skew scenario, we place the best ask closer to the mid price
         let best_ask = start + (half_spread * (1.0 - aggression.sqrt()));
+
+        // Calculate the best bid price based on the best ask and current spread
         let best_bid = best_ask - curr_spread;
 
-        // Calculate the end prices for bid and ask prices.
+        // Calculate the range of prices for order placement
+        // The 'end' price is determined by the current spread and final_order_distance
         let end = curr_spread * self.final_order_distance;
+
+        // Calculate the lowest bid price and highest ask price
         let bid_end = best_bid - end;
         let ask_end = best_ask + end;
 
-        // Generate the bid and ask prices.
+        // Generate a geometric distribution of prices for bids and asks
+        // This creates a series of prices that are closer together near the best bid/ask
+        // and further apart as they move away from the mid price
         let bid_prices = geomspace(best_bid, bid_end, self.total_order / 2);
         let mut ask_prices = geomspace(ask_end, best_ask, self.total_order / 2);
-        ask_prices.reverse();
+        ask_prices.reverse(); // Reverse ask prices to match bid price order
 
+        // Clip the aggression factor to a reasonable range
         let clipped_r = aggression.clip(0.27, 0.73);
-        // Generate the bid sizes.
+
+        // Generate bid sizes based on current inventory and market conditions
         let bid_sizes = if bid_prices.is_empty() {
-            vec![]
+            vec![] // If no bid prices, don't place any buy orders
         } else {
+            // Calculate the maximum buy quantity based on position limits
             let max_bid_qty =
                 (self.max_position_usd / 2.0) - (self.position * book.get_mid_price());
+
+            // Generate size weights for a geometric distribution
+            // We use a fixed factor of 0.37 for bids in negative skew scenarios
             let size_weights = geometric_weights(0.37, self.total_order / 2, true);
+
+            // Apply weights to the maximum buy quantity
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_bid_qty).collect();
 
             sizes
         };
-        // Generate the ask sizes.
+
+        // Generate ask sizes based on current inventory and market conditions
         let ask_sizes = if ask_prices.is_empty() || self.inventory_delta <= -0.90 {
-            vec![]
+            vec![] // If no ask prices or inventory is too low, don't place sell orders
         } else {
+            // Calculate the maximum sell quantity based on position limits
             let max_sell_qty =
                 (self.max_position_usd / 2.0) + (self.position * book.get_mid_price());
+
+            // Generate size weights for a geometric distribution
+            // We use the clipped aggression factor for asks in negative skew scenarios
             let size_weights = geometric_weights(clipped_r, self.total_order / 2, false);
+
+            // Apply weights to the maximum sell quantity
             let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
-            sizes.reverse();
+            sizes.reverse(); // Reverse sizes to match ask price order
 
             sizes
         };
 
-        // Generate the batch orders.
+        // Generate the batch orders
         let mut orders = vec![];
         for (i, bid) in bid_prices.iter().enumerate() {
-            // Create a new batch order with the bid size, price, and quantity.
+            // Create a new batch order for buying (side = 1)
             orders.push(BatchOrder::new(
-                round_size(bid_sizes[i] / *bid, book),
-                round_price(book, *bid),
-                1,
+                round_size(bid_sizes[i] / *bid, book), // Calculate and round the order size
+                round_price(book, *bid),               // Round the bid price
+                1,                                     // Indicate a buy order
             ));
+
+            // Create a new batch order for selling (side = -1), if ask sizes are available
             if ask_sizes.len() >= 1 {
-                // Create a new batch order with the ask size, price, and quantity.
                 orders.push(BatchOrder::new(
-                    round_size(ask_sizes[i] / ask_prices[i], book),
-                    round_price(book, ask_prices[i]),
-                    -1,
+                    round_size(ask_sizes[i] / ask_prices[i], book), // Calculate and round the order size
+                    round_price(book, ask_prices[i]),               // Round the ask price
+                    -1,                                             // Indicate a sell order
                 ));
             }
         }
 
-        // filter orders  based on notional      // filter orders  based on notional
+        // Filter out orders that don't meet the minimum notional value
+        // This ensures that all orders meet the exchange's minimum order size requirements
         orders.retain(|o| (o.0 * o.1) > notional);
 
+        // Return the final list of orders
         orders
     }
 
     /// Sends a batch of orders to the exchange asynchronously.
     ///
+    /// This function is responsible for sending a batch of orders to the exchange and processing
+    /// the response. It handles rate limiting, error handling, and updating the internal state
+    /// of live orders.
+    ///
     /// # Arguments
     ///
     /// * `orders` - A vector of `BatchOrder` containing the orders to send.
     ///
-    /// This function sends a batch of orders to the exchange asynchronously. It awaits the response
-    /// from the exchange and then iterates over each response and pushes it to the appropriate
-    /// queue. If the response is successful, it sorts the queues and updates the live orders. If
-    /// there is an error, it prints the error message.
+    /// # Details
+    ///
+    /// The function performs the following steps:
+    /// 1. Splits the orders into chunks of 10 to avoid overwhelming the exchange API.
+    /// 2. Sends each chunk to the exchange and awaits the response.
+    /// 3. Updates the rate limit counter.
+    /// 4. Processes the response:
+    ///    - If successful, updates the live orders queues and sorts them.
+    ///    - If there's an error, logs the error message.
+    ///
+    /// # Rate Limiting
+    ///
+    /// The function decrements the `rate_limit` counter for each batch sent. This helps in
+    /// adhering to the exchange's API rate limits.
+    ///
+    /// # Error Handling
+    ///
+    /// If the exchange returns an error, the function logs a "Batch order error" message.
+    /// More sophisticated error handling could be implemented here in the future.
+    ///
+    /// # Note
+    ///
+    /// This function assumes that the exchange response contains two vectors: one for buy orders
+    /// and one for sell orders. This structure might need to be adjusted based on the specific
+    /// exchange API being used.
     async fn send_batch_orders(&mut self, orders: Vec<BatchOrder>) {
-        // Send the batch orders to the exchange and await the response.
-        for order in orders.chunks(10) {
-            let order_response = self.client.batch_place_order(order.to_vec()).await;
+        // Iterate over the orders in chunks of 10 to avoid overwhelming the exchange API
+        for order_chunk in orders.chunks(10) {
+            // Send the batch of orders to the exchange and await the response
+            let order_response = self.client.batch_place_order(order_chunk.to_vec()).await;
+
+            // Decrement the rate limit counter
             self.rate_limit -= 1;
+
+            // Process the response from the exchange
             match order_response {
-                // If the response is successful, process the orders.
-                Ok(v) => {
-                    // Push the orders from the first response to the live buys queue.
-                    for order in v[0].clone() {
-                        self.live_buys_orders.push_back(order);
+                // If the response is successful, process the orders
+                Ok(response) => {
+                    // Process buy orders (assumed to be in the first element of the response)
+                    for buy_order in response[0].clone() {
+                        // Add the new buy order to the live buy orders queue
+                        self.live_buys_orders.push_back(buy_order);
                     }
-                    // Sort the live buys queue and update it.
+                    // Sort the live buy orders and update the queue
                     let sorted_buys = sort_grid(&mut self.live_buys_orders, -1);
                     self.live_buys_orders = sorted_buys;
 
-                    // Push the orders from the second response to the live sells queue.
-                    for order in v[1].clone() {
-                        self.live_sells_orders.push_back(order);
+                    // Process sell orders (assumed to be in the second element of the response)
+                    for sell_order in response[1].clone() {
+                        // Add the new sell order to the live sell orders queue
+                        self.live_sells_orders.push_back(sell_order);
                     }
-                    // Sort the live sells queue and update it.
+                    // Sort the live sell orders and update the queue
                     let sorted_sells = sort_grid(&mut self.live_sells_orders, 1);
                     self.live_sells_orders = sorted_sells;
                 }
-                // If there is an error, print the error message.
+                // If there is an error, log the error message
                 Err(_) => {
                     println!("Batch order error");
+                    // TODO: Implement more sophisticated error handling and logging
                 }
             }
         }
     }
 
+    /// Checks for and processes filled orders based on private execution data.
+    ///
+    /// This function updates the internal state of the QuoteGenerator by processing
+    /// the execution data received from the exchange. It handles both buy and sell orders,
+    /// updating the position and removing filled orders from the live order lists.
+    ///
+    /// # Arguments
+    ///
+    /// * `data`: PrivateData - The private execution data from the exchange, which can be
+    ///   either from Bybit or Binance.
+    ///
+    /// # Details
+    ///
+    /// The function performs the following steps:
+    /// 1. Extracts the execution data based on the exchange type.
+    /// 2. Iterates through each filled order in the execution data.
+    /// 3. Processes each fill, updating the position and removing the filled order from
+    ///    the appropriate live order list (buy or sell).
+    /// 4. Logs information about each filled order.
+    ///
+    /// # Note
+    ///
+    /// This function assumes that the execution quantity is provided as a string and may
+    /// contain commas, which are removed before parsing to a float.
     fn check_for_fills(&mut self, data: PrivateData) {
+        // Extract the fills data based on the exchange type
         let fills = match data {
             PrivateData::Bybit(data) => data.executions,
             PrivateData::Binance(data) => data.into_fastexec(),
         };
 
+        // Iterate through each fill in the execution data
         for FastExecData {
             order_id,
             exec_qty,
@@ -565,51 +686,84 @@ impl QuoteGenerator {
             ..
         } in fills
         {
-            let exec_qty_str = exec_qty.replace(",", ""); // Remove commas
-            if exec_qty_str.parse::<f64>().unwrap() > 0.0 {
-                if side == "Buy" {
-                    for (i, order) in self.live_buys_orders.clone().iter().enumerate() {
-                        if order.order_id == order_id {
-                            self.position += order.qty;
-                            println!(
-                                "Buy order filled: ID {}, Qty {}, New position {}",
-                                order_id, exec_qty, self.position
-                            );
-                            self.live_buys_orders.remove(i);
+            // Remove commas from the execution quantity string and parse it to a float
+            let exec_qty_str = exec_qty.replace(",", "");
+            if let Ok(exec_qty_float) = exec_qty_str.parse::<f64>() {
+                if exec_qty_float > 0.0 {
+                    if side == "Buy" {
+                        // Process filled buy orders
+                        for (i, order) in self.live_buys_orders.clone().iter().enumerate() {
+                            if order.order_id == order_id {
+                                // Update the position and remove the filled order
+                                self.position += order.qty;
+                                println!(
+                                    "Buy order filled: ID {}, Qty {}, New position {}",
+                                    order_id, exec_qty, self.position
+                                );
+                                self.live_buys_orders.remove(i);
+                                break; // Exit the loop after processing the filled order
+                            }
                         }
-                    }
-                } else {
-                    for (i, order) in self.live_sells_orders.clone().iter().enumerate() {
-                        if order.order_id == order_id {
-                            self.position -= order.qty;
-                            println!(
-                                "Sell order filled: ID {}, Qty {}, New position {}",
-                                order_id, exec_qty, self.position
-                            );
-                            self.live_sells_orders.remove(i);
+                    } else {
+                        // Process filled sell orders
+                        for (i, order) in self.live_sells_orders.clone().iter().enumerate() {
+                            if order.order_id == order_id {
+                                // Update the position and remove the filled order
+                                self.position -= order.qty;
+                                println!(
+                                    "Sell order filled: ID {}, Qty {}, New position {}",
+                                    order_id, exec_qty, self.position
+                                );
+                                self.live_sells_orders.remove(i);
+                                break; // Exit the loop after processing the filled order
+                            }
                         }
                     }
                 }
+            } else {
+                println!("Error parsing execution quantity: {}", exec_qty);
             }
         }
     }
 
+    /// Determines if the current orders are out of bounds and need to be updated.
+    ///
+    /// This function checks if the current live orders are still valid given the current market conditions.
+    /// It considers the order book, recent fills, and the current spread to make this determination.
+    ///
+    /// # Arguments
+    ///
+    /// * `&mut self` - Mutable reference to the QuoteGenerator instance.
+    /// * `book` - Reference to the current LocalBook (order book).
+    /// * `symbol` - The trading symbol as a String.
+    /// * `private` - PrivateData containing recent trade execution information.
+    ///
+    /// # Returns
+    ///
+    /// * `bool` - True if orders are out of bounds and need updating, false otherwise.
     async fn out_of_bounds(
         &mut self,
         book: &LocalBook,
         symbol: String,
         private: PrivateData,
     ) -> bool {
-        // Initialize the `out_of_bounds` boolean to `false`.
+        // Initialize the out_of_bounds flag to false
         let mut out_of_bounds = false;
+
+        // Calculate the bounds for determining if orders are out of range
         let bounds = {
             if self.adjusted_spread > 0.0 {
+                // Use 150% of the adjusted spread if it's set
                 self.last_update_price * bps_to_decimal(self.adjusted_spread * 1.5)
             } else {
+                // Otherwise, use 150% of the minimum spread
                 self.last_update_price * bps_to_decimal(self.minimum_spread * 1.5)
             }
         };
+
+        // Determine the current bid and ask bounds
         let (current_bid_bounds, current_ask_bounds) = (
+            // Get the price of the first sell order, or use a default if none exists
             self.live_sells_orders
                 .front()
                 .unwrap_or(&LiveOrder {
@@ -619,6 +773,7 @@ impl QuoteGenerator {
                 })
                 .clone()
                 .price,
+            // Get the price of the first buy order, or use a default if none exists
             self.live_buys_orders
                 .front()
                 .unwrap_or(&LiveOrder {
@@ -630,26 +785,29 @@ impl QuoteGenerator {
                 .price,
         );
 
-        // Check if there are any fills in the private data by calling the
-        // `check_for_fills` method.
+        // Process any recent fills from the private execution data
         self.check_for_fills(private);
 
-        // If there are no live orders, return `true`.
+        // Check if there are no live orders
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
-            // Set the `out_of_bounds` boolean to `true`.
+            // If no live orders, set out_of_bounds to true
             out_of_bounds = true;
-            // Set the `last_update_price` to the mid price of the order book.
+            // Update the last_update_price to the current mid price
             self.last_update_price = book.mid_price;
-            //  Return the `out_of_bounds` boolean.
+            // Return true as we need to generate new orders
             return out_of_bounds;
         } else if self.last_update_price != 0.0 {
-            // Set the `out_of_bounds` boolean to `true`.
+            // Check if we have enough cancellations left in our rate limit
             if self.cancel_limit > 1 {
+                // Check if the current mid price is outside our order bounds
                 if book.mid_price < current_bid_bounds || book.mid_price > current_ask_bounds {
+                    // Attempt to cancel all existing orders
                     if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
                         out_of_bounds = true;
 
+                        // Process each cancelled order
                         for cancelled_order in v.clone() {
+                            // Remove cancelled buy orders from our live orders
                             for (i, live_order) in
                                 self.live_buys_orders.clone().iter_mut().enumerate()
                             {
@@ -657,6 +815,7 @@ impl QuoteGenerator {
                                     self.live_buys_orders.remove(i);
                                 }
                             }
+                            // Remove cancelled sell orders from our live orders
                             for (i, live_order) in
                                 self.live_sells_orders.clone().iter_mut().enumerate()
                             {
@@ -664,28 +823,45 @@ impl QuoteGenerator {
                                     self.live_sells_orders.remove(i);
                                 }
                             }
+                            // Update the last update price to the current mid price
                             self.last_update_price = book.mid_price;
+                            // Decrement our cancellation limit
                             self.cancel_limit -= 1;
                         }
                     } else {
+                        // If cancellation failed, still decrement the cancel limit
                         self.cancel_limit -= 1;
                     }
                 }
             }
         }
-        // Return the `out_of_bounds` boolean.
+        // Return the final out_of_bounds status
         out_of_bounds
     }
 
-    /// Updates the grid of orders with the current wallet data, skew, imbalance,
-    /// order book, symbol, and price fluctuation.
+    /// Updates the grid of orders with the current market data and trading parameters.
+    ///
+    /// This function is the core of the market-making strategy, responsible for adjusting
+    /// the order grid based on the latest market conditions and trading parameters.
     ///
     /// # Arguments
     ///
-    /// * `wallet` - Private data of the wallet.
-    /// * `skew` - Skew of the order book.
-    /// * `book` - Current order book.
-    /// * `symbol` - String representing the symbol.
+    /// * `private` - Private data of the wallet, containing information about current positions and balances.
+    /// * `skew` - A float representing the current market skew. Positive values indicate a buy-heavy market,
+    ///            while negative values indicate a sell-heavy market.
+    /// * `book` - The current state of the order book, containing bid and ask prices and volumes.
+    /// * `symbol` - A string representing the trading symbol (e.g., "BTCUSD").
+    ///
+    /// # Behavior
+    ///
+    /// 1. Updates the adjusted spread based on current market conditions.
+    /// 2. Checks and potentially resets rate limits based on the time since the last update.
+    /// 3. Determines if the current orders are out of bounds (needing adjustment).
+    /// 4. If out of bounds:
+    ///    a. Updates the inventory delta.
+    ///    b. Generates new quotes.
+    ///    c. Sends the new orders to the exchange (if within rate limits).
+    /// 5. Updates the time of the last grid update.
     pub async fn update_grid(
         &mut self,
         private: PrivateData,
@@ -693,41 +869,44 @@ impl QuoteGenerator {
         book: LocalBook,
         symbol: String,
     ) {
-        // First, update the adjusted spread by calling the `adjusted_spread` method
-        // with the minimum spread and the order book.
+        // Update the adjusted spread based on the current minimum spread and order book
+        // This accounts for current market volatility and liquidity
         self.adjusted_spread = QuoteGenerator::adjusted_spread(self.minimum_spread, &book);
 
-        // If the time limit is greater than 1, check if the order book's last update
-        // is greater than the time limit minus 1000 milliseconds.
-        // If it is, update the rate limit and cancel limit to the provided rate limit.
+        // Check if it's time to reset the rate limits
+        // This helps to manage API call frequency and avoid hitting exchange limits
         if self.time_limit > 1 {
             let condition = (book.last_update - self.time_limit) > 1000;
-            if condition == true {
+            if condition {
+                // Reset rate limits to their initial values
                 self.rate_limit = self.initial_limit;
                 self.cancel_limit = self.initial_limit;
             }
         }
 
+        // Check if the current orders are out of bounds and need adjustment
         match self.out_of_bounds(&book, symbol.clone(), private).await {
             true => {
-                // Next, update the inventory delta by calling the `inventory_delta` method.
+                // Orders are out of bounds, need to adjust the grid
+
+                // Update the inventory delta to account for any recent trades
                 self.inventory_delta(&book);
+
+                // Generate new quotes based on current market conditions
                 let orders = self.generate_quotes(symbol.clone(), &book, skew);
 
-                // Check if the order book is out of bounds with the given symbol by calling
-                // the `out_of_bounds` method.
-                // If it is out of bounds, generate quotes for the grid based on the order book,
-                // symbol, imbalance, skew, and price fluctuation.
-                // If the rate limit is greater than 1, send the generated orders to the book.
-                // Finally, update the time limit to the order book's last update.
+                // Send the new orders to the exchange if within rate limits
                 if self.rate_limit > 1 {
                     self.send_batch_orders(orders).await;
                 }
 
+                // Update the time of the last grid update
                 self.time_limit = book.last_update;
             }
 
-            false => {}
+            false => {
+                // Orders are still within acceptable bounds, no action needed
+            }
         }
     }
 }
@@ -806,6 +985,7 @@ fn sort_grid(orders: &mut VecDeque<LiveOrder>, side: i32) -> VecDeque<LiveOrder>
 }
 
 impl OrderManagement {
+    #[allow(dead_code)]
     async fn place_buy_limit(&self, qty: f64, price: f64, symbol: &str) -> Result<LiveOrder, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
@@ -846,6 +1026,7 @@ impl OrderManagement {
         }
     }
 
+    #[allow(dead_code)]
     async fn place_sell_limit(&self, qty: f64, price: f64, symbol: &str) -> Result<LiveOrder, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
@@ -886,6 +1067,7 @@ impl OrderManagement {
         }
     }
 
+    #[allow(dead_code)]
     async fn market_buy(&self, qty: f64, symbol: &str) -> Result<LiveOrder, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
@@ -921,6 +1103,7 @@ impl OrderManagement {
         }
     }
 
+    #[allow(dead_code)]
     async fn market_sell(&self, qty: f64, symbol: &str) -> Result<LiveOrder, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
@@ -957,6 +1140,7 @@ impl OrderManagement {
         }
     }
 
+    #[allow(dead_code)]
     async fn amend_order(
         &self,
         order: LiveOrder,
@@ -1012,6 +1196,7 @@ impl OrderManagement {
         }
     }
 
+    #[allow(dead_code)]
     async fn cancel_order(&self, order: LiveOrder, symbol: &str) -> Result<LiveOrder, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
@@ -1087,6 +1272,7 @@ impl OrderManagement {
         }
     }
 
+    #[allow(dead_code)]
     async fn batch_cancel(
         &self,
         orders: Vec<LiveOrder>,
@@ -1263,6 +1449,7 @@ impl OrderManagement {
         }
     }
 
+    #[allow(dead_code)]
     async fn batch_amend(
         &self,
         orders: Vec<LiveOrder>,

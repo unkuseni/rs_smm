@@ -22,7 +22,10 @@ pub fn imbalance_ratio(book: &LocalBook, depth: Option<usize>) -> f64 {
     // Initialize the weighted bid and ask quantities to the quantities of the best bid and ask.
     let (weighted_bid_qty, weighted_ask_qty) = if let Some(depth) = depth {
         // Calculate the weighted bid quantity using the specified depth.
-        (calculate_weighted_bid(book, depth), calculate_weighted_ask(book, depth))
+        (
+            calculate_weighted_bid(book, depth),
+            calculate_weighted_ask(book, depth),
+        )
     } else {
         (book.best_bid.qty, book.best_ask.qty)
     };
@@ -43,7 +46,17 @@ pub fn imbalance_ratio(book: &LocalBook, depth: Option<usize>) -> f64 {
     }
 }
 
-
+/// Calculates the Order Flow Imbalance (OFI) between two order book states.
+///
+/// # Arguments
+///
+/// * `book` - The current LocalBook.
+/// * `prev_book` - The previous LocalBook.
+/// * `depth` - The depth of the bid/ask orders to consider. If `None`, only the best bid and ask are used.
+///
+/// # Returns
+///
+/// The Order Flow Imbalance as a `f64`.
 pub fn calculate_ofi(book: &LocalBook, prev_book: &LocalBook, depth: Option<usize>) -> f64 {
     let bid_ofi = {
         if book.best_bid.price > prev_book.best_bid.price {
@@ -99,7 +112,6 @@ pub fn calculate_ofi(book: &LocalBook, prev_book: &LocalBook, depth: Option<usiz
 
     ofi
 }
-
 
 /// Calculates the Volume at the Offset (VOI) of a given LocalBook and its previous state.
 ///
@@ -163,7 +175,6 @@ pub fn voi(book: &LocalBook, prev_book: &LocalBook, depth: Option<usize>) -> f64
     let diff = bid_v - ask_v;
     diff
 }
-
 
 pub fn trade_imbalance(trades: &VecDeque<WsTrade>) -> f64 {
     // Calculate total volume and buy volume
@@ -239,4 +250,3 @@ fn calculate_weighted_bid(book: &LocalBook, depth: usize) -> f64 {
         .map(|(i, (_, qty))| (calculate_exponent(i as f64) * qty) as f64)
         .sum::<f64>()
 }
-
