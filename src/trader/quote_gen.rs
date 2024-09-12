@@ -985,6 +985,7 @@ fn sort_grid(orders: &mut VecDeque<LiveOrder>, side: i32) -> VecDeque<LiveOrder>
 }
 
 impl OrderManagement {
+    #[allow(dead_code)]
     async fn place_buy_limit(&self, qty: f64, price: f64, symbol: &str) -> Result<LiveOrder, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
@@ -1025,6 +1026,7 @@ impl OrderManagement {
         }
     }
 
+    #[allow(dead_code)]
     async fn place_sell_limit(&self, qty: f64, price: f64, symbol: &str) -> Result<LiveOrder, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
@@ -1065,6 +1067,7 @@ impl OrderManagement {
         }
     }
 
+    #[allow(dead_code)]
     async fn market_buy(&self, qty: f64, symbol: &str) -> Result<LiveOrder, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
@@ -1100,6 +1103,7 @@ impl OrderManagement {
         }
     }
 
+    #[allow(dead_code)]
     async fn market_sell(&self, qty: f64, symbol: &str) -> Result<LiveOrder, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
@@ -1136,6 +1140,7 @@ impl OrderManagement {
         }
     }
 
+    #[allow(dead_code)]
     async fn amend_order(
         &self,
         order: LiveOrder,
@@ -1191,6 +1196,7 @@ impl OrderManagement {
         }
     }
 
+    #[allow(dead_code)]
     async fn cancel_order(&self, order: LiveOrder, symbol: &str) -> Result<LiveOrder, ()> {
         match self {
             OrderManagement::Bybit(trader) => {
@@ -1266,6 +1272,7 @@ impl OrderManagement {
         }
     }
 
+    #[allow(dead_code)]
     async fn batch_cancel(
         &self,
         orders: Vec<LiveOrder>,
@@ -1442,6 +1449,7 @@ impl OrderManagement {
         }
     }
 
+    #[allow(dead_code)]
     async fn batch_amend(
         &self,
         orders: Vec<LiveOrder>,
