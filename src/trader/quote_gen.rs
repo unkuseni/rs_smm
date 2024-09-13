@@ -754,7 +754,7 @@ impl QuoteGenerator {
         let bounds = {
             if self.adjusted_spread > 0.0 {
                 // Use 150% of the adjusted spread if it's set
-                self.last_update_price * bps_to_decimal(self.adjusted_spread * 1.5)
+                self.adjusted_spread * 1.5
             } else {
                 // Otherwise, use 150% of the minimum spread
                 self.last_update_price * bps_to_decimal(self.minimum_spread * 1.5)
