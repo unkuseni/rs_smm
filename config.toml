@@ -34,8 +34,8 @@ final_order_distance = 10
 # Number of order book levels (depth) to request from the exchange
 depths = [4, 13, 32] # You can have multiple depths for different symbols
 
-# Rate limit for API calls (in milliseconds)
-rate_limit = 1000
+# Rate limit for API calls (in secs)
+rate_limit = 10
 
 # Profit spread for  (e.g., 1 for 0.01% profit spread)
 bps = [27, 25]
