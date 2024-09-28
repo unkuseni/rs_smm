@@ -73,7 +73,6 @@ pub struct BybitClient {
 }
 
 impl Exchange for BybitClient {
-
     type Quoter<'a> = Trader<'a>;
 
     fn default() -> Self {
@@ -174,11 +173,9 @@ impl BybitClient {
                 if let Some(v) = &res.result.list[0].lot_size_filter.qty_step {
                     b.lot_size = v.parse::<f64>().unwrap_or(0.0);
                 }
-                if let Some(v) = &res.result.list[0].lot_size_filter.post_only_max_order_qty {
-                    b.post_only_max = v.parse::<f64>().unwrap_or(0.0);
-                }
+                b.post_only_max = res.result.list[0].lot_size_filter.max_order_qty;
                 b.min_order_size = res.result.list[0].lot_size_filter.min_order_qty;
-                if let Some(v) = &res.result.list[0].lot_size_filter.min_order_amt {
+                if let Some(v) = &res.result.list[0].lot_size_filter.min_notional_value {
                     b.min_notional = v.parse::<f64>().unwrap_or(0.0);
                 }
             }
