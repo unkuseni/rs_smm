@@ -396,10 +396,7 @@ impl QuoteGenerator {
             // Generate size weights for a geometric distribution
             let size_weights = geometric_weights(clipped_r, self.total_order / 2, true);
             // Apply weights to the maximum buy quantity
-            let sizes: Vec<f64> = size_weights
-                .iter()
-                .map(|w| w * max_buy_qty)
-                .collect();
+            let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_buy_qty).collect();
 
             sizes
         };
@@ -414,10 +411,7 @@ impl QuoteGenerator {
             // Generate size weights for a geometric distribution
             let size_weights = geometric_weights(0.37, self.total_order / 2, false);
             // Apply weights to the maximum sell quantity
-            let mut sizes: Vec<f64> = size_weights
-                .iter()
-                .map(|w| w * max_sell_qty)
-                .collect();
+            let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
 
             sizes.reverse(); // Reverse sizes to match ask price order
             sizes
@@ -430,15 +424,15 @@ impl QuoteGenerator {
             if bid_sizes.len() >= 1 {
                 orders.push(BatchOrder::new(
                     round_size(bid_sizes[i] / *bid, book).min(book.post_only_max), // Calculate and round the order size
-                    round_price(book, *bid),               // Round the bid price
-                    1,                                     // Indicate a buy order
+                    round_price(book, *bid), // Round the bid price
+                    1,                       // Indicate a buy order
                 ));
             }
             // Create sell orders
             orders.push(BatchOrder::new(
                 round_size(ask_sizes[i] / ask_prices[i], book).min(book.post_only_max), // Calculate and round the order size
-                round_price(book, ask_prices[i]),               // Round the ask price
-                -1,                                             // Indicate a sell order
+                round_price(book, ask_prices[i]), // Round the ask price
+                -1,                               // Indicate a sell order
             ));
         }
 
@@ -526,10 +520,7 @@ impl QuoteGenerator {
             let size_weights = geometric_weights(0.37, self.total_order / 2, true);
 
             // Apply weights to the maximum buy quantity
-            let sizes: Vec<f64> = size_weights
-                .iter()
-                .map(|w| w * max_bid_qty)
-                .collect();
+            let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_bid_qty).collect();
 
             sizes
         };
@@ -547,10 +538,7 @@ impl QuoteGenerator {
             let size_weights = geometric_weights(clipped_r, self.total_order / 2, false);
 
             // Apply weights to the maximum sell quantity
-            let mut sizes: Vec<f64> = size_weights
-                .iter()
-                .map(|w| w * max_sell_qty)
-                .collect();
+            let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
             sizes.reverse(); // Reverse sizes to match ask price order
 
             sizes
@@ -562,16 +550,16 @@ impl QuoteGenerator {
             // Create a new batch order for buying (side = 1)
             orders.push(BatchOrder::new(
                 round_size(bid_sizes[i] / *bid, book).min(book.post_only_max), // Calculate and round the order size
-                round_price(book, *bid),               // Round the bid price
-                1,                                     // Indicate a buy order
+                round_price(book, *bid), // Round the bid price
+                1,                       // Indicate a buy order
             ));
 
             // Create a new batch order for selling (side = -1), if ask sizes are available
             if ask_sizes.len() >= 1 {
                 orders.push(BatchOrder::new(
                     round_size(ask_sizes[i] / ask_prices[i], book).min(book.post_only_max), // Calculate and round the order size
-                    round_price(book, ask_prices[i]),               // Round the ask price
-                    -1,                                             // Indicate a sell order
+                    round_price(book, ask_prices[i]), // Round the ask price
+                    -1,                               // Indicate a sell order
                 ));
             }
         }
@@ -620,42 +608,51 @@ impl QuoteGenerator {
     /// and one for sell orders. This structure might need to be adjusted based on the specific
     /// exchange API being used.
     async fn send_batch_orders(&mut self, orders: Vec<BatchOrder>) {
-        // Iterate over the orders in chunks of 10 to avoid overwhelming the exchange API
-        for order_chunk in orders.chunks(10) {
-            // Send the batch of orders to the exchange and await the response
-            let order_response = self.client.batch_place_order(order_chunk.to_vec()).await;
+        println!("Simulating batch order placement for testing:");
+        for (index, order) in orders.iter().enumerate() {
+            let side = if order.3 > 0 { "Buy" } else { "Sell" };
+            println!(
+                "Order {}: {} {} @ {} (Symbol: {})",
+                index + 1,
+                side,
+                order.0,
+                order.1,
+                order.2
+            );
 
-            // Decrement the rate limit counter
-            self.rate_limit -= 1;
-
-            // Process the response from the exchange
-            match order_response {
-                // If the response is successful, process the orders
-                Ok(response) => {
-                    // Process buy orders (assumed to be in the first element of the response)
-                    for buy_order in response[0].clone() {
-                        // Add the new buy order to the live buy orders queue
-                        self.live_buys_orders.push_back(buy_order);
-                    }
-                    // Sort the live buy orders and update the queue
-                    let sorted_buys = sort_grid(&mut self.live_buys_orders, -1);
-                    self.live_buys_orders = sorted_buys;
-
-                    // Process sell orders (assumed to be in the second element of the response)
-                    for sell_order in response[1].clone() {
-                        // Add the new sell order to the live sell orders queue
-                        self.live_sells_orders.push_back(sell_order);
-                    }
-                    // Sort the live sell orders and update the queue
-                    let sorted_sells = sort_grid(&mut self.live_sells_orders, 1);
-                    self.live_sells_orders = sorted_sells;
-                }
-                // If there is an error, log the error message
-                Err(_) => {
-                    println!("Batch order error");
-                    // TODO: Implement more sophisticated error handling and logging
-                }
+            // Simulate adding to live orders
+            let live_order = LiveOrder::new(order.1, order.0, format!("test_order_id_{}", index));
+            if order.3 > 0 {
+                self.live_buys_orders.push_back(live_order);
+            } else {
+                self.live_sells_orders.push_back(live_order);
             }
+        }
+
+        // Sort the live orders
+        self.live_buys_orders = sort_grid(&mut self.live_buys_orders, -1);
+        self.live_sells_orders = sort_grid(&mut self.live_sells_orders, 1);
+
+        println!("Current live buy orders:");
+        for (index, order) in self.live_buys_orders.iter().enumerate() {
+            println!(
+                "  Buy {}: {} @ {} (ID: {})",
+                index + 1,
+                order.qty,
+                order.price,
+                order.order_id
+            );
+        }
+
+        println!("Current live sell orders:");
+        for (index, order) in self.live_sells_orders.iter().enumerate() {
+            println!(
+                "  Sell {}: {} @ {} (ID: {})",
+                index + 1,
+                order.qty,
+                order.price,
+                order.order_id
+            );
         }
     }
 
@@ -683,59 +680,47 @@ impl QuoteGenerator {
     ///
     /// This function assumes that the execution quantity is provided as a string and may
     /// contain commas, which are removed before parsing to a float.
-    fn check_for_fills(&mut self, data: PrivateData) {
-        // Extract the fills data based on the exchange type
-        let fills = match data {
-            PrivateData::Bybit(data) => data.executions,
-            PrivateData::Binance(data) => data.into_fastexec(),
-        };
+    fn check_for_fills(&mut self, book: &LocalBook) {
+        println!("Checking for fills based on current order book:");
 
-        // Iterate through each fill in the execution data
-        for FastExecData {
-            order_id,
-            exec_qty,
-            side,
-            ..
-        } in fills
-        {
-            // Remove commas from the execution quantity string and parse it to a float
-            let exec_qty_str = exec_qty.replace(",", "");
-            if let Ok(exec_qty_float) = exec_qty_str.parse::<f64>() {
-                if exec_qty_float > 0.0 {
-                    if side == "Buy" {
-                        // Process filled buy orders
-                        for (i, order) in self.live_buys_orders.clone().iter().enumerate() {
-                            if order.order_id == order_id {
-                                // Update the position and remove the filled order
-                                self.position += order.qty;
-                                println!(
-                                    "Buy order filled: ID {}, Qty {}, New position {}",
-                                    order_id, exec_qty, self.position
-                                );
-                                self.live_buys_orders.remove(i);
-                                break; // Exit the loop after processing the filled order
-                            }
-                        }
-                    } else {
-                        // Process filled sell orders
-                        for (i, order) in self.live_sells_orders.clone().iter().enumerate() {
-                            if order.order_id == order_id {
-                                // Update the position and remove the filled order
-                                self.position -= order.qty;
-                                println!(
-                                    "Sell order filled: ID {}, Qty {}, New position {}",
-                                    order_id, exec_qty, self.position
-                                );
-                                self.live_sells_orders.remove(i);
-                                break; // Exit the loop after processing the filled order
-                            }
-                        }
-                    }
-                }
+        // Check buy orders
+        self.live_buys_orders.retain(|order| {
+            if order.price >= book.best_ask.price {
+                // Order filled
+                self.position += order.qty;
+                println!(
+                    "Buy order filled: {} @ {} (ID: {})",
+                    order.qty, order.price, order.order_id
+                );
+                println!("Updated position: {}", self.position);
+                false // Remove this order from live orders
             } else {
-                println!("Error parsing execution quantity: {}", exec_qty);
+                true // Keep this order in live orders
             }
-        }
+        });
+
+        // Check sell orders
+        self.live_sells_orders.retain(|order| {
+            if order.price <= book.best_bid.price {
+                // Order filled
+                self.position -= order.qty;
+                println!(
+                    "Sell order filled: {} @ {} (ID: {})",
+                    order.qty, order.price, order.order_id
+                );
+                println!("Updated position: {}", self.position);
+                false // Remove this order from live orders
+            } else {
+                true // Keep this order in live orders
+            }
+        });
+
+        println!("Final position after checking fills: {}", self.position);
+        println!("Remaining live buy orders: {}", self.live_buys_orders.len());
+        println!(
+            "Remaining live sell orders: {}",
+            self.live_sells_orders.len()
+        );
     }
 
     /// Determines if the current orders are out of bounds and need to be updated.
@@ -798,7 +783,7 @@ impl QuoteGenerator {
         );
 
         // Process any recent fills from the private execution data
-        self.check_for_fills(private);
+        self.check_for_fills(book);
 
         // Check if there are no live orders
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
@@ -813,37 +798,15 @@ impl QuoteGenerator {
             if self.cancel_limit > 1 {
                 // Check if the current mid price is outside our order bounds
                 if book.mid_price < current_bid_bounds || book.mid_price > current_ask_bounds {
-                    // Attempt to cancel all existing orders
-                    if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
-                        out_of_bounds = true;
-
-                        // Process each cancelled order
-                        for cancelled_order in v.clone() {
-                            // Remove cancelled buy orders from our live orders
-                            for (i, live_order) in
-                                self.live_buys_orders.clone().iter_mut().enumerate()
-                            {
-                                if *live_order == cancelled_order {
-                                    self.live_buys_orders.remove(i);
-                                }
-                            }
-                            // Remove cancelled sell orders from our live orders
-                            for (i, live_order) in
-                                self.live_sells_orders.clone().iter_mut().enumerate()
-                            {
-                                if *live_order == cancelled_order {
-                                    self.live_sells_orders.remove(i);
-                                }
-                            }
-                            // Update the last update price to the current mid price
-                            self.last_update_price = book.mid_price;
-                            // Decrement our cancellation limit
-                            self.cancel_limit -= 1;
-                        }
-                    } else {
-                        // If cancellation failed, still decrement the cancel limit
-                        self.cancel_limit -= 1;
-                    }
+                    println!(
+                        "Simulating cancellation of all orders for symbol: {}",
+                        symbol
+                    );
+                    self.live_buys_orders.clear();
+                    self.live_sells_orders.clear();
+                    out_of_bounds = true;
+                    self.last_update_price = book.mid_price;
+                    self.cancel_limit -= 1;
                 }
             }
         }
@@ -881,6 +844,9 @@ impl QuoteGenerator {
         book: LocalBook,
         symbol: String,
     ) {
+        println!("Updating grid for symbol: {}", symbol);
+        println!("Current skew: {}", skew);
+        println!("Current mid price: {}", book.get_mid_price());
         // Update the adjusted spread based on the current minimum spread and order book
         // This accounts for current market volatility and liquidity
         self.adjusted_spread = QuoteGenerator::adjusted_spread(self.minimum_spread, &book);
@@ -900,7 +866,7 @@ impl QuoteGenerator {
         match self.out_of_bounds(&book, symbol.clone(), private).await {
             true => {
                 // Orders are out of bounds, need to adjust the grid
-
+                println!("Orders are out of bounds. Generating new quotes.");
                 // Update the inventory delta to account for any recent trades
                 self.inventory_delta(&book);
 
@@ -908,16 +874,15 @@ impl QuoteGenerator {
                 let orders = self.generate_quotes(symbol.clone(), &book, skew);
 
                 // Send the new orders to the exchange if within rate limits
-                if self.rate_limit > 1 {
-                    self.send_batch_orders(orders).await;
-                }
+                // if self.rate_limit > 1 {
+                //     self.send_batch_orders(orders).await;
+                // }
 
                 // Update the time of the last grid update
                 self.time_limit = book.last_update;
             }
-
             false => {
-                // Orders are still within acceptable bounds, no action needed
+                println!("Orders are within bounds. No action needed.");
             }
         }
     }
