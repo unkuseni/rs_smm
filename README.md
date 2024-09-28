@@ -1,109 +1,127 @@
-### A SIMPLE MARKETMAKER IN RUST
+# Rust Simple Market Maker (RS_SMM)
 
-This is a simple implementation of a market_maker in rust
+## Overview
 
-### Table of Contents
+RS_SMM is a sophisticated market making bot implemented in Rust. It's designed to provide liquidity and profit from the bid-ask spread in cryptocurrency markets. The system supports multiple exchanges, employs advanced order book analysis, and uses dynamic quote generation based on market conditions.
 
-- Shared state
-- Market maker
-- Feature Engine
-- Quote Generator
-- Parameters
+## Table of Contents
 
-NOTE: On the change, rewrite for watching the toml file for changes
+1. [Prerequisites](#prerequisites)
+2. [Installation](#installation)
+3. [Configuration](#configuration)
+4. [Running the Bot](#running-the-bot)
+5. [Project Structure](#project-structure)
+6. [Making Changes](#making-changes)
+7. [Key Components](#key-components)
+8. [Contributing](#contributing)
+9. [Disclaimer](#disclaimer)
 
-1. The main function is marked with `#[tokio::main]`, which means it's an asynchronous function that will be run by the Tokio runtime.
+## Prerequisites
 
-2. It starts by reading a configuration file:
+- Rust (latest stable version)
+- Cargo
+- Git
+- An account with supported exchanges (currently Bybit and Binance)
+- API keys for the exchanges you plan to use
 
-   ```rust
-   let config = use_toml();
+## Installation
+
+1. Clone the repository:
+   ```
+   git clone https://github.com/your-repo/rs_smm.git
+   cd rs_smm
    ```
 
-   This function likely reads a TOML configuration file and returns a struct with the parsed configuration.
-
-3. It initializes a shared state:
-
-   ```rust
-   let mut state = ss::SharedState::new(config.exchange);
+2. Build the project:
+   ```
+   cargo build --release
    ```
 
-   This creates a new `SharedState` object with the exchange specified in the config.
+## Configuration
 
-4. It adds symbols to the state:
+1. Create a `config.toml` file in the project root directory.
+2. Add your configuration settings. Here's a template:
 
-   ```rust
-   state.add_symbols(config.symbols);
+   ```toml
+   exchange = "bybit"  # or "binance"
+   symbols = ["BTCUSDT", "ETHUSDT"]
+   leverage = 10
+   orders_per_side = 5
+   final_order_distance = 0.01
+   depths = [5, 50]
+   rate_limit = 100
+   tick_window = 6000 // 1 mins
+   bps = [0.01, 0.02]  # Basis points for spread
+
+   [[api_keys]]
+   key = "your_api_key"
+   secret = "your_api_secret"
+   symbol = "BTCUSDT"
+
+   [[balances]]
+   symbol = "BTCUSDT"
+   amount = 1000.0
    ```
 
-   This adds the symbols specified in the config to the shared state.
+3. Adjust the values according to your trading strategy and risk tolerance.
 
-5. It adds clients for each API key:
+## Running the Bot
 
-   ```rust
-   let clients = config.api_keys;
-   for (key, secret, symbol) in clients {
-       state.add_clients(key, secret, symbol, None);
-   }
+1. Ensure your `config.toml` is properly set up.
+2. Run the bot:
    ```
-
-   This loop adds a client for each set of API keys specified in the config.
-
-6. It creates a balance hashmap:
-
-   ```rust
-   let balance = balances(config.balances);
+   cargo run --release
    ```
+3. The bot will start, connect to the specified exchange(s), and begin market making based on your configuration.
 
-   This function likely converts the balance data from the config into a HashMap.
+## Project Structure
 
-7. It initializes the market maker:
+- `src/`
+  - `features/`: Contains market microstructure analysis tools
+  - `parameters/`: Handles configuration and parameter management
+  - `strategy/`: Implements the market making strategy
+  - `trader/`: Manages order generation and execution
+  - `main.rs`: Entry point of the application
 
-   ```rust
-   let mut market_maker = MarketMaker::new(
-       state.clone(),
-       balance,
-       config.leverage,
-       config.orders_per_side,
-       config.final_order_distance,
-       config.depths,
-       config.rate_limit,
-       config.tick_window,
-   );
-   ```
+## Making Changes
 
-   This creates a new `MarketMaker` instance with various parameters from the config.
+1. **Modifying the Strategy**:
+   - Edit `src/strategy/market_maker.rs` to adjust the core market making logic.
+   - Modify `src/trader/quote_gen.rs` to change how orders are generated.
 
-8. It sets the spread for the market maker:
+2. **Adjusting Parameters**:
+   - Edit `src/parameters/parameters.rs` to add or modify configurable parameters.
+   - Update `config.toml` to reflect any new parameters.
 
-   ```rust
-   market_maker.set_spread_toml(config.bps);
-   ```
+3. **Adding New Features**:
+   - Add new files in the relevant directories (e.g., `src/features/` for new market analysis tools).
+   - Integrate new features in `src/strategy/market_maker.rs` or `src/trader/quote_gen.rs` as appropriate.
 
-   This sets the spread based on the basis points specified in the config.
+4. **Supporting New Exchanges**:
+   - Extend the `OrderManagement` enum in `src/trader/quote_gen.rs`.
+   - Implement necessary API calls for the new exchange.
 
-9. It creates an unbounded channel:
+5. **Improving Performance**:
+   - Profile the application to identify bottlenecks.
+   - Consider optimizing critical paths, especially in order generation and market data processing.
 
-   ```rust
-   let (sender, receiver) = mpsc::unbounded_channel();
-   ```
+## Key Components
 
-   This channel will be used to send updates from the shared state to the market maker.
+- **MarketMaker**: Main strategy implementation (`src/strategy/market_maker.rs`)
+- **QuoteGenerator**: Responsible for order generation (`src/trader/quote_gen.rs`)
+- **Engine**: Calculates market microstructure features (`src/features/engine.rs`)
+- **Parameters**: Manages configuration and runtime parameters (`src/parameters/parameters.rs`)
 
-10. It spawns a new task to load data:
+## Contributing
 
-    ```rust
-    tokio::spawn(async move {
-        ss::load_data(state, sender).await;
-    });
-    ```
+Contributions are welcome! Please follow these steps:
 
-    This starts a new asynchronous task that loads data into the shared state and sends updates through the channel.
+1. Fork the repository
+2. Create a new branch for your feature
+3. Implement your changes
+4. Write or update tests as necessary
+5. Submit a pull request with a clear description of your changes
 
-11. Finally, it starts the market maker loop:
-    ```rust
-    market_maker.start_loop(receiver).await;
-    ```
-    This starts the main loop of the market maker, which will receive updates from the shared state and make trading decisions.
+## Disclaimer
 
-In summary, this main function sets up the entire trading system: it reads the configuration, initializes the state and market maker, sets up communication channels, and starts the data loading and trading processes. The actual trading logic would be implemented in the `MarketMaker` struct's methods.
+This software is for educational and research purposes only. Use it at your own risk. Cryptocurrency trading carries a high level of risk and may not be suitable for all investors. Always thoroughly test any trading bot in a safe, simulated environment before deploying with real funds.

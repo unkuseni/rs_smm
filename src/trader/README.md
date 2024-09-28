@@ -1,63 +1,72 @@
-The QuoteGenerator and OrderManagement structures work together to manage market making strategies for cryptocurrency exchanges. Here's a detailed explanation of their components and interactions:
+# Quote Generator Module
 
-QuoteGenerator:
+This module implements a sophisticated quote generation system for cryptocurrency market making. It's designed to create and manage orders based on current market conditions, order book state, and trading parameters.
 
-1. Purpose: Generates and manages quotes for market making strategies.
+## Key Components
 
-2. Key fields:
+1. `BatchOrder`: Represents an order to be placed or cancelled in a batch operation.
+2. `OrderManagement`: Enum representing different exchange clients (Bybit and Binance).
+3. `QuoteGenerator`: Main struct responsible for generating and managing quotes.
+4. `LiveOrder`: Represents an active order in the market.
 
-   - client: An OrderManagement enum (Bybit or Binance)
-   - live_buys_orders and live_sells_orders: VecDeques of LiveOrder structs
-   - position, inventory_delta, max_position_usd: Track current position and limits
-   - minimum_spread, adjusted_spread: Control quote pricing
-   - rate_limit, time_limit, cancel_limit: Manage exchange API usage
+## Features
 
-3. Main methods:
-   - new(): Initializes a new QuoteGenerator
-   - set_spread(): Sets the minimum spread for quotes
-   - inventory_delta(): Updates the inventory position
-   - generate_quotes(): Creates new quote orders based on market conditions
-   - update_grid(): Main method for updating the order grid
-   - out_of_bounds(): Checks if current orders are outside acceptable price range
-   - send_batch_orders(): Sends generated orders to the exchange
+- Dynamic spread adjustment based on market conditions
+- Inventory management to avoid over-exposure
+- Positive and negative skew order generation strategies
+- Batch order placement and cancellation
+- Rate limiting to comply with exchange API restrictions
+- Order book analysis for optimal quote placement
+- Support for multiple exchanges (Bybit and Binance)
 
-OrderManagement:
+## Main Functions
 
-1. Purpose: Abstracts order management operations for different exchanges (Bybit and Binance).
+- `generate_quotes`: Creates a set of orders based on current market conditions and skew.
+- `positive_skew_orders` and `negative_skew_orders`: Generate orders for different market scenarios.
+- `send_batch_orders`: Sends a batch of orders to the exchange.
+- `check_for_fills`: Processes filled orders and updates positions.
+- `out_of_bounds`: Determines if current orders need updating.
+- `update_grid`: Core function for updating the order grid based on new market data.
 
-2. Key methods:
-   - place_buy_limit() / place_sell_limit(): Place limit orders
-   - market_buy() / market_sell(): Place market orders
-   - amend_order(): Modify existing orders
-   - cancel_order() / cancel_all(): Cancel orders
-   - batch_place_order(): Place multiple orders at once
-   - batch_amend() / batch_cancel(): Modify or cancel multiple orders
+## Usage
 
-Interaction:
+The `QuoteGenerator` is typically used as part of a larger market making system. Here's a basic usage example:
 
-1. QuoteGenerator uses OrderManagement to execute trades:
+```rust
+let quote_gen = QuoteGenerator::new(
+    client,
+    asset,
+    leverage,
+    orders_per_side,
+    final_order_distance,
+    rate_limit
+);
 
-   - The client field in QuoteGenerator is an OrderManagement enum
-   - Methods like send_batch_orders() call corresponding OrderManagement methods
+// In your main loop:
+quote_gen.update_grid(private_data, skew, order_book, symbol).await;
+```
 
-2. Order generation and management flow:
+## Configuration
 
-   - update_grid() is called periodically
-   - It checks if orders are out_of_bounds()
-   - If so, it generates new quotes with generate_quotes()
-   - New orders are sent using send_batch_orders()
-   - This calls the appropriate OrderManagement method (e.g., batch_place_order())
+Key parameters for the `QuoteGenerator` include:
+- `minimum_spread`: Minimum spread to use for quote generation
+- `max_position_usd`: Maximum position size in USD
+- `final_order_distance`: Distance of the final order from the mid price
+- `rate_limit`: API rate limit
 
-3. Position and inventory management:
+## Dependencies
 
-   - QuoteGenerator tracks position and inventory_delta
-   - These affect quote generation in methods like positive_skew_orders() and negative_skew_orders()
+- `binance` and `bybit` crates for exchange API interactions
+- `tokio` for asynchronous operations
+- Custom `skeleton` crate for shared utilities and exchange abstractions
 
-4. Rate limiting and exchange constraints:
+## Note
 
-   - QuoteGenerator manages rate_limit, time_limit, and cancel_limit
-   - These control how often orders can be placed or modified
+This module is designed for use in a live trading environment. Ensure proper testing and risk management before deployment with real funds.
 
-5. Adaptability to different exchanges:
-   - OrderManagement abstracts exchange-specific operations
-   - This allows QuoteGenerator to work with multiple exchanges without major changes
+## Future Improvements
+
+- Implement more sophisticated pricing models
+- Add support for additional exchanges
+- Enhance error handling and logging
+- Implement dynamic parameter adjustment based on market conditions
