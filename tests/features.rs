@@ -63,10 +63,11 @@ mod tests {
                         let symbol = &b.0;
                         let depth = 5;
                         println!(
-                            "{} W-MID AT DEPTH {}: {:.6}",
+                            "{} W-MID AT DEPTH {}: {:.6} {}",
                             symbol,
                             depth,
-                            b.1.get_wmid(imbalance_ratio(&b.1, Some(depth)))
+                            b.1.get_wmid(imbalance_ratio(&b.1, Some(depth))),
+                            b.1.min_notional
                         );
                     }
                 }
