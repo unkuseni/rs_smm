@@ -316,20 +316,32 @@ impl Engine {
 
         // Calculate deep imbalance ratio and apply weight
         // This considers imbalance at multiple depth levels for a more comprehensive view
-        let deep_imb = (self.deep_imbalance_ratio.iter().sum::<f64>()
-            / self.deep_imbalance_ratio.len() as f64)
-            * DEEP_IMB_WEIGHT;
+        let deep_imb = {
+            let value = self.deep_imbalance_ratio.iter().sum::<f64>()
+                / self.deep_imbalance_ratio.len() as f64;
+            match value {
+                v if v > 0.20 => 1.0 * DEEP_IMB_WEIGHT, // Positive imbalance indicates buying pressure
+                v if v < -0.20 => -1.0 * DEEP_IMB_WEIGHT, // Negative imbalance indicates selling pressure
+                _ => 0.0,                                 // Zero imbalance indicates balance
+            }
+        };
 
         // Calculate volume of interest (VOI) and apply weight
         // VOI indicates the net volume added or removed from the order book
-        let voi = self.voi * VOI_WEIGHT;
+        let voi = {
+            match self.voi {
+                v if v > 0.0 => 1.0 * VOI_WEIGHT, // Positive VOI indicates volume added
+                v if v < 0.0 => -1.0 * VOI_WEIGHT, // Negative VOI indicates volume removed
+                _ => 0.0,                         // Zero VOI indicates no significant volume change
+            }
+        };
 
         // Calculate order flow imbalance (OFI) and apply weight
         // OFI measures the buying/selling pressure based on order flow
         let ofi = match self.ofi {
-            v if v > 0.0 => 1.0 * OFI_WEIGHT,  // Positive OFI indicates buying pressure
+            v if v > 0.0 => 1.0 * OFI_WEIGHT, // Positive OFI indicates buying pressure
             v if v < 0.0 => -1.0 * OFI_WEIGHT, // Negative OFI indicates selling pressure
-            _ => 0.0,                          // Zero OFI indicates balance
+            _ => 0.0,                         // Zero OFI indicates balance
         };
 
         // Calculate deep order flow imbalance and apply weight
