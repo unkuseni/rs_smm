@@ -396,7 +396,10 @@ impl QuoteGenerator {
             // Generate size weights for a geometric distribution
             let size_weights = geometric_weights(clipped_r, self.total_order / 2, true);
             // Apply weights to the maximum buy quantity
-            let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_buy_qty).collect();
+            let sizes: Vec<f64> = size_weights
+                .iter()
+                .map(|w| w * max_buy_qty)
+                .collect();
 
             sizes
         };
@@ -411,7 +414,10 @@ impl QuoteGenerator {
             // Generate size weights for a geometric distribution
             let size_weights = geometric_weights(0.37, self.total_order / 2, false);
             // Apply weights to the maximum sell quantity
-            let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
+            let mut sizes: Vec<f64> = size_weights
+                .iter()
+                .map(|w| w * max_sell_qty)
+                .collect();
 
             sizes.reverse(); // Reverse sizes to match ask price order
             sizes
@@ -423,14 +429,14 @@ impl QuoteGenerator {
             // Create buy orders if bid sizes are available
             if bid_sizes.len() >= 1 {
                 orders.push(BatchOrder::new(
-                    round_size(bid_sizes[i] / *bid, book), // Calculate and round the order size
+                    round_size(bid_sizes[i] / *bid, book).min(book.post_only_max), // Calculate and round the order size
                     round_price(book, *bid),               // Round the bid price
                     1,                                     // Indicate a buy order
                 ));
             }
             // Create sell orders
             orders.push(BatchOrder::new(
-                round_size(ask_sizes[i] / ask_prices[i], book), // Calculate and round the order size
+                round_size(ask_sizes[i] / ask_prices[i], book).min(book.post_only_max), // Calculate and round the order size
                 round_price(book, ask_prices[i]),               // Round the ask price
                 -1,                                             // Indicate a sell order
             ));
@@ -520,7 +526,10 @@ impl QuoteGenerator {
             let size_weights = geometric_weights(0.37, self.total_order / 2, true);
 
             // Apply weights to the maximum buy quantity
-            let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_bid_qty).collect();
+            let sizes: Vec<f64> = size_weights
+                .iter()
+                .map(|w| w * max_bid_qty)
+                .collect();
 
             sizes
         };
@@ -538,7 +547,10 @@ impl QuoteGenerator {
             let size_weights = geometric_weights(clipped_r, self.total_order / 2, false);
 
             // Apply weights to the maximum sell quantity
-            let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
+            let mut sizes: Vec<f64> = size_weights
+                .iter()
+                .map(|w| w * max_sell_qty)
+                .collect();
             sizes.reverse(); // Reverse sizes to match ask price order
 
             sizes
@@ -549,7 +561,7 @@ impl QuoteGenerator {
         for (i, bid) in bid_prices.iter().enumerate() {
             // Create a new batch order for buying (side = 1)
             orders.push(BatchOrder::new(
-                round_size(bid_sizes[i] / *bid, book), // Calculate and round the order size
+                round_size(bid_sizes[i] / *bid, book).min(book.post_only_max), // Calculate and round the order size
                 round_price(book, *bid),               // Round the bid price
                 1,                                     // Indicate a buy order
             ));
@@ -557,7 +569,7 @@ impl QuoteGenerator {
             // Create a new batch order for selling (side = -1), if ask sizes are available
             if ask_sizes.len() >= 1 {
                 orders.push(BatchOrder::new(
-                    round_size(ask_sizes[i] / ask_prices[i], book), // Calculate and round the order size
+                    round_size(ask_sizes[i] / ask_prices[i], book).min(book.post_only_max), // Calculate and round the order size
                     round_price(book, ask_prices[i]),               // Round the ask price
                     -1,                                             // Indicate a sell order
                 ));
