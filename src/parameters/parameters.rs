@@ -1,46 +1,31 @@
 use std::{
     collections::HashMap,
-    io::{self, Write},
+    io::{self},
 };
 
 use skeleton::util::helpers::{read_toml, Config};
 
-
-
 pub fn watch(prompt: &str) -> String {
     println!("{}", prompt);
-    io::stdout().flush().unwrap();
     let mut input = String::new();
     io::stdin()
         .read_line(&mut input)
-        .expect("failed to read input");
-    let received: String = input.trim().to_string().parse().expect("failed to parse");
-    received
+        .expect("Failed to read input");
+    input.trim().to_string()
 }
 
-fn watch_static(prompt: &str) -> &'static str {
-    println!("{}", prompt);
-    io::stdout().flush().unwrap();
-    let mut input = String::new();
-    io::stdin()
-        .read_line(&mut input)
-        .expect("failed to read input");
-    let received: &'static str = Box::leak(input.trim().to_string().into_boxed_str());
-    received
-}
-
-pub fn exch_params() -> &'static str {
+pub fn exch_params() -> String {
     let prompt = "Available Exchanges are \"bybit\" | \"binance\" | \"both\"  \n Functionality for \"both\" or \"binance\" is unstable \n Please select an exchange: ";
-    let exch = watch_static(prompt);
+    let exch = watch(prompt);
     println!("Selected Exchange: {}", exch);
     exch
 }
 
-pub fn symbol_params() -> Vec<&'static str> {
+pub fn symbol_params() -> Vec<String> {
     let mut symbol_arr = vec![];
     loop {
         let prompt = "Markets to Make!!! \nPlease enter a symbol: ";
-        let symbol = watch_static(prompt);
+        let symbol = watch(prompt);
         if symbol == "" {
             break;
         }
@@ -129,13 +114,11 @@ pub fn maker_params() -> MakerParams {
     params
 }
 
-
-pub fn  use_toml() -> Config {
+pub fn use_toml() -> Config {
     let path = "./config.toml";
     let result = read_toml(path);
     result
 }
-
 
 pub struct MakerParams {
     pub leverage: f64,
