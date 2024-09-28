@@ -320,8 +320,8 @@ impl Engine {
             let value = self.deep_imbalance_ratio.iter().sum::<f64>()
                 / self.deep_imbalance_ratio.len() as f64;
             match value {
-                v if v > 0.20 => 1.0 * DEEP_IMB_WEIGHT, // Positive imbalance indicates buying pressure
-                v if v < -0.20 => -1.0 * DEEP_IMB_WEIGHT, // Negative imbalance indicates selling pressure
+                v if v > 0.20 => v * DEEP_IMB_WEIGHT, // Positive imbalance indicates buying pressure
+                v if v < -0.20 => v * DEEP_IMB_WEIGHT, // Negative imbalance indicates selling pressure
                 _ => 0.0,                                 // Zero imbalance indicates balance
             }
         };

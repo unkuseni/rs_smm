@@ -86,7 +86,7 @@ impl MarketMaker {
     /// This function does not return any value.
     pub async fn start_loop(&mut self, mut receiver: UnboundedReceiver<SharedState>) {
         let mut send = 0;
-        let mut wait = interval(Duration::from_millis(600));
+        let mut wait = interval(Duration::from_millis(30));
         // Continuously receive and process shared state updates.
         while let Some(data) = receiver.recv().await {
             // Match the exchange in the received data.
