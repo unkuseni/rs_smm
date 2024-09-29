@@ -610,16 +610,6 @@ impl QuoteGenerator {
     async fn send_batch_orders(&mut self, orders: Vec<BatchOrder>) {
         println!("Simulating batch order placement for testing:");
         for (index, order) in orders.iter().enumerate() {
-            let side = if order.3 > 0 { "Buy" } else { "Sell" };
-            println!(
-                "Order {}: {} {} @ {} (Symbol: {})",
-                index + 1,
-                side,
-                order.0,
-                order.1,
-                order.2
-            );
-
             // Simulate adding to live orders
             let live_order = LiveOrder::new(order.1, order.0, format!("test_order_id_{}", index));
             if order.3 > 0 {
@@ -632,28 +622,6 @@ impl QuoteGenerator {
         // Sort the live orders
         self.live_buys_orders = sort_grid(&mut self.live_buys_orders, -1);
         self.live_sells_orders = sort_grid(&mut self.live_sells_orders, 1);
-
-        println!("Current live buy orders:");
-        for (index, order) in self.live_buys_orders.iter().enumerate() {
-            println!(
-                "  Buy {}: {} @ {} (ID: {})",
-                index + 1,
-                order.qty,
-                order.price,
-                order.order_id
-            );
-        }
-
-        println!("Current live sell orders:");
-        for (index, order) in self.live_sells_orders.iter().enumerate() {
-            println!(
-                "  Sell {}: {} @ {} (ID: {})",
-                index + 1,
-                order.qty,
-                order.price,
-                order.order_id
-            );
-        }
     }
 
     /// Checks for and processes filled orders based on private execution data.
@@ -681,8 +649,6 @@ impl QuoteGenerator {
     /// This function assumes that the execution quantity is provided as a string and may
     /// contain commas, which are removed before parsing to a float.
     fn check_for_fills(&mut self, book: &LocalBook) {
-        println!("Checking for fills based on current order book:");
-
         // Check buy orders
         self.live_buys_orders.retain(|order| {
             if order.price >= book.best_ask.price {
@@ -714,13 +680,6 @@ impl QuoteGenerator {
                 true // Keep this order in live orders
             }
         });
-
-        println!("Final position after checking fills: {}", self.position);
-        println!("Remaining live buy orders: {}", self.live_buys_orders.len());
-        println!(
-            "Remaining live sell orders: {}",
-            self.live_sells_orders.len()
-        );
     }
 
     /// Determines if the current orders are out of bounds and need to be updated.
@@ -844,9 +803,6 @@ impl QuoteGenerator {
         book: LocalBook,
         symbol: String,
     ) {
-        println!("Updating grid for symbol: {}", symbol);
-        println!("Current skew: {}", skew);
-        println!("Current mid price: {}", book.get_mid_price());
         // Update the adjusted spread based on the current minimum spread and order book
         // This accounts for current market volatility and liquidity
         self.adjusted_spread = QuoteGenerator::adjusted_spread(self.minimum_spread, &book);
@@ -867,16 +823,20 @@ impl QuoteGenerator {
             true => {
                 // Orders are out of bounds, need to adjust the grid
                 println!("Orders are out of bounds. Generating new quotes.");
+                println!("Updating grid for symbol: {}", symbol);
+                println!("Current skew: {}", skew);
+                println!("Current mid price: {}", book.get_mid_price());
                 // Update the inventory delta to account for any recent trades
                 self.inventory_delta(&book);
 
                 // Generate new quotes based on current market conditions
                 let orders = self.generate_quotes(symbol.clone(), &book, skew);
+                println!("Orders generated: {:#?}", orders);
 
                 // Send the new orders to the exchange if within rate limits
-                // if self.rate_limit > 1 {
-                //     self.send_batch_orders(orders).await;
-                // }
+                if self.rate_limit > 1 {
+                    self.send_batch_orders(orders).await;
+                }
 
                 // Update the time of the last grid update
                 self.time_limit = book.last_update;
