@@ -131,7 +131,7 @@ impl QuoteGenerator {
             // Set the maximum position USD to 0.0.
             max_position_usd: QuoteGenerator::update_max(asset, leverage),
             // Set the total order to twice the number of orders per side.
-            total_order: orders_per_side * 2,
+            total_order: orders_per_side,
             // Set the preferred spread to 0.0.
             minimum_spread: 0.0,
             // Set the adjusted spread to 0.0.
@@ -378,8 +378,8 @@ impl QuoteGenerator {
         let ask_end = best_ask + end;
 
         // Generate a geometric distribution of prices for bids and asks
-        let bid_prices = geomspace(best_bid, bid_end, self.total_order / 2);
-        let mut ask_prices = geomspace(ask_end, best_ask, self.total_order / 2);
+        let bid_prices = geomspace(best_bid, bid_end, self.total_order);
+        let mut ask_prices = geomspace(ask_end, best_ask, self.total_order);
         ask_prices.reverse(); // Reverse ask prices to match bid price order
 
         // Clip the aggression factor to a reasonable range
@@ -394,7 +394,7 @@ impl QuoteGenerator {
             let max_buy_qty =
                 (self.max_position_usd / 2.0) - (self.position * book.get_mid_price());
             // Generate size weights for a geometric distribution
-            let size_weights = geometric_weights(clipped_r, self.total_order / 2, true);
+            let size_weights = geometric_weights(clipped_r, self.total_order, true);
             // Apply weights to the maximum buy quantity
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_buy_qty).collect();
 
@@ -409,7 +409,7 @@ impl QuoteGenerator {
             let max_sell_qty =
                 (self.max_position_usd / 2.0) + (self.position * book.get_mid_price());
             // Generate size weights for a geometric distribution
-            let size_weights = geometric_weights(0.37, self.total_order / 2, false);
+            let size_weights = geometric_weights(0.37, self.total_order, false);
             // Apply weights to the maximum sell quantity
             let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
 
@@ -421,19 +421,21 @@ impl QuoteGenerator {
         let mut orders = vec![];
         for (i, bid) in bid_prices.iter().enumerate() {
             // Create buy orders if bid sizes are available
-            if bid_sizes.len() >= 1 {
+            if !bid_sizes.is_empty() {
                 orders.push(BatchOrder::new(
                     round_size(bid_sizes[i] / *bid, book).min(book.post_only_max), // Calculate and round the order size
                     round_price(book, *bid), // Round the bid price
                     1,                       // Indicate a buy order
                 ));
             }
-            // Create sell orders
-            orders.push(BatchOrder::new(
-                round_size(ask_sizes[i] / ask_prices[i], book).min(book.post_only_max), // Calculate and round the order size
-                round_price(book, ask_prices[i]), // Round the ask price
-                -1,                               // Indicate a sell order
-            ));
+            if !ask_sizes.is_empty() {
+                // Create sell orders
+                orders.push(BatchOrder::new(
+                    round_size(ask_sizes[i] / ask_prices[i], book).min(book.post_only_max), // Calculate and round the order size
+                    round_price(book, ask_prices[i]), // Round the ask price
+                    -1,                               // Indicate a sell order
+                ));
+            }
         }
 
         // Filter out orders that don't meet the minimum notional value
@@ -500,8 +502,8 @@ impl QuoteGenerator {
         // Generate a geometric distribution of prices for bids and asks
         // This creates a series of prices that are closer together near the best bid/ask
         // and further apart as they move away from the mid price
-        let bid_prices = geomspace(best_bid, bid_end, self.total_order / 2);
-        let mut ask_prices = geomspace(ask_end, best_ask, self.total_order / 2);
+        let bid_prices = geomspace(best_bid, bid_end, self.total_order);
+        let mut ask_prices = geomspace(ask_end, best_ask, self.total_order);
         ask_prices.reverse(); // Reverse ask prices to match bid price order
 
         // Clip the aggression factor to a reasonable range
@@ -517,7 +519,7 @@ impl QuoteGenerator {
 
             // Generate size weights for a geometric distribution
             // We use a fixed factor of 0.37 for bids in negative skew scenarios
-            let size_weights = geometric_weights(0.37, self.total_order / 2, true);
+            let size_weights = geometric_weights(0.37, self.total_order, true);
 
             // Apply weights to the maximum buy quantity
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_bid_qty).collect();
@@ -535,7 +537,7 @@ impl QuoteGenerator {
 
             // Generate size weights for a geometric distribution
             // We use the clipped aggression factor for asks in negative skew scenarios
-            let size_weights = geometric_weights(clipped_r, self.total_order / 2, false);
+            let size_weights = geometric_weights(clipped_r, self.total_order, false);
 
             // Apply weights to the maximum sell quantity
             let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
@@ -548,14 +550,15 @@ impl QuoteGenerator {
         let mut orders = vec![];
         for (i, bid) in bid_prices.iter().enumerate() {
             // Create a new batch order for buying (side = 1)
-            orders.push(BatchOrder::new(
-                round_size(bid_sizes[i] / *bid, book).min(book.post_only_max), // Calculate and round the order size
-                round_price(book, *bid), // Round the bid price
-                1,                       // Indicate a buy order
-            ));
-
+            if !bid_sizes.is_empty() {
+                orders.push(BatchOrder::new(
+                    round_size(bid_sizes[i] / *bid, book).min(book.post_only_max), // Calculate and round the order size
+                    round_price(book, *bid), // Round the bid price
+                    1,                       // Indicate a buy order
+                ));
+            }
             // Create a new batch order for selling (side = -1), if ask sizes are available
-            if ask_sizes.len() >= 1 {
+            if !ask_sizes.is_empty() {
                 orders.push(BatchOrder::new(
                     round_size(ask_sizes[i] / ask_prices[i], book).min(book.post_only_max), // Calculate and round the order size
                     round_price(book, ask_prices[i]), // Round the ask price
@@ -608,7 +611,6 @@ impl QuoteGenerator {
     /// and one for sell orders. This structure might need to be adjusted based on the specific
     /// exchange API being used.
     async fn send_batch_orders(&mut self, orders: Vec<BatchOrder>) {
-        println!("Simulating batch order placement for testing:");
         for (index, order) in orders.iter().enumerate() {
             // Simulate adding to live orders
             let live_order = LiveOrder::new(order.1, order.0, format!("test_order_id_{}", index));
@@ -841,9 +843,7 @@ impl QuoteGenerator {
                 // Update the time of the last grid update
                 self.time_limit = book.last_update;
             }
-            false => {
-                println!("Orders are within bounds. No action needed.");
-            }
+            false => {}
         }
     }
 }

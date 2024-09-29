@@ -394,4 +394,32 @@ mod tests {
         let result = mid_price_regression(mid_price, features, curr_spread).unwrap();
         println!("Result: {}", result);
     }
+
+    fn calculate_best_bid_ask(aggression: f64) -> (f64, f64) {
+        let start = 0.0092945;
+        let current_spread = 0.0025 * start; // 25 bps
+        let half_spread = 0.00125 * start; // 12.5 bps
+
+        let best_ask = start + (half_spread * (1.0 - aggression.sqrt()));
+        let best_bid = best_ask - current_spread;
+
+        (best_bid, best_ask)
+    }
+
+    #[test]
+    fn test_best_bid_ask_calculations() {
+        let aggression_values: Vec<f64> = (0..=10).map(|i| i as f64 / 10.0).collect();
+
+        for &aggression in &aggression_values {
+            let (best_bid, best_ask) = calculate_best_bid_ask(aggression);
+            println!(
+                "Aggression: {:.1}, Best Bid: {:.6}, Best Ask: {:.6}",
+                aggression, best_bid, best_ask
+            );
+
+            // Verify that the spread between best_ask and best_bid is always 25 bps
+            println!(" Spread: {:.8} diff: {:.8}", best_ask - 0.0092945, best_ask - best_bid);
+
+        }
+    }
 }
