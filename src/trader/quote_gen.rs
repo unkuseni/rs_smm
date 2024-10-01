@@ -77,7 +77,7 @@ pub struct QuoteGenerator {
     max_position_usd: f64,
     pub inventory_delta: f64,
     total_order: usize,
-    adjusted_spread: f64,
+    bounds_spread: f64,
     final_order_distance: f64,
     last_update_price: f64,
     initial_limit: u32,
@@ -135,7 +135,7 @@ impl QuoteGenerator {
             // Set the preferred spread to 0.0.
             minimum_spread: 0.0,
             // Set the adjusted spread to 0.0.
-            adjusted_spread: 0.0,
+            bounds_spread: 0.0,
             // Set the final order distance to the provided value.
             final_order_distance,
 
@@ -265,6 +265,21 @@ impl QuoteGenerator {
 
         // Get the spread from the order book and clip it to the minimum spread and a maximum spread of 3.7 times the minimum spread.
         book.get_spread().clip(min_spread, min_spread * 3.7)
+    }
+
+    fn bounds_spread(&mut self, spread: f64, last_update_price: f64, book: &LocalBook) {
+        let min_spread = {
+            // If the preferred spread is 0.0, the minimum spread is 25 basis points times the mid price of the order book.
+            if spread == 0.0 {
+                bps_to_decimal(27.0) * last_update_price
+            }
+            // Otherwise, the minimum spread is the preferred spread converted to decimal format times the mid price of the order book.
+            else {
+                bps_to_decimal(spread) * last_update_price
+            }
+        };
+        // Get the spread from the order book and clip it to the minimum spread and a maximum spread of 3.7 times the minimum spread.
+        self.bounds_spread = book.get_spread().clip(min_spread, min_spread * 3.7)
     }
 
     /// Generates quotes based on the given parameters.
@@ -755,38 +770,13 @@ impl QuoteGenerator {
         let mut out_of_bounds = false;
 
         // Calculate the bounds for determining if orders are out of range
-        let bounds = {
-            if self.adjusted_spread > 0.0 {
-                // Use 150% of the adjusted spread if it's set
-                self.adjusted_spread * 1.5
-            } else {
-                // Otherwise, use 150% of the minimum spread
-                self.last_update_price * bps_to_decimal(self.minimum_spread * 1.5)
-            }
-        };
+        let bounds = self.bounds_spread;
 
         // Determine the current bid and ask bounds
         let (current_bid_bounds, current_ask_bounds) = (
             // Get the price of the first buy order, or use a default if none exists
-            self.live_buys_orders
-                .back()
-                .unwrap_or(&LiveOrder {
-                    price: self.last_update_price - bounds,
-                    qty: 0.0,
-                    order_id: "default".to_string(),
-                })
-                .clone()
-                .price,
-            // Get the price of the first sell order, or use a default if none exists
-            self.live_sells_orders
-                .front()
-                .unwrap_or(&LiveOrder {
-                    price: self.last_update_price + bounds,
-                    qty: 0.0,
-                    order_id: "default".to_string(),
-                })
-                .clone()
-                .price,
+            self.last_update_price - bounds,
+            self.last_update_price + bounds,
         );
 
         // Process any recent fills from the private execution data
@@ -873,10 +863,7 @@ impl QuoteGenerator {
         book: LocalBook,
         symbol: String,
     ) {
-        // Update the adjusted spread based on the current minimum spread and order book
-        // This accounts for current market volatility and liquidity
-        self.adjusted_spread = QuoteGenerator::adjusted_spread(self.minimum_spread, &book);
-
+        self.bounds_spread(self.minimum_spread, self.last_update_price, &book);
         // Check if it's time to reset the rate limits
         // This helps to manage API call frequency and avoid hitting exchange limits
         if self.time_limit > 1 {
