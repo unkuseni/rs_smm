@@ -35,10 +35,10 @@ final_order_distance = 10
 depths = [4, 13, 32] # You can have multiple depths for different symbols
 
 # Rate limit for API calls (in milliseconds)
-rate_limit = 1000
+rate_limit = 10
 
 # Profit spread for  (e.g., 1 for 0.01% profit spread)
 bps = [27, 25]
 
 # use tick window for waiting and lookback period
-tick_window = 610
+tick_window = 8000 # 100secs = 10,000 ticks  10ms = 1tick

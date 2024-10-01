@@ -3,31 +3,25 @@
 exchange = "bybit" # Name of the exchange you're connecting to (e.g., bybit, binance, both)
 
 # List of symbols to track and trade
-symbols = ["NOTUSDT", "DOGSUSDT"] # Replace with your desired symbols
+symbols = ["NOTUSDT"] # Replace with your desired symbols
 
 # API keys for authentication (potentially multiple keys for redundancy)
 api_keys = [
   [
-    "api_key_1",
+   "api_key_1",
     "api_secret_1",
     "NOTUSDT",
-  ],
-  [
-    "api_key_2",
-    "api_secret_2",
-    "DOGSUSDT",
   ],
 ]
 
 # Initial balances for tracked symbols (symbol, balance)
-balances = [["NOTUSDT", 100.0], ["DOGSUSDT", 100.0]]
+balances = [["NOTUSDT", 100.0]]
 
 # Leverage for trading positions (e.g., 5.0 for 5x leverage)
-leverage = 10.0
+leverage = 12.0
 
 # Maximum number of orders to place on each side of the market
-orders_per_side = 6
-
+orders_per_side = 4
 # Final order distance for orders (e.g., 10 for 10 * 25bps = 250bps or 2.5%)
 final_order_distance = 10
 
@@ -38,7 +32,7 @@ depths = [4, 13, 32] # You can have multiple depths for different symbols
 rate_limit = 10
 
 # Profit spread for  (e.g., 1 for 0.01% profit spread)
-bps = [27, 25]
+bps = [27]
 
-# use tick window for waiting and lookback period 1 tick = 10ms  or  1sec = 1000ms = 100ticks,  120secs = 120,000 = 12000ticks
-tick_window = 10000  # 100secs = 10,000
+# use tick window for waiting and lookback period 1 tick = 10ms  , 100 ticks = 1s, 6000 ticks for 1m
+tick_window = 8000 # 100secs = 10,000
