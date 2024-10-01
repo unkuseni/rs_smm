@@ -73,7 +73,7 @@ pub struct BybitClient {
 }
 
 impl Exchange for BybitClient {
-    type Quoter<'a> = Trader<'a>;
+    type Quoter = Trader;
 
     fn default() -> Self {
         Self {
@@ -102,10 +102,7 @@ impl Exchange for BybitClient {
     }
 
     async fn fees(&self) -> f64 {
-        let account: AccountManager = Bybit::new(
-            Some(Cow::Borrowed(&self.key)),
-            Some(Cow::Borrowed(&self.secret)),
-        );
+        let account: AccountManager = Bybit::new(Some(self.key.clone()), Some(self.secret.clone()));
         let rate;
         let response = account.get_fee_rate(Category::Linear, None).await;
         if let Ok(v) = response {
@@ -117,10 +114,8 @@ impl Exchange for BybitClient {
     }
 
     async fn set_leverage(&self, symbol: &str, leverage: u16) -> Result<String, String> {
-        let account: PositionManager = Bybit::new(
-            Some(Cow::Borrowed(&self.key)),
-            Some(Cow::Borrowed(&self.secret)),
-        );
+        let account: PositionManager =
+            Bybit::new(Some(self.key.clone()), Some(self.secret.clone()));
         let req = LeverageRequest {
             category: Category::Linear,
             symbol: Cow::Borrowed(symbol),
@@ -132,16 +127,13 @@ impl Exchange for BybitClient {
         }
     }
 
-    fn trader<'a>(&'a self) -> Trader<'a> {
+    fn trader(&self) -> Trader {
         let config = {
             let x = Config::default();
             x.set_recv_window(2500)
         };
-        let trader: Trader = Bybit::new_with_config(
-            &config,
-            Some(Cow::Borrowed(&self.key)),
-            Some(Cow::Borrowed(&self.secret)),
-        );
+        let trader: Trader =
+            Bybit::new_with_config(&config, Some(self.key.clone()), Some(self.secret.clone()));
         trader
     }
 }
@@ -277,8 +269,8 @@ impl BybitClient {
     ) {
         let delay = 50;
         let user_stream: BybitStream = BybitStream::new(
-            Some(Cow::Borrowed(&self.key)),    // API key
-            Some(Cow::Borrowed(&self.secret)), // Secret Key
+            Some(self.key.clone()),    // API key
+            Some(self.secret.clone()), // Secret Key
         );
         let request_args = {
             let mut args = vec![];

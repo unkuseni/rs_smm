@@ -74,7 +74,7 @@ pub struct BinanceClient {
 }
 
 impl Exchange for BinanceClient {
-    type Quoter<'a> = FuturesAccount;
+    type Quoter = FuturesAccount;
 
     fn default() -> Self {
         Self {
@@ -136,7 +136,7 @@ impl Exchange for BinanceClient {
         .unwrap()
     }
 
-    fn trader<'a>(&'a self) -> Self::Quoter<'a> {
+    fn trader(&self) -> Self::Quoter {
         let config = {
             let x = Config::default();
             x.set_recv_window(2500)

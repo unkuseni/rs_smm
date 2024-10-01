@@ -11,9 +11,7 @@ use super::{
 use std::future::Future;
 
 pub trait Exchange {
-    type Quoter<'a>
-    where
-        Self: 'a;
+    type Quoter;
     fn default() -> Self;
     fn init<K: Into<String>>(key: K, secret: K) -> Self;
     fn time(&self) -> impl Future<Output = u64>;
@@ -23,7 +21,7 @@ pub trait Exchange {
         symbol: &str,
         leverage: u16,
     ) -> impl Future<Output = Result<String, String>>;
-    fn trader<'a>(&'a self) -> Self::Quoter<'a>;
+    fn trader(&self) -> Self::Quoter;
     
 }
 
