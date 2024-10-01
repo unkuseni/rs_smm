@@ -322,7 +322,7 @@ impl Engine {
             match value {
                 v if v > 0.20 => v * DEEP_IMB_WEIGHT, // Positive imbalance indicates buying pressure
                 v if v < -0.20 => v * DEEP_IMB_WEIGHT, // Negative imbalance indicates selling pressure
-                _ => 0.0,                                 // Zero imbalance indicates balance
+                _ => 0.0,                              // Zero imbalance indicates balance
             }
         };
 
@@ -364,15 +364,25 @@ impl Engine {
         let predicted_value = match self.predicted_price {
             // If expected return is significantly positive or microprice is closer to ask
             v if expected_return(book.get_mid_price(), v) >= 0.0005
-                || distance_to_ask < distance_to_bid =>
+                && distance_to_ask < distance_to_bid =>
             {
                 1.0 * PREDICT_WEIGHT // Predict upward movement
             }
+            v if expected_return(book.get_mid_price(), v) >= 0.0005
+                || distance_to_ask < distance_to_bid =>
+            {
+                0.5 * PREDICT_WEIGHT // Predict moderate upward movement
+            }
             // If expected return is significantly negative or microprice is closer to bid
-            v if expected_return(book.get_mid_price(), v) >= -0.0005
-                || distance_to_bid < distance_to_ask =>
+            v if expected_return(book.get_mid_price(), v) <= -0.0005
+                && distance_to_bid < distance_to_ask =>
             {
                 -1.0 * PREDICT_WEIGHT // Predict downward movement
+            }
+            v if expected_return(book.get_mid_price(), v) <= -0.0005
+                || distance_to_bid < distance_to_ask =>
+            {
+                -0.5 * PREDICT_WEIGHT // Predict moderate downward movement
             }
             _ => 0.0, // No clear prediction
         };
