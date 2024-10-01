@@ -817,11 +817,11 @@ impl QuoteGenerator {
                                     self.live_sells_orders.remove(i);
                                 }
                             }
-                            // Update the last update price to the current mid price
-                            self.last_update_price = book.mid_price;
-                            // Decrement our cancellation limit
-                            self.cancel_limit -= 1;
                         }
+                        // Update the last update price to the current mid price
+                        self.last_update_price = book.mid_price;
+                        // Decrement our cancellation limit
+                        self.cancel_limit -= 1;
                     } else {
                         // If cancellation failed, still decrement the cancel limit
                         self.cancel_limit -= 1;
@@ -868,7 +868,7 @@ impl QuoteGenerator {
         // This helps to manage API call frequency and avoid hitting exchange limits
         if self.time_limit > 1 {
             let condition = (book.last_update - self.time_limit) > 1000;
-            if condition {
+            if condition == true {
                 // Reset rate limits to their initial values
                 self.rate_limit = self.initial_limit;
                 self.cancel_limit = self.initial_limit;
