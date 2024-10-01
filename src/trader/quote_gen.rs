@@ -715,7 +715,8 @@ impl QuoteGenerator {
                         for (i, order) in self.live_buys_orders.clone().iter().enumerate() {
                             if order.order_id == order_id {
                                 // Update the position and remove the filled order
-                                self.position += order.qty * order.price;
+                                let order_value = order.qty * order.price;
+                                self.position += order_value;
                                 println!(
                                     "Buy order filled: ID {}, Qty {}, New position {}",
                                     order_id, exec_qty, self.position
@@ -729,7 +730,8 @@ impl QuoteGenerator {
                         for (i, order) in self.live_sells_orders.clone().iter().enumerate() {
                             if order.order_id == order_id {
                                 // Update the position and remove the filled order
-                                self.position -= order.qty * order.price;
+                                let order_value = order.qty * order.price;
+                                self.position -= order_value;
                                 println!(
                                     "Sell order filled: ID {}, Qty {}, New position {}",
                                     order_id, exec_qty, self.position
