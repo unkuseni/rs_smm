@@ -411,8 +411,9 @@ impl QuoteGenerator {
             // Generate size weights for a geometric distribution
             let size_weights = geometric_weights(clipped_r, self.total_order, true);
             // Apply weights to the maximum buy quantity
-            let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_buy_qty).collect();
-
+            let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_buy_qty).collect();
+            // Reverse to place bigger sizes close to the mid price
+            sizes.reverse(); 
             sizes
         };
 
@@ -555,9 +556,8 @@ impl QuoteGenerator {
             let size_weights = geometric_weights(clipped_r, self.total_order, false);
 
             // Apply weights to the maximum sell quantity
-            let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
-            sizes.reverse(); // Reverse sizes to match ask price order
-
+            let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
+            // Reverse sizes to match ask price order Bigger sizes close to the mid price
             sizes
         };
 
