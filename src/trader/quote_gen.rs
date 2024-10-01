@@ -401,7 +401,7 @@ impl QuoteGenerator {
         let _clipped_r = aggression.clip(0.50, 0.73);
 
         // Generate bid sizes based on current inventory and market conditions
-        let bid_sizes = if bid_prices.is_empty() || self.inventory_delta >= 0.90 {
+        let bid_sizes = if bid_prices.is_empty() {
             // If no bid prices or inventory is too high, don't place buy orders
             vec![]
         } else {
@@ -544,7 +544,7 @@ impl QuoteGenerator {
         };
 
         // Generate ask sizes based on current inventory and market conditions
-        let ask_sizes = if ask_prices.is_empty() || self.inventory_delta <= -0.90 {
+        let ask_sizes = if ask_prices.is_empty()  {
             vec![] // If no ask prices or inventory is too low, don't place sell orders
         } else {
             // Calculate the maximum sell quantity based on position limits
