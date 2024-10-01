@@ -130,7 +130,7 @@ impl Exchange for BybitClient {
     fn trader(&self) -> Trader {
         let config = {
             let x = Config::default();
-            x.set_recv_window(2500)
+            x.set_recv_window(5000)
         };
         let trader: Trader =
             Bybit::new_with_config(&config, Some(self.key.clone()), Some(self.secret.clone()));

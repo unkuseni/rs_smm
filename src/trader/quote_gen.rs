@@ -1369,21 +1369,31 @@ impl OrderManagement {
                     let mut arr = vec![];
                     let mut buy_array = VecDeque::new();
                     let mut sell_array = VecDeque::new();
-                    for (i, d) in v.result.list.iter().enumerate() {
-                        for pos in tracking_sells.clone() {
-                            if i == pos {
-                                sell_array.push_back(LiveOrder::new(
-                                    od_clone[i].1.clone(),
-                                    od_clone[i].0.clone(),
-                                    d.order_id.to_string(),
-                                ));
+                    for ((i, d), ext_info) in v
+                        .result
+                        .list
+                        .iter()
+                        .enumerate()
+                        .zip(v.ret_ext_info.list.iter())
+                    {
+                        // Check if the message is "OK" for this order
+                        if ext_info.msg == "OK" {
+                            // Process the successful order
+                            let order = LiveOrder::new(
+                                od_clone[i].1.clone(),
+                                od_clone[i].0.clone(),
+                                d.order_id.to_string(),
+                            );
+
+                            // Add to the appropriate array based on the order side
+                            if tracking_sells.contains(&i) {
+                                sell_array.push_back(order);
                             } else {
-                                buy_array.push_back(LiveOrder::new(
-                                    od_clone[i].1.clone(),
-                                    od_clone[i].0.clone(),
-                                    d.order_id.to_string(),
-                                ));
+                                buy_array.push_back(order);
                             }
+                        } else {
+                            // Optionally, log or handle failed orders
+                            println!("Order {} failed: {}", d.order_id, ext_info.msg);
                         }
                     }
                     arr.push(buy_array);
