@@ -769,7 +769,7 @@ impl QuoteGenerator {
         let (current_bid_bounds, current_ask_bounds) = (
             // Get the price of the first buy order, or use a default if none exists
             self.live_buys_orders
-                .front()
+                .back()
                 .unwrap_or(&LiveOrder {
                     price: self.last_update_price - bounds,
                     qty: 0.0,
