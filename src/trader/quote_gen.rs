@@ -336,10 +336,14 @@ impl QuoteGenerator {
 
         // Calculate a corrected skew value that takes into account the current inventory position.
         // This helps to avoid building up too large a position in one direction.
-        let corrected_skew = skew * (1.0 - nbsqrt(self.inventory_delta));
+        let inventory_factor = nbsqrt(self.inventory_delta);
+        let skew_factor = skew * (1.0 - inventory_factor.abs());
+        let inventory_adjustment = -0.5 * inventory_factor;
+        let combined_skew = skew_factor + inventory_adjustment;
+        let final_skew = combined_skew.clip(-1.0, 1.0);
 
         // Generate the orders based on the corrected skew value.
-        let mut orders = if corrected_skew >= 0.00 {
+        let mut orders = if final_skew >= 0.00 {
             // If skew is positive (buy-heavy market), generate positive skew orders.
             self.positive_skew_orders(half_spread, curr_spread, start, skew.abs(), notional, book)
         } else {
@@ -406,7 +410,8 @@ impl QuoteGenerator {
             vec![]
         } else {
             // Calculate the maximum buy quantity based on position limits
-            let max_buy_qty = (self.max_position_usd / 2.0) - (self.position * book.get_mid_price());
+            let max_buy_qty =
+                (self.max_position_usd / 2.0) - (self.position * book.get_mid_price());
             // Generate size weights for a geometric distribution
             let size_weights = geometric_weights(0.63, self.total_order, true);
             // Apply weights to the maximum buy quantity
@@ -421,7 +426,8 @@ impl QuoteGenerator {
             vec![]
         } else {
             // Calculate the maximum sell quantity based on position limits
-            let max_sell_qty = (self.max_position_usd / 2.0) + (self.position * book.get_mid_price());
+            let max_sell_qty =
+                (self.max_position_usd / 2.0) + (self.position * book.get_mid_price());
             // Generate size weights for a geometric distribution
             let size_weights = geometric_weights(0.37, self.total_order, false);
             // Apply weights to the maximum sell quantity
@@ -528,7 +534,8 @@ impl QuoteGenerator {
             vec![] // If no bid prices, don't place any buy orders
         } else {
             // Calculate the maximum buy quantity based on position limits
-            let max_bid_qty = (self.max_position_usd / 2.0) - (self.position * book.get_mid_price());
+            let max_bid_qty =
+                (self.max_position_usd / 2.0) - (self.position * book.get_mid_price());
 
             // Generate size weights for a geometric distribution
             // We use a fixed factor of 0.37 for bids in negative skew scenarios
@@ -545,7 +552,8 @@ impl QuoteGenerator {
             vec![] // If no ask prices or inventory is too low, don't place sell orders
         } else {
             // Calculate the maximum sell quantity based on position limits
-            let max_sell_qty =   (self.max_position_usd / 2.0) + (self.position * book.get_mid_price());
+            let max_sell_qty =
+                (self.max_position_usd / 2.0) + (self.position * book.get_mid_price());
 
             // Generate size weights for a geometric distribution
             // We use the clipped aggression factor for asks in negative skew scenarios
