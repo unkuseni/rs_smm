@@ -413,7 +413,7 @@ impl QuoteGenerator {
             // Apply weights to the maximum buy quantity
             let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_buy_qty).collect();
             // Reverse to place bigger sizes close to the mid price
-            sizes.reverse(); 
+            sizes.reverse();
             sizes
         };
 
@@ -775,8 +775,25 @@ impl QuoteGenerator {
         // Determine the current bid and ask bounds
         let (current_bid_bounds, current_ask_bounds) = (
             // Get the price of the first buy order, or use a default if none exists
-            self.last_update_price - bounds,
-            self.last_update_price + bounds,
+            self.live_buys_orders
+                .front()
+                .unwrap_or(&LiveOrder {
+                    price: self.last_update_price - bounds,
+                    qty: 0.0,
+                    order_id: "default".to_string(),
+                })
+                .clone()
+                .price,
+            // Get the price of the first sell order, or use a default if none exists
+            self.live_sells_orders
+                .front()
+                .unwrap_or(&LiveOrder {
+                    price: self.last_update_price + bounds,
+                    qty: 0.0,
+                    order_id: "default".to_string(),
+                })
+                .clone()
+                .price,
         );
 
         // Process any recent fills from the private execution data
