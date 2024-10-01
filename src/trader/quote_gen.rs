@@ -226,10 +226,10 @@ impl QuoteGenerator {
     ///
     /// The resulting inventory delta is then assigned to the `inventory_delta` field, which is a
     /// measure of the position's exposure to the market.
-    pub fn inventory_delta(&mut self, book: &LocalBook) {
+    pub fn inventory_delta(&mut self) {
         // Calculate the inventory delta by dividing the position quantity by the maximum position
         // quantity in USD.
-        self.inventory_delta = (self.position * book.get_mid_price()) / self.max_position_usd;
+        self.inventory_delta = self.position / self.max_position_usd;
     }
 
     /// Adjusts the spread by clipping it to a minimum spread and a maximum spread.
@@ -407,7 +407,7 @@ impl QuoteGenerator {
         } else {
             // Calculate the maximum buy quantity based on position limits
             let max_buy_qty =
-                (self.max_position_usd / 2.0) - (self.position * book.get_mid_price());
+                (self.max_position_usd / 2.0) - self.position;
             // Generate size weights for a geometric distribution
             let size_weights = geometric_weights(0.63, self.total_order, true);
             // Apply weights to the maximum buy quantity
@@ -423,7 +423,7 @@ impl QuoteGenerator {
         } else {
             // Calculate the maximum sell quantity based on position limits
             let max_sell_qty =
-                (self.max_position_usd / 2.0) + (self.position * book.get_mid_price());
+                (self.max_position_usd / 2.0) + self.position;
             // Generate size weights for a geometric distribution
             let size_weights = geometric_weights(0.37, self.total_order, false);
             // Apply weights to the maximum sell quantity
@@ -531,7 +531,7 @@ impl QuoteGenerator {
         } else {
             // Calculate the maximum buy quantity based on position limits
             let max_bid_qty =
-                (self.max_position_usd / 2.0) - (self.position * book.get_mid_price());
+                (self.max_position_usd / 2.0) - self.position;
 
             // Generate size weights for a geometric distribution
             // We use a fixed factor of 0.37 for bids in negative skew scenarios
@@ -549,7 +549,7 @@ impl QuoteGenerator {
         } else {
             // Calculate the maximum sell quantity based on position limits
             let max_sell_qty =
-                (self.max_position_usd / 2.0) + (self.position * book.get_mid_price());
+                (self.max_position_usd / 2.0) + self.position;
 
             // Generate size weights for a geometric distribution
             // We use the clipped aggression factor for asks in negative skew scenarios
@@ -715,7 +715,7 @@ impl QuoteGenerator {
                         for (i, order) in self.live_buys_orders.clone().iter().enumerate() {
                             if order.order_id == order_id {
                                 // Update the position and remove the filled order
-                                self.position += order.qty;
+                                self.position += order.qty * order.price;
                                 println!(
                                     "Buy order filled: ID {}, Qty {}, New position {}",
                                     order_id, exec_qty, self.position
@@ -729,10 +729,10 @@ impl QuoteGenerator {
                         for (i, order) in self.live_sells_orders.clone().iter().enumerate() {
                             if order.order_id == order_id {
                                 // Update the position and remove the filled order
-                                self.position -= order.qty;
+                                self.position -= order.qty * order.price;
                                 println!(
                                     "Sell order filled: ID {}, Qty {}, New position {}",
-                                    order_id, exec_qty, self.position
+                                    order_id, exec_qty, self.position 
                                 );
                                 self.live_sells_orders.remove(i);
                                 break; // Exit the loop after processing the filled order
@@ -882,7 +882,7 @@ impl QuoteGenerator {
                 // Orders are out of bounds, need to adjust the grid
 
                 // Update the inventory delta to account for any recent trades
-                self.inventory_delta(&book);
+                self.inventory_delta();
 
                 // Generate new quotes based on current market conditions
                 let orders = self.generate_quotes(symbol.clone(), &book, skew);
