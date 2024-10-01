@@ -398,7 +398,7 @@ impl QuoteGenerator {
         ask_prices.reverse(); // Reverse ask prices to match bid price order
 
         // Clip the aggression factor to a reasonable range
-        let clipped_r = aggression.clip(0.27, 0.73);
+        let clipped_r = aggression.clip(0.50, 0.73);
 
         // Generate bid sizes based on current inventory and market conditions
         let bid_sizes = if bid_prices.is_empty() || self.inventory_delta >= 0.90 {
@@ -411,9 +411,9 @@ impl QuoteGenerator {
             // Generate size weights for a geometric distribution
             let size_weights = geometric_weights(clipped_r, self.total_order, true);
             // Apply weights to the maximum buy quantity
-            let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_buy_qty).collect();
+            let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_buy_qty).collect();
             // Reverse to place bigger sizes close to the mid price
-            sizes.reverse();
+
             sizes
         };
 
@@ -523,7 +523,7 @@ impl QuoteGenerator {
         ask_prices.reverse(); // Reverse ask prices to match bid price order
 
         // Clip the aggression factor to a reasonable range
-        let clipped_r = aggression.clip(0.27, 0.73);
+        let clipped_r = aggression.clip(0.50, 0.73);
 
         // Generate bid sizes based on current inventory and market conditions
         let bid_sizes = if bid_prices.is_empty() {
@@ -556,8 +556,9 @@ impl QuoteGenerator {
             let size_weights = geometric_weights(clipped_r, self.total_order, false);
 
             // Apply weights to the maximum sell quantity
-            let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
+            let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
             // Reverse sizes to match ask price order Bigger sizes close to the mid price
+            sizes.reverse();
             sizes
         };
 
@@ -775,25 +776,8 @@ impl QuoteGenerator {
         // Determine the current bid and ask bounds
         let (current_bid_bounds, current_ask_bounds) = (
             // Get the price of the first buy order, or use a default if none exists
-            self.live_buys_orders
-                .front()
-                .unwrap_or(&LiveOrder {
-                    price: self.last_update_price - bounds,
-                    qty: 0.0,
-                    order_id: "default".to_string(),
-                })
-                .clone()
-                .price,
-            // Get the price of the first sell order, or use a default if none exists
-            self.live_sells_orders
-                .front()
-                .unwrap_or(&LiveOrder {
-                    price: self.last_update_price + bounds,
-                    qty: 0.0,
-                    order_id: "default".to_string(),
-                })
-                .clone()
-                .price,
+            self.last_update_price - bounds,
+            self.last_update_price + bounds,
         );
 
         // Process any recent fills from the private execution data
