@@ -398,7 +398,7 @@ impl QuoteGenerator {
         ask_prices.reverse(); // Reverse ask prices to match bid price order
 
         // Clip the aggression factor to a reasonable range
-        let clipped_r = aggression.clip(0.50, 0.73);
+        let _clipped_r = aggression.clip(0.50, 0.73);
 
         // Generate bid sizes based on current inventory and market conditions
         let bid_sizes = if bid_prices.is_empty() || self.inventory_delta >= 0.90 {
@@ -409,7 +409,7 @@ impl QuoteGenerator {
             let max_buy_qty =
                 (self.max_position_usd / 2.0) - (self.position * book.get_mid_price());
             // Generate size weights for a geometric distribution
-            let size_weights = geometric_weights(clipped_r, self.total_order, true);
+            let size_weights = geometric_weights(0.63, self.total_order, true);
             // Apply weights to the maximum buy quantity
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_buy_qty).collect();
             // Reverse to place bigger sizes close to the mid price
@@ -523,7 +523,7 @@ impl QuoteGenerator {
         ask_prices.reverse(); // Reverse ask prices to match bid price order
 
         // Clip the aggression factor to a reasonable range
-        let clipped_r = aggression.clip(0.50, 0.73);
+        let _clipped_r = aggression.clip(0.50, 0.73);
 
         // Generate bid sizes based on current inventory and market conditions
         let bid_sizes = if bid_prices.is_empty() {
@@ -553,7 +553,7 @@ impl QuoteGenerator {
 
             // Generate size weights for a geometric distribution
             // We use the clipped aggression factor for asks in negative skew scenarios
-            let size_weights = geometric_weights(clipped_r, self.total_order, false);
+            let size_weights = geometric_weights(0.63, self.total_order, false);
 
             // Apply weights to the maximum sell quantity
             let mut sizes: Vec<f64> = size_weights.iter().map(|w| w * max_sell_qty).collect();
