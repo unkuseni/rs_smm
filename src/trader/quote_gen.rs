@@ -1,9 +1,12 @@
 use std::{borrow::Cow, collections::VecDeque};
 
 use binance::{account::OrderSide, futures::account::CustomOrderRequest};
-use bybit::model::{
-    AmendOrderRequest, BatchAmendRequest, BatchCancelRequest, BatchPlaceRequest,
-    CancelOrderRequest, CancelallRequest, FastExecData, OrderRequest, Side,
+use bybit::{
+    errors::BybitError,
+    model::{
+        AmendOrderRequest, BatchAmendRequest, BatchCancelRequest, BatchPlaceRequest,
+        CancelOrderRequest, CancelallRequest, FastExecData, OrderRequest, Side,
+    },
 };
 use skeleton::{
     exchanges::{
@@ -345,10 +348,24 @@ impl QuoteGenerator {
         // Generate the orders based on the corrected skew value.
         let mut orders = if final_skew >= 0.00 {
             // If skew is positive (buy-heavy market), generate positive skew orders.
-            self.positive_skew_orders(half_spread, curr_spread, start, final_skew.abs(), notional, book)
+            self.positive_skew_orders(
+                half_spread,
+                curr_spread,
+                start,
+                final_skew.abs(),
+                notional,
+                book,
+            )
         } else {
             // If skew is negative (sell-heavy market), generate negative skew orders.
-            self.negative_skew_orders(half_spread, curr_spread, start, final_skew.abs(), notional, book)
+            self.negative_skew_orders(
+                half_spread,
+                curr_spread,
+                start,
+                final_skew.abs(),
+                notional,
+                book,
+            )
         };
 
         // Add the trading symbol to each generated order.
@@ -432,7 +449,7 @@ impl QuoteGenerator {
         // Generate the batch orders
         let mut orders = vec![];
         for (i, bid) in bid_prices.iter().enumerate() {
-            // Create buy orders 
+            // Create buy orders
             orders.push(BatchOrder::new(
                 round_size(bid_sizes[i] / *bid, book).min(book.post_only_max), // Calculate and round the order size
                 round_price(book, *bid), // Round the bid price
@@ -650,8 +667,8 @@ impl QuoteGenerator {
                     self.live_sells_orders = sorted_sells;
                 }
                 // If there is an error, log the error message
-                Err(_) => {
-                    println!("Batch order error");
+                Err(v) => {
+                    println!("Batch order error, {:?}", v);
                     // TODO: Implement more sophisticated error handling and logging
                 }
             }
@@ -769,25 +786,9 @@ impl QuoteGenerator {
         // Determine the current bid and ask bounds
         let (current_bid_bounds, current_ask_bounds) = (
             // Get the price of the first buy order, or use a default if none exists
-            self.live_buys_orders
-                .front()
-                .unwrap_or(&LiveOrder {
-                    price: self.last_update_price - bounds,
-                    qty: 0.0,
-                    order_id: "default".to_string(),
-                })
-                .clone()
-                .price,
+            self.last_update_price - bounds,
             // Get the price of the first sell order, or use a default if none exists
-            self.live_sells_orders
-                .front()
-                .unwrap_or(&LiveOrder {
-                    price: self.last_update_price + bounds,
-                    qty: 0.0,
-                    order_id: "default".to_string(),
-                })
-                .clone()
-                .price,
+            self.last_update_price + bounds,
         );
 
         // Process any recent fills from the private execution data
@@ -1332,7 +1333,7 @@ impl OrderManagement {
     async fn batch_place_order(
         &self,
         order_array: Vec<BatchOrder>,
-    ) -> Result<Vec<VecDeque<LiveOrder>>, ()> {
+    ) -> Result<Vec<VecDeque<LiveOrder>>, BybitError> {
         // Clone the order array for later use
         let order_array_clone = order_array.clone();
 
@@ -1376,42 +1377,43 @@ impl OrderManagement {
                     category: bybit::model::Category::Linear,
                     requests: order_arr,
                 };
-                if let Ok(v) = client.batch_place_order(req).await {
-                    let mut arr = vec![];
-                    let mut buy_array = VecDeque::new();
-                    let mut sell_array = VecDeque::new();
-                    for ((i, d), ext_info) in v
-                        .result
-                        .list
-                        .iter()
-                        .enumerate()
-                        .zip(v.ret_ext_info.list.iter())
-                    {
-                        // Check if the message is "OK" for this order
-                        if ext_info.msg == "OK" {
-                            // Process the successful order
-                            let order = LiveOrder::new(
-                                od_clone[i].1.clone(),
-                                od_clone[i].0.clone(),
-                                d.order_id.to_string(),
-                            );
+                match client.batch_place_order(req).await {
+                    Ok(v) => {
+                        let mut arr = vec![];
+                        let mut buy_array = VecDeque::new();
+                        let mut sell_array = VecDeque::new();
+                        for ((i, d), ext_info) in v
+                            .result
+                            .list
+                            .iter()
+                            .enumerate()
+                            .zip(v.ret_ext_info.list.iter())
+                        {
+                            // Check if the message is "OK" for this order
+                            if ext_info.msg == "OK" {
+                                // Process the successful order
+                                let order = LiveOrder::new(
+                                    od_clone[i].1.clone(),
+                                    od_clone[i].0.clone(),
+                                    d.order_id.to_string(),
+                                );
 
-                            // Add to the appropriate array based on the order side
-                            if tracking_sells.contains(&i) {
-                                sell_array.push_back(order);
+                                // Add to the appropriate array based on the order side
+                                if tracking_sells.contains(&i) {
+                                    sell_array.push_back(order);
+                                } else {
+                                    buy_array.push_back(order);
+                                }
                             } else {
-                                buy_array.push_back(order);
+                                // Optionally, log or handle failed orders
+                                println!("Order {} failed: {}", d.order_id, ext_info.msg);
                             }
-                        } else {
-                            // Optionally, log or handle failed orders
-                            println!("Order {} failed: {}", d.order_id, ext_info.msg);
                         }
+                        arr.push(buy_array);
+                        arr.push(sell_array);
+                        Ok(arr)
                     }
-                    arr.push(buy_array);
-                    arr.push(sell_array);
-                    Ok(arr)
-                } else {
-                    Err(())
+                    Err(v) => Err(v),
                 }
             }
             OrderManagement::Binance(trader) => {
@@ -1456,7 +1458,9 @@ impl OrderManagement {
                         Err(())
                     }
                 });
-                task.await.unwrap()
+                task.await
+                    .unwrap()
+                    .map_err(|_| BybitError::Base("Error".to_string()))
             }
         }
     }
