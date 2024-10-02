@@ -338,17 +338,17 @@ impl QuoteGenerator {
         // This helps to avoid building up too large a position in one direction.
         let inventory_factor = nbsqrt(self.inventory_delta);
         let skew_factor = skew * (1.0 - inventory_factor.abs());
-        let inventory_adjustment = -0.5 * inventory_factor;
+        let inventory_adjustment = -0.63 * inventory_factor;
         let combined_skew = skew_factor + inventory_adjustment;
         let final_skew = combined_skew.clip(-1.0, 1.0);
 
         // Generate the orders based on the corrected skew value.
         let mut orders = if final_skew >= 0.00 {
             // If skew is positive (buy-heavy market), generate positive skew orders.
-            self.positive_skew_orders(half_spread, curr_spread, start, skew.abs(), notional, book)
+            self.positive_skew_orders(half_spread, curr_spread, start, final_skew.abs(), notional, book)
         } else {
             // If skew is negative (sell-heavy market), generate negative skew orders.
-            self.negative_skew_orders(half_spread, curr_spread, start, skew.abs(), notional, book)
+            self.negative_skew_orders(half_spread, curr_spread, start, final_skew.abs(), notional, book)
         };
 
         // Add the trading symbol to each generated order.
@@ -405,10 +405,7 @@ impl QuoteGenerator {
         let _clipped_r = aggression.clip(0.50, 0.73);
 
         // Generate bid sizes based on current inventory and market conditions
-        let bid_sizes = if bid_prices.is_empty() {
-            // If no bid prices or inventory is too high, don't place buy orders
-            vec![]
-        } else {
+        let bid_sizes = {
             // Calculate the maximum buy quantity based on position limits
             let max_buy_qty = (self.max_position_usd / 2.0) - self.position;
             // Generate size weights for a geometric distribution
@@ -416,14 +413,11 @@ impl QuoteGenerator {
             // Apply weights to the maximum buy quantity
             let sizes: Vec<f64> = size_weights.iter().map(|w| w * max_buy_qty).collect();
             // Reverse to place bigger sizes close to the mid price
-
             sizes
         };
 
         // Generate ask sizes based on current inventory and market conditions
-        let ask_sizes = if ask_prices.is_empty() {
-            vec![]
-        } else {
+        let ask_sizes = {
             // Calculate the maximum sell quantity based on position limits
             let max_sell_qty = (self.max_position_usd / 2.0) + self.position;
             // Generate size weights for a geometric distribution
@@ -438,22 +432,19 @@ impl QuoteGenerator {
         // Generate the batch orders
         let mut orders = vec![];
         for (i, bid) in bid_prices.iter().enumerate() {
-            // Create buy orders if bid sizes are available
-            if !bid_sizes.is_empty() {
-                orders.push(BatchOrder::new(
-                    round_size(bid_sizes[i] / *bid, book).min(book.post_only_max), // Calculate and round the order size
-                    round_price(book, *bid), // Round the bid price
-                    1,                       // Indicate a buy order
-                ));
-            }
+            // Create buy orders 
+            orders.push(BatchOrder::new(
+                round_size(bid_sizes[i] / *bid, book).min(book.post_only_max), // Calculate and round the order size
+                round_price(book, *bid), // Round the bid price
+                1,                       // Indicate a buy order
+            ));
+
             // Create sell orders
-            if ask_sizes.is_empty() {
-                orders.push(BatchOrder::new(
-                    round_size(ask_sizes[i] / ask_prices[i], book).min(book.post_only_max), // Calculate and round the order size
-                    round_price(book, ask_prices[i]), // Round the ask price
-                    -1,                               // Indicate a sell order
-                ));
-            }
+            orders.push(BatchOrder::new(
+                round_size(ask_sizes[i] / ask_prices[i], book).min(book.post_only_max), // Calculate and round the order size
+                round_price(book, ask_prices[i]), // Round the ask price
+                -1,                               // Indicate a sell order
+            ));
         }
 
         // Filter out orders that don't meet the minimum notional value
@@ -778,8 +769,25 @@ impl QuoteGenerator {
         // Determine the current bid and ask bounds
         let (current_bid_bounds, current_ask_bounds) = (
             // Get the price of the first buy order, or use a default if none exists
-            self.last_update_price - bounds,
-            self.last_update_price + bounds,
+            self.live_buys_orders
+                .front()
+                .unwrap_or(&LiveOrder {
+                    price: self.last_update_price - bounds,
+                    qty: 0.0,
+                    order_id: "default".to_string(),
+                })
+                .clone()
+                .price,
+            // Get the price of the first sell order, or use a default if none exists
+            self.live_sells_orders
+                .front()
+                .unwrap_or(&LiveOrder {
+                    price: self.last_update_price + bounds,
+                    qty: 0.0,
+                    order_id: "default".to_string(),
+                })
+                .clone()
+                .price,
         );
 
         // Process any recent fills from the private execution data
