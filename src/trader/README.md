@@ -67,11 +67,12 @@ quote_gen.update_grid(private_data, skew, order_book, symbol).await;
 
         End of trend-following section
 
+    Implemented version is below
 ```rust
   // This helps to avoid building up too large a position in one direction.
         let inventory_factor = nbsqrt(self.inventory_delta);
         let skew_factor = skew * (1.0 - inventory_factor.abs());
-        let inventory_adjustment = -0.63 * inventory_factor;
+        let inventory_adjustment = -0.5 * inventory_factor;
         let combined_skew = skew_factor + inventory_adjustment;
         let final_skew = combined_skew.clip(-1.0, 1.0);
         // You can tweak the adjustment value to control the strength of the adjustment. 
