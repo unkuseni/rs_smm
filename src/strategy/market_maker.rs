@@ -43,6 +43,7 @@ impl MarketMaker {
         leverage: f64,
         orders_per_side: usize,
         final_order_distance: f64,
+        update_interval: u64,
         depths: Vec<usize>,
         rate_limit: u32,
         tick_window: usize,
@@ -66,6 +67,7 @@ impl MarketMaker {
                 orders_per_side,
                 leverage,
                 final_order_distance,
+                update_interval,
                 rate_limit,
             )
             .await,
@@ -155,6 +157,7 @@ impl MarketMaker {
         orders_per_side: usize,
         leverage: f64,
         final_order_distance: f64,
+        update_interval: u64,
         rate_limit: u32,
     ) -> HashMap<String, QuoteGenerator> {
         // Create a new HashMap to store the generators.
@@ -193,6 +196,7 @@ impl MarketMaker {
                     leverage,
                     orders_per_side,
                     final_order_distance,
+                    update_interval,
                     rate_limit,
                 ),
             );
