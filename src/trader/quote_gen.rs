@@ -83,6 +83,7 @@ pub struct QuoteGenerator {
     bounds_spread: f64,
     final_order_distance: f64,
     last_update_price: f64,
+    update_interval: u64,
     initial_limit: u32,
     rate_limit: u32,
     time_limit: u64,
@@ -110,6 +111,7 @@ impl QuoteGenerator {
         leverage: f64,             // The leverage value.
         orders_per_side: usize,    // The total number of orders to be placed on each side.
         final_order_distance: f64, // The final order distance that the quote generator will use.
+        update_interval: u64,      // The update interval for stale orders.
         rate_limit: u32,           // The rate limit of the exchange.
     ) -> Self {
         // Create the appropriate trader based on the exchange client.
@@ -141,10 +143,10 @@ impl QuoteGenerator {
             bounds_spread: 0.0,
             // Set the final order distance to the provided value.
             final_order_distance,
-
             // Initialize the last update price to 0.0.
             last_update_price: 0.0,
-
+            //  Set update interval in seconds
+            update_interval,
             // Set the intial rate limit to the provided value.
             initial_limit: rate_limit,
             // Set the rate limit to the provided value.
@@ -689,12 +691,14 @@ impl QuoteGenerator {
     ///
     /// This function assumes that the execution quantity is provided as a string and may
     /// contain commas, which are removed before parsing to a float.
-    fn check_for_fills(&mut self, data: PrivateData) {
+    fn check_for_fills(&mut self, data: PrivateData) -> bool {
         // Extract the fills data based on the exchange type
         let fills = match data {
             PrivateData::Bybit(data) => data.executions,
             PrivateData::Binance(data) => data.into_fastexec(),
         };
+
+        let mut fill_occurred = false;
 
         // Iterate through each fill in the execution data
         for FastExecData {
@@ -712,6 +716,7 @@ impl QuoteGenerator {
                         // Process filled buy orders
                         for (i, order) in self.live_buys_orders.clone().iter().enumerate() {
                             if order.order_id == order_id {
+                                fill_occurred = true;
                                 // Update the position and remove the filled order
                                 self.position += order.qty;
                                 println!(
@@ -726,6 +731,7 @@ impl QuoteGenerator {
                         // Process filled sell orders
                         for (i, order) in self.live_sells_orders.clone().iter().enumerate() {
                             if order.order_id == order_id {
+                                fill_occurred = true;
                                 // Update the position and remove the filled order
                                 self.position -= order.qty;
                                 println!(
@@ -742,6 +748,7 @@ impl QuoteGenerator {
                 println!("Error parsing execution quantity: {}", exec_qty);
             }
         }
+        fill_occurred
     }
 
     /// Determines if the current orders are out of bounds and need to be updated.
@@ -780,8 +787,19 @@ impl QuoteGenerator {
         );
 
         // Process any recent fills from the private execution data
-        self.check_for_fills(private);
+        let fill_occurred = self.check_for_fills(private);
 
+        let bounds_check =
+            book.mid_price < current_bid_bounds || book.mid_price > current_ask_bounds;
+
+        let periodic_update_due = {
+            if self.time_limit == 0 {
+                true
+            } else {
+                let due = (book.last_update - self.time_limit) > (self.update_interval * 1000);
+                due
+            }
+        };
         // Check if there are no live orders
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
             // If no live orders, set out_of_bounds to true
@@ -794,29 +812,17 @@ impl QuoteGenerator {
             // Check if we have enough cancellations left in our rate limit
             if self.cancel_limit > 1 {
                 // Check if the current mid price is outside our order bounds
-                if book.mid_price < current_bid_bounds || book.mid_price > current_ask_bounds {
+                if bounds_check || fill_occurred || periodic_update_due {
                     // Attempt to cancel all existing orders
                     if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
                         out_of_bounds = true;
 
                         // Process each cancelled order
                         for cancelled_order in v.clone() {
-                            // Remove cancelled buy orders from our live orders
-                            for (i, live_order) in
-                                self.live_buys_orders.clone().iter_mut().enumerate()
-                            {
-                                if *live_order == cancelled_order {
-                                    self.live_buys_orders.remove(i);
-                                }
-                            }
-                            // Remove cancelled sell orders from our live orders
-                            for (i, live_order) in
-                                self.live_sells_orders.clone().iter_mut().enumerate()
-                            {
-                                if *live_order == cancelled_order {
-                                    self.live_sells_orders.remove(i);
-                                }
-                            }
+                            self.live_buys_orders
+                                .retain(|order| *order != cancelled_order);
+                            self.live_sells_orders
+                                .retain(|order| *order != cancelled_order);
                         }
                         // Update the last update price to the current mid price
                         self.last_update_price = book.mid_price;
