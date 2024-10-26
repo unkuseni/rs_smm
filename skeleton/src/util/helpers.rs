@@ -281,6 +281,7 @@ pub struct Config {
     pub leverage: f64,
     pub orders_per_side: usize,
     pub final_order_distance: f64,
+    pub update_interval: u64,
     pub depths: Vec<usize>,
     pub rate_limit: u32,
     pub bps: Vec<f64>,
@@ -296,6 +297,7 @@ impl PartialEq for Config {
             && self.leverage == other.leverage
             && self.orders_per_side == other.orders_per_side
             && self.final_order_distance == other.final_order_distance
+            && self.update_interval == other.update_interval
             && self.depths == other.depths
             && self.rate_limit == other.rate_limit
             && self.bps == other.bps
@@ -310,6 +312,7 @@ impl PartialEq for Config {
             || self.leverage != other.leverage
             || self.orders_per_side != other.orders_per_side
             || self.final_order_distance != other.final_order_distance
+            || self.update_interval != other.update_interval
             || self.depths != other.depths
             || self.rate_limit != other.rate_limit
             || self.bps != other.bps
