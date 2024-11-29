@@ -6,13 +6,7 @@ exchange = "bybit" # Name of the exchange you're connecting to (e.g., bybit, bin
 symbols = ["NOTUSDT"] # Replace with your desired symbols
 
 # API keys for authentication (potentially multiple keys for redundancy)
-api_keys = [
-  [
-   "api_key_1",
-    "api_secret_1",
-    "NOTUSDT",
-  ],
-]
+api_keys = [["api_key_1", "api_secret_1", "NOTUSDT"]]
 
 # Initial balances for tracked symbols (symbol, balance)
 balances = [["NOTUSDT", 100.0]]
@@ -30,7 +24,7 @@ final_order_distance = 10
 update_interval = 60
 
 # Number of order book levels (depth) to request from the exchange
-depths = [4, 13, 32] # You can have multiple depths for different symbols
+depths = [3, 8, 34] # You can have multiple depths for different symbols
 
 # Rate limit for API calls (in secs)
 rate_limit = 10
