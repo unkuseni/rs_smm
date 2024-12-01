@@ -338,7 +338,7 @@ impl QuoteGenerator {
         // Calculate a corrected skew value that takes into account the current inventory position.
         // This helps to avoid building up too large a position in one direction.
         let inventory_adj = -1.0 * nbsqrt(self.inventory_delta);
-        let final_skew = skew + inventory_adj;
+        let final_skew = (skew + inventory_adj).clip(-1.0, 1.0);
 
         // Generate the orders based on the corrected skew value.
         let mut orders = if final_skew >= 0.00 {
