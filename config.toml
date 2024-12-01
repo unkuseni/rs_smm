@@ -20,9 +20,6 @@ orders_per_side = 4
 # Final order distance for orders (e.g., 10 for 10 * 25bps = 250bps or 2.5%)
 final_order_distance = 10
 
-# Periodic update interval in secs for stale orders
-update_interval = 60
-
 # Number of order book levels (depth) to request from the exchange
 depths = [3, 8, 34] # You can have multiple depths for different symbols
 
@@ -30,7 +27,7 @@ depths = [3, 8, 34] # You can have multiple depths for different symbols
 rate_limit = 10
 
 # Profit spread for  (e.g., 1 for 0.01% profit spread)
-bps = [27]
+bps = [25]
 
 # use tick window for waiting and lookback period 1 tick = 10ms  , 100 ticks = 1s, 6000 ticks for 1m
 tick_window = 8000 # 100secs = 10,000

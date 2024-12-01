@@ -83,7 +83,6 @@ pub struct QuoteGenerator {
     bounds_spread: f64,
     final_order_distance: f64,
     last_update_price: f64,
-    update_interval: u64,
     initial_limit: u32,
     rate_limit: u32,
     time_limit: u64,
@@ -111,7 +110,6 @@ impl QuoteGenerator {
         leverage: f64,             // The leverage value.
         orders_per_side: usize,    // The total number of orders to be placed on each side.
         final_order_distance: f64, // The final order distance that the quote generator will use.
-        update_interval: u64,      // The update interval for stale orders.
         rate_limit: u32,           // The rate limit of the exchange.
     ) -> Self {
         // Create the appropriate trader based on the exchange client.
@@ -145,8 +143,6 @@ impl QuoteGenerator {
             final_order_distance,
             // Initialize the last update price to 0.0.
             last_update_price: 0.0,
-            //  Set update interval in seconds
-            update_interval,
             // Set the intial rate limit to the provided value.
             initial_limit: rate_limit,
             // Set the rate limit to the provided value.
@@ -792,14 +788,7 @@ impl QuoteGenerator {
         let bounds_check =
             book.mid_price < current_bid_bounds || book.mid_price > current_ask_bounds;
 
-        let periodic_update_due = {
-            if self.time_limit == 0 {
-                true
-            } else {
-                let due = (book.last_update - self.time_limit) > (self.update_interval * 1000);
-                due
-            }
-        };
+
         // Check if there are no live orders
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
             // If no live orders, set out_of_bounds to true
@@ -812,7 +801,7 @@ impl QuoteGenerator {
             // Check if we have enough cancellations left in our rate limit
             if self.cancel_limit > 1 {
                 // Check if the current mid price is outside our order bounds
-                if bounds_check || fill_occurred || periodic_update_due {
+                if bounds_check || fill_occurred {
                     // Attempt to cancel all existing orders
                     if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
                         out_of_bounds = true;
