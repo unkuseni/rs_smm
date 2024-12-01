@@ -31,9 +31,6 @@ orders_per_side = 6
 # Final order distance for orders (e.g., 10 for 10 * 25bps = 250bps or 2.5%)
 final_order_distance = 10
 
-# Periodic update interval in secs for stale orders
-update_interval = 60
-
 # Number of order book levels (depth) to request from the exchange
 depths = [4, 13, 32] # You can have multiple depths for different symbols
 
