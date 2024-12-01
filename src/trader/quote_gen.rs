@@ -337,11 +337,7 @@ impl QuoteGenerator {
 
         // Calculate a corrected skew value that takes into account the current inventory position.
         // This helps to avoid building up too large a position in one direction.
-        let inventory_factor = nbsqrt(self.inventory_delta);
-        let skew_factor = skew * (1.0 - inventory_factor.abs());
-        let inventory_adjustment = -0.63 * inventory_factor;
-        let combined_skew = skew_factor + inventory_adjustment;
-        let final_skew = combined_skew.clip(-1.0, 1.0);
+        let final_skew = -1.0 * nbsqrt(self.inventory_delta);
 
         // Generate the orders based on the corrected skew value.
         let mut orders = if final_skew >= 0.00 {
@@ -787,7 +783,6 @@ impl QuoteGenerator {
 
         let bounds_check =
             book.mid_price < current_bid_bounds || book.mid_price > current_ask_bounds;
-
 
         // Check if there are no live orders
         if self.live_buys_orders.is_empty() && self.live_sells_orders.is_empty() {
