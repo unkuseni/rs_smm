@@ -346,10 +346,24 @@ impl QuoteGenerator {
         // Generate the orders based on the corrected skew value.
         let mut orders = if final_skew >= 0.00 {
             // If skew is positive (buy-heavy market), generate positive skew orders.
-            self.positive_skew_orders(half_spread, curr_spread, start, final_skew.abs(), notional, book)
+            self.positive_skew_orders(
+                half_spread,
+                curr_spread,
+                start,
+                final_skew.abs(),
+                notional,
+                book,
+            )
         } else {
             // If skew is negative (sell-heavy market), generate negative skew orders.
-            self.negative_skew_orders(half_spread, curr_spread, start, final_skew.abs(), notional, book)
+            self.negative_skew_orders(
+                half_spread,
+                curr_spread,
+                start,
+                final_skew.abs(),
+                notional,
+                book,
+            )
         };
 
         // Add the trading symbol to each generated order.
@@ -781,7 +795,8 @@ impl QuoteGenerator {
             // Get the price of the first sell order, or use a default if none exists
             self.last_update_price + bounds,
         );
-
+        // Determine if the time since the last update is greater than the time limit
+        let condition = (book.last_update - self.time_limit) > 1000;
         // Process any recent fills from the private execution data
         let fill_occurred = self.check_for_fills(private);
 
@@ -800,7 +815,7 @@ impl QuoteGenerator {
             // Check if we have enough cancellations left in our rate limit
             if self.cancel_limit > 1 {
                 // Check if the current mid price is outside our order bounds
-                if bounds_check || fill_occurred {
+                if bounds_check || fill_occurred || condition {
                     // Attempt to cancel all existing orders
                     if let Ok(v) = self.client.cancel_all(symbol.as_str()).await {
                         out_of_bounds = true;
