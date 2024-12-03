@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use bybit::model::WsTrade;
 use ndarray::{Array1, Array2};
-use skeleton::util::localorderbook::LocalBook;
+use skeleton::util::{localorderbook::LocalBook, ema::EMA};
 
 use super::{
     imbalance::{calculate_ofi, imbalance_ratio, trade_imbalance, voi},
@@ -41,6 +41,7 @@ pub struct Engine {
     pub expected_return: f64,
     pub price_flu: (VecDeque<f64>, f64), // in bps
     pub mid_price_basis: f64,
+    pub price_basis: PriceBasis,
     pub avg_trade_price: f64,
     pub predicted_price: f64,
     pub skew: f64,
@@ -79,6 +80,8 @@ impl Engine {
             price_flu: (VecDeque::new(), 0.0),
             // The mid price basis.
             mid_price_basis: 0.0,
+            // The price basis.
+            price_basis: PriceBasis::new(tick_window),
             // The average trade price.
             avg_trade_price: 0.0,
             // The predicted price.
@@ -155,7 +158,7 @@ impl Engine {
 
         // Update expected return
         self.expected_return = expected_return(
-            prev_book.get_microprice(Some(depth[0])),
+            curr_book.get_mid_price(),
             curr_book.get_microprice(Some(depth[0])),
         );
 
@@ -175,6 +178,13 @@ impl Engine {
             self.avg_trade_price,
         );
 
+        // Update price basis
+        self.price_basis.update(mid_price_basis(
+            prev_book.get_mid_price(),
+            curr_book.get_mid_price(),
+            self.avg_trade_price,
+        ));
+
         // Update mid price array for regression
         if self.mid_prices.len() > (self.tick_window + 11) {
             for _ in 0..10 {
@@ -184,8 +194,7 @@ impl Engine {
 
         // Push the current book's microprice at the specified depth to the mid_prices vector
         // This adds the latest microprice to the historical data used for price prediction
-        self.mid_prices
-            .push(curr_book.get_microprice(Some(depth[0])));
+        self.mid_prices.push(curr_book.get_mid_price());
 
         // Update feature values
         if self.features.len() > (self.tick_window + 11) {
@@ -195,7 +204,7 @@ impl Engine {
         }
 
         self.features
-            .push([self.imbalance_ratio, self.voi, self.ofi]);
+            .push([self.voi, self.imbalance_ratio, self.mid_price_basis]);
 
         if self.features.len() >= self.tick_window {
             self.predicted_price = {
@@ -206,7 +215,7 @@ impl Engine {
             };
         }
         // Generate skew
-        self.generate_skew(curr_book, depth[0]);
+        self.generate_skew(curr_book);
     }
 
     /// Predicts the future price based on historical data and current market conditions.
@@ -309,7 +318,7 @@ impl Engine {
     /// 3. Calculate weighted order flow imbalances (OFI, normal and deep)
     /// 4. Determine a predicted value based on expected returns and price distances
     /// 5. Sum all components to produce the final skew value
-    fn generate_skew(&mut self, book: &LocalBook, depth: usize) {
+    fn generate_skew(&mut self, book: &LocalBook) {
         // Calculate imbalance ratio and apply weight
         // The imbalance ratio is a value between -1 and 1, indicating buy/sell pressure
         let imb = self.imbalance_ratio * IMB_WEIGHT;
@@ -355,32 +364,27 @@ impl Engine {
             }
         };
 
-        // Calculate the distance from the microprice to the best ask and bid prices
-        // These distances can indicate potential price movement directions
-        let distance_to_ask = (book.get_microprice(Some(depth)) - book.get_best_ask().price).abs();
-        let distance_to_bid = (book.get_microprice(Some(depth)) - book.get_best_bid().price).abs();
-
         // Determine the predicted value based on expected returns and price distances
         let predicted_value = match self.predicted_price {
             // If expected return is significantly positive or microprice is closer to ask
             v if expected_return(book.get_mid_price(), v) >= 0.0005
-                && distance_to_ask < distance_to_bid =>
+                && (self.price_basis.current_basis() / book.get_mid_price()) > 0.0005  =>
             {
                 1.0 * PREDICT_WEIGHT // Predict upward movement
             }
             v if expected_return(book.get_mid_price(), v) >= 0.0005
-                || distance_to_ask < distance_to_bid =>
+                || (self.price_basis.current_basis() / book.get_mid_price()) >= 0.0003 =>
             {
                 0.5 * PREDICT_WEIGHT // Predict moderate upward movement
             }
             // If expected return is significantly negative or microprice is closer to bid
-            v if expected_return(book.get_mid_price(), v) <= -0.0005
-                && distance_to_bid < distance_to_ask =>
+            v if expected_return(book.get_mid_price(), v) < -0.0005
+                && (self.price_basis.current_basis() / book.get_mid_price()) < -0.0005 =>
             {
                 -1.0 * PREDICT_WEIGHT // Predict downward movement
             }
             v if expected_return(book.get_mid_price(), v) <= -0.0005
-                || distance_to_bid < distance_to_ask =>
+                || (self.price_basis.current_basis() / book.get_mid_price()) <= -0.0003 =>
             {
                 -0.5 * PREDICT_WEIGHT // Predict moderate downward movement
             }
@@ -396,6 +400,44 @@ impl Engine {
         // - Values close to 0 indicate a neutral market
     }
 }
+
+#[derive(Debug, Clone)]
+pub struct PriceBasis {
+    basis_ema: EMA,
+}
+
+impl PriceBasis {
+    /// Creates new PriceBasis tracker with specified window size
+    pub fn new(window: usize) -> Self {
+        Self {
+            basis_ema: EMA::new(window, None),
+        }
+    }
+
+    /// Updates basis with new trade and mid prices
+    /// Returns current basis value
+    /// 
+    /// # Arguments
+    /// * `basis` - Price difference between avg trade price and mid price
+    pub fn update(&mut self, basis: f64) -> f64 {
+        
+        // Update EMA with new basis value
+        self.basis_ema.update(basis);
+        self.basis_ema.value()
+    }
+
+    /// Gets current basis value
+    pub fn current_basis(&self) -> f64 {
+        self.basis_ema.value()
+    }
+
+    /// Gets historical basis values
+    pub fn basis_history(&self) -> Vec<f64> {
+        self.basis_ema.arr()
+    }
+}
+
+
 
 /// Removes elements from the front of `data` until the length is less than or equal to `capacity`.
 ///
