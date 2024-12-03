@@ -186,7 +186,7 @@ pub fn trade_imbalance(trades: &VecDeque<WsTrade>) -> f64 {
     }
     // Calculate buy-sell ratio (avoid division by zero)
     let ratio = buy_volume / total_volume;
-    ratio
+       2.0 * ratio - 1.0
 }
 
 fn calculate_volumes(trades: &VecDeque<WsTrade>) -> (f64, f64) {
