@@ -2,7 +2,7 @@ use std::collections::VecDeque;
 
 use bybit::model::WsTrade;
 use ndarray::{Array1, Array2};
-use skeleton::util::{localorderbook::LocalBook, ema::EMA};
+use skeleton::util::{ema::EMA, localorderbook::LocalBook};
 
 use super::{
     imbalance::{calculate_ofi, imbalance_ratio, trade_imbalance, voi},
@@ -20,7 +20,7 @@ const DEEP_IMB_WEIGHT: f64 = 0.10; // 35
 const VOI_WEIGHT: f64 = 0.10; // 45
 
 /// Weight for the order flow imbalance (OFI) in the skew calculation.
-const OFI_WEIGHT: f64 = 0.10; // 55
+const TRADE_WEIGHT: f64 = 0.10; // 55
 
 /// Weight for the deep order flow imbalance in the skew calculation.
 const DEEP_OFI_WEIGHT: f64 = 0.10; // 65
@@ -186,10 +186,8 @@ impl Engine {
         ));
 
         // Update mid price array for regression
-        if self.mid_prices.len() > (self.tick_window + 11) {
-            for _ in 0..10 {
-                self.mid_prices.remove(0);
-            }
+        if self.mid_prices.len() > self.tick_window {
+            self.mid_prices.pop();
         }
 
         // Push the current book's microprice at the specified depth to the mid_prices vector
@@ -197,10 +195,8 @@ impl Engine {
         self.mid_prices.push(curr_book.get_mid_price());
 
         // Update feature values
-        if self.features.len() > (self.tick_window + 11) {
-            for _ in 0..10 {
-                self.features.remove(0);
-            }
+        if self.features.len() > self.tick_window {
+            self.features.pop();
         }
 
         self.features
@@ -345,12 +341,12 @@ impl Engine {
             }
         };
 
-        // Calculate order flow imbalance (OFI) and apply weight
-        // OFI measures the buying/selling pressure based on order flow
-        let ofi = match self.ofi {
-            v if v > 0.0 => 1.0 * OFI_WEIGHT, // Positive OFI indicates buying pressure
-            v if v < 0.0 => -1.0 * OFI_WEIGHT, // Negative OFI indicates selling pressure
-            _ => 0.0,                         // Zero OFI indicates balance
+        // Calculate Trade imbalance  and apply weight
+        // Trade imbalance measures the buying/selling pressure based on order flow
+        let trade_imb = match self.trade_imb {
+            v if v > 0.20 => v * TRADE_WEIGHT, // Positive Imbalance indicates buying pressure
+            v if v < 0.20 => v * TRADE_WEIGHT, // Negative Imbalance indicates selling pressure
+            _ => 0.0,                          // Zero OFI indicates balance
         };
 
         // Calculate deep order flow imbalance and apply weight
@@ -367,8 +363,8 @@ impl Engine {
         // Determine the predicted value based on expected returns and price distances
         let predicted_value = match self.predicted_price {
             // If expected return is significantly positive or microprice is closer to ask
-            v if expected_return(book.get_mid_price(), v) >= 0.0005
-                && (self.price_basis.current_basis() / book.get_mid_price()) > 0.0005  =>
+            v if expected_return(book.get_mid_price(), v) > 0.0005
+                && (self.price_basis.current_basis() / book.get_mid_price()) > 0.0005 =>
             {
                 1.0 * PREDICT_WEIGHT // Predict upward movement
             }
@@ -392,7 +388,7 @@ impl Engine {
         };
 
         // Calculate the final skew by summing all weighted components
-        self.skew = imb + deep_imb + voi + ofi + deep_ofi + predicted_value;
+        self.skew = imb + deep_imb + voi + trade_imb + deep_ofi + predicted_value;
 
         // Note: The resulting skew value will be between -1 and 1, where:
         // - Positive values indicate a bullish skew (tendency for price to increase)
@@ -416,11 +412,10 @@ impl PriceBasis {
 
     /// Updates basis with new trade and mid prices
     /// Returns current basis value
-    /// 
+    ///
     /// # Arguments
     /// * `basis` - Price difference between avg trade price and mid price
     pub fn update(&mut self, basis: f64) -> f64 {
-        
         // Update EMA with new basis value
         self.basis_ema.update(basis);
         self.basis_ema.value()
@@ -436,8 +431,6 @@ impl PriceBasis {
         self.basis_ema.arr()
     }
 }
-
-
 
 /// Removes elements from the front of `data` until the length is less than or equal to `capacity`.
 ///
