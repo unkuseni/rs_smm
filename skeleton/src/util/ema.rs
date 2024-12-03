@@ -3,6 +3,7 @@ use std::collections::VecDeque;
 
 // The Exponential Moving Average (EMA) struct stores the EMA values and
 // other necessary data for the computation of the EMA.
+#[derive(Debug, Clone)]
 pub struct EMA {
     // The size of the window for the EMA calculation. This is the number of
     // previous data points to consider for the calculation.
