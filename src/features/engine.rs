@@ -20,13 +20,13 @@ const DEEP_IMB_WEIGHT: f64 = 0.10; // 35
 const VOI_WEIGHT: f64 = 0.10; // 45
 
 /// Weight for the order flow imbalance (OFI) in the skew calculation.
-const TRADE_WEIGHT: f64 = 0.10; // 55
+const TRADE_WEIGHT: f64 = 0.30; // 55
 
 /// Weight for the deep order flow imbalance in the skew calculation.
 const DEEP_OFI_WEIGHT: f64 = 0.10; // 65
 
 /// Weight for the predicted price in the skew calculation.
-const PREDICT_WEIGHT: f64 = 0.35; // 100
+const PREDICT_WEIGHT: f64 = 0.15; // 100
 
 #[derive(Clone, Debug)]
 pub struct Engine {
