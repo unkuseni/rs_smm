@@ -803,7 +803,7 @@ impl QuoteGenerator {
             self.last_update_price + bounds,
         );
         // Determine if the time since the last update is greater than the time limit
-        let condition = (book.last_update - self.time_limit) > 120_000;
+        let condition = (book.last_update - self.time_limit) > 180_000;
         // Process any recent fills from the private execution data
         let fill_occurred = self.check_for_fills(private);
 
