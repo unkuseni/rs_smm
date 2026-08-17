@@ -7,21 +7,25 @@ const BINANCE_SECRET: &str = "";
 #[cfg(test)]
 mod tests {
 
+    use std::sync::Arc;
     use std::time::Duration;
 
     use binance::{api::Binance, futures::general::FuturesGeneral};
     use skeleton::{
         exchanges::{
-            ex_binance::{BinanceClient, BinanceMarket},
+            ex_binance::BinanceClient,
             ex_bybit::BybitClient,
-            exchange::{Exchange, PrivateData},
+            exchange::{Exchange, MarketEvent, PrivateData},
         },
         ss,
         util::logger::Logger,
     };
-    use tokio::{sync::mpsc, task, time::Instant};
+    use tokio::{sync::mpsc, time::Instant};
 
     use crate::{BINANCE_KEY, BINANCE_SECRET, BYBIT_KEY, BYBIT_SECRET};
+
+    // Tests marked #[ignore] require live exchange connectivity and/or real
+    // credentials; run them explicitly with `cargo test -- --ignored`.
 
     #[test]
     fn test_default() {
@@ -37,6 +41,7 @@ mod tests {
         assert_eq!(client.secret, BYBIT_SECRET);
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_time() {
         let client = BybitClient::init(BYBIT_KEY, BYBIT_SECRET);
@@ -51,6 +56,7 @@ mod tests {
         );
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_fees() {
         let client = BybitClient::init(BYBIT_KEY, BYBIT_SECRET);
@@ -69,66 +75,59 @@ mod tests {
         let _ = client.trader();
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_bybit_books() {
         let client = BybitClient::init(BYBIT_KEY, BYBIT_SECRET);
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::unbounded_channel::<MarketEvent>();
         let symbols = vec!["NOTUSDT".to_string(), "ETHUSDT".to_string()];
         tokio::spawn(async move {
             client.market_subscribe(symbols, tx).await;
         });
 
-        while let Some(_) = rx.recv().await {
-            println!("Market data");
+        while let Some(v) = rx.recv().await {
+            println!("Market event: {:#?}", v);
         }
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_binance_books() {
         let client = BinanceClient::init(BINANCE_KEY, BINANCE_SECRET);
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::unbounded_channel::<MarketEvent>();
         let symbols = vec!["BTCUSDT".to_string(), "ETHUSDT".to_string()];
-        task::spawn_blocking(move || {
-            client.market_subscribe(symbols, tx);
+        tokio::spawn(async move {
+            client.market_subscribe(symbols, tx).await;
         });
-        while let Some(_) = rx.recv().await {
-            println!("Market data");
+        while let Some(v) = rx.recv().await {
+            println!("Market event: {:#?}", v);
         }
     }
 
-    #[test]
-    pub fn test_general() {
+    #[ignore]
+    #[tokio::test]
+    pub async fn test_general() {
         let data_cl: FuturesGeneral = Binance::new(None, None);
-        match data_cl.get_symbol_info("SKLUSDT") {
+        match data_cl.get_symbol_info("SKLUSDT").await {
             Ok(v) => println!("{:#?}", v),
             Err(e) => println!("{:#?}", e),
         }
     }
 
+    #[ignore]
     #[tokio::test]
     pub async fn test_new_state() {
         let exchange = "both".to_string();
         let mut state = ss::SharedState::new(exchange);
         state.add_symbols(["SKLUSDT".to_string(), "MATICUSDT".to_string()].to_vec());
-        let (sender, mut receiver) = mpsc::unbounded_channel::<ss::SharedState>();
+        let (sender, mut receiver) = mpsc::unbounded_channel::<Arc<ss::SharedState>>();
         let instant = Instant::now();
         tokio::spawn(async move {
             ss::load_data(state, sender).await;
         });
         while let Some(v) = receiver.recv().await {
-            println!("Shared State: {:#?}", {
-                match &v.markets[0] {
-                    skeleton::exchanges::exchange::MarketMessage::Binance(m) => {
-                        m.books[1].1.get_bba()
-                    }
-                    skeleton::exchanges::exchange::MarketMessage::Bybit(m) => {
-                        m.books[1].1.get_bba()
-                    }
-                }
-            });
             v.logging.info("Received state");
             if instant.elapsed() > Duration::from_secs(60) {
-                println!("Shared State: {:#?}", v.markets[0]);
                 break;
             }
         }
@@ -144,6 +143,7 @@ mod tests {
         logger.error("error");
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_priv() {
         let (tx, mut rx) = mpsc::unbounded_channel();
@@ -159,87 +159,75 @@ mod tests {
         }
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_user_stream() {
         let bub = BinanceClient::init("api", "secret");
         let (tx, mut rx) = mpsc::unbounded_channel();
         let symbol = "BTCUSDT".to_string();
-        tokio::task::spawn_blocking(move || {
-            let _ = bub.private_subscribe(tx, symbol);
+        tokio::spawn(async move {
+            bub.private_subscribe(tx, symbol).await;
         });
         while let Some(v) = rx.recv().await {
-            match v.data {
-                PrivateData::Binance(v) => {
-                    for (k, d) in v.orders.iter() {
-                        println!("Private data: {:#?}, {:#?}", k, d);
-                    }
+            if let PrivateData::Binance(v) = v.data {
+                for (k, d) in v.orders.iter() {
+                    println!("Private data: {:#?}, {:#?}", k, d);
                 }
-                _ => {}
             }
         }
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_orderbook_bin() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
-        let mut data;
+        let (tx, mut rx) = mpsc::unbounded_channel::<MarketEvent>();
         let api_key = "key";
         let api_secret = "secret";
         let bub = BinanceClient::init(api_key, api_secret);
         let symbol = vec!["ETHUSDT".to_string()];
-        let symbol_clone = symbol.clone();
 
-        let _webs = tokio::task::spawn_blocking(move || {
-            let _ = bub.market_subscribe(symbol, tx);
+        let _webs = tokio::spawn(async move {
+            bub.market_subscribe(symbol, tx).await;
         });
         let mut counter = 0;
 
         while let Some(v) = rx.recv().await {
-            data = v;
-            let depth = data.books[0].1.get_book_depth(3);
-            println!("Market data: {:#?}, {:#?}", symbol_clone[0], depth);
+            println!("Market event: {:#?}", v);
             counter += 1;
             if counter == 200 {
-                println!("Market data: {:#?}", data);
                 break;
             }
         }
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_orderbook_both() {
-        let (tx, mut rx) = mpsc::unbounded_channel();
+        let (tx, mut rx) = mpsc::unbounded_channel::<MarketEvent>();
         let api_key = "key";
         let api_secret = "secret";
         let bub = BybitClient::init(api_key, api_secret);
         let symbol = vec!["NOTUSDT".to_string()];
-        let clone_symbol = symbol.clone();
-        let (tx2, mut rx2) = mpsc::unbounded_channel::<BinanceMarket>();
+
+        let (tx2, mut rx2) = mpsc::unbounded_channel::<MarketEvent>();
         let bub_2 = BinanceClient::init(api_key, api_secret);
         let symbol_2 = vec!["NOTUSDT".to_string()];
-        let clone_symbol_2 = symbol_2.clone();
 
         tokio::spawn(async move {
             bub.market_subscribe(symbol, tx).await;
         });
 
-        let binance_task = tokio::task::spawn_blocking(move || {
-            bub_2.market_subscribe(symbol_2, tx2);
+        let binance_task = tokio::spawn(async move {
+            bub_2.market_subscribe(symbol_2, tx2).await;
         });
 
         loop {
             tokio::select! {
                 Some(v) = rx.recv() => {
-                    let depth = v.books[0].1.get_bba();
-                    let spread = v.books[0].1.get_spread();
-                    let bps_spread = v.books[0].1.get_spread_in_bps();
-                    println!("Bybit Market data: {:#?}, {:#?} {:#?}, {:#?}", clone_symbol[0], depth, spread, bps_spread);
+                    println!("Bybit Market event: {:#?}", v);
                 }
                 Some(v) = rx2.recv() => {
-                    let depth = v.books[0].1.get_bba();
-                    let spread = v.books[0].1.get_spread();
-                    let bps_spread = v.books[0].1.get_spread_in_bps();
-                    println!("Binance Market data: {:#?}, {:#?} {:#?}, {:#?}", clone_symbol_2[0], depth, spread, bps_spread);
+                    println!("Binance Market event: {:#?}", v);
                 }
                 else => break,
             }

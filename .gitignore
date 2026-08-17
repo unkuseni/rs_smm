@@ -1,5 +1,7 @@
 /target
 
-Cargo.lock
-/benches
-*/benches
+# Local, machine-specific toolchain configuration (e.g. OPENSSL_DIR).
+/.cargo/config.toml
+
+# Portable OpenSSL tree used for local builds on Windows.
+/.openssl/

@@ -1,46 +1,24 @@
 use bybit::{
-    account::AccountManager,
-    api::Bybit,
-    config::Config,
-    general::General,
-    market::MarketData,
-    model::{
-        Category, FastExecData, InstrumentRequest, LeverageRequest, LinearTickerData,
-        OrderBookUpdate, OrderData, PositionData, Subscription, Tickers, WalletData,
-        WebsocketEvents, WsTrade,
-    },
-    position::PositionManager,
-    trade::Trader,
-    ws::Stream as BybitStream,
+    AccountManager, Bybit, Category, Config, FastExecData, General, LeverageRequest,
+    OrderBookUpdate, OrderData, PositionData, PositionManager, Stream, Subscription, Trader,
+    WalletData, WebsocketEvents, WsTrade,
 };
-use std::{borrow::Cow, collections::VecDeque, time::Duration};
+use std::{borrow::Cow, collections::VecDeque, fmt, sync::Arc, time::Duration};
 use tokio::sync::mpsc;
 
 use crate::util::localorderbook::LocalBook;
 
-use super::exchange::{Exchange, PrivateData, TaggedPrivate};
+use super::exchange::{Exchange, MarketEvent, PrivateData, TaggedPrivate};
 
-#[derive(Clone, Debug)]
+/// A market snapshot for one symbol, referencing the loader's authoritative
+/// book and trade buffers through `Arc` so sending a message is a cheap
+/// reference-count bump rather than a full clone.
+#[derive(Clone, Debug, Default)]
 pub struct BybitMarket {
     pub time: u64,
-    pub books: Vec<(String, LocalBook)>,
-    pub trades: Vec<(String, VecDeque<WsTrade>)>,
-    pub tickers: Vec<(String, VecDeque<LinearTickerData>)>,
+    pub books: Vec<(String, Arc<LocalBook>)>,
+    pub trades: Vec<(String, Arc<VecDeque<WsTrade>>)>,
 }
-
-impl Default for BybitMarket {
-    fn default() -> Self {
-        Self {
-            time: 0,
-            books: Vec::new(),
-            trades: Vec::new(),
-            tickers: Vec::new(),
-        }
-    }
-}
-
-unsafe impl Send for BybitMarket {}
-unsafe impl Sync for BybitMarket {}
 
 #[derive(Clone, Debug)]
 pub struct BybitPrivate {
@@ -50,9 +28,6 @@ pub struct BybitPrivate {
     pub positions: VecDeque<PositionData>,
     pub executions: VecDeque<FastExecData>,
 }
-
-unsafe impl Send for BybitPrivate {}
-unsafe impl Sync for BybitPrivate {}
 
 impl Default for BybitPrivate {
     fn default() -> Self {
@@ -66,10 +41,20 @@ impl Default for BybitPrivate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct BybitClient {
     pub key: String,
     pub secret: String,
+}
+
+// Redact credentials so `{:?}` of any struct holding a client never leaks keys.
+impl fmt::Debug for BybitClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BybitClient")
+            .field("key", &"<redacted>")
+            .field("secret", &"<redacted>")
+            .finish()
+    }
 }
 
 impl Exchange for BybitClient {
@@ -103,23 +88,28 @@ impl Exchange for BybitClient {
 
     async fn fees(&self) -> f64 {
         let account: AccountManager = Bybit::new(Some(self.key.clone()), Some(self.secret.clone()));
-        let rate;
         let response = account.get_fee_rate(Category::Linear, None).await;
-        if let Ok(v) = response {
-            rate = v.result.list[0].maker_fee_rate.parse().unwrap();
-        } else {
-            rate = 0.0000_f64;
-        }
-        rate
+        response
+            .ok()
+            .and_then(|v| {
+                v.result
+                    .list
+                    .first()
+                    .map(|rate| rate.maker_fee_rate.parse().ok())
+            })
+            .flatten()
+            .unwrap_or(0.0)
     }
 
     async fn set_leverage(&self, symbol: &str, leverage: u16) -> Result<String, String> {
         let account: PositionManager =
             Bybit::new(Some(self.key.clone()), Some(self.secret.clone()));
+        let leverage = leverage.clamp(1, 100).to_string();
         let req = LeverageRequest {
             category: Category::Linear,
             symbol: Cow::Borrowed(symbol),
-            leverage: leverage as i8,
+            buy_leverage: leverage.clone(),
+            sell_leverage: leverage,
         };
         match account.set_leverage(req).await {
             Ok(res) => Ok(res.ret_msg),
@@ -128,58 +118,29 @@ impl Exchange for BybitClient {
     }
 
     fn trader(&self) -> Trader {
-        let config = {
-            let x = Config::default();
-            x.set_recv_window(5000)
-        };
-        let trader: Trader =
-            Bybit::new_with_config(&config, Some(self.key.clone()), Some(self.secret.clone()));
-        trader
+        let config = Config::default().set_recv_window(5000);
+        Bybit::new_with_config(&config, Some(self.key.clone()), Some(self.secret.clone()))
     }
 }
 
 impl BybitClient {
+    /// Subscribes to public market streams for the given symbols and forwards
+    /// lightweight deltas (`MarketEvent`) to the sender.
     pub async fn market_subscribe(
         &self,
         symbol: Vec<String>,
-        sender: mpsc::UnboundedSender<BybitMarket>,
+        sender: mpsc::UnboundedSender<MarketEvent>,
     ) {
-        let delay = 50;
-        let market: BybitStream = Bybit::new(None, None);
+        let market: Stream = Bybit::new(None, None);
         let category: Category = Category::Linear;
         let request_args = build_requests(&symbol);
-        let mut market_data = BybitMarket::default();
         let request = Subscription::new(
             "subscribe",
             request_args.iter().map(String::as_str).collect(),
         );
-        market_data.books = symbol
-            .iter()
-            .map(|s| (s.to_string(), LocalBook::new()))
-            .collect::<Vec<(String, LocalBook)>>();
-        for (s, b) in &mut market_data.books {
-            let cl: MarketData = Bybit::new(None, None);
-            let req = InstrumentRequest::new(category, Some(s), None, None, None);
-            if let Ok(res) = cl.get_futures_instrument_info(req).await {
-                b.tick_size = res.result.list[0].price_filter.tick_size;
-                if let Some(v) = &res.result.list[0].lot_size_filter.qty_step {
-                    b.lot_size = v.parse::<f64>().unwrap_or(0.0);
-                }
-                b.post_only_max = res.result.list[0].lot_size_filter.max_order_qty;
-                b.min_order_size = res.result.list[0].lot_size_filter.min_order_qty;
-                if let Some(v) = &res.result.list[0].lot_size_filter.min_notional_value {
-                    b.min_notional = v.parse::<f64>().unwrap_or(0.0);
-                }
-            }
-        }
-        market_data.trades = symbol
-            .iter()
-            .map(|s| (s.to_string(), VecDeque::with_capacity(5000)))
-            .collect::<Vec<(String, VecDeque<WsTrade>)>>();
-        market_data.tickers = symbol
-            .iter()
-            .map(|s| (s.to_string(), VecDeque::with_capacity(10)))
-            .collect::<Vec<(String, VecDeque<LinearTickerData>)>>();
+        // The handler signature is fixed by the bybit crate and returns a
+        // large error type; boxing it here is not possible.
+        #[allow(clippy::result_large_err)]
         let handler = move |event| {
             match event {
                 WebsocketEvents::OrderBookEvent(OrderBookUpdate {
@@ -188,77 +149,46 @@ impl BybitClient {
                     timestamp,
                     ..
                 }) => {
-                    let sym = topic.split('.').nth(2).unwrap();
-                    let book = &mut market_data
-                        .books
-                        .iter_mut()
-                        .find(|(s, _)| s == sym)
-                        .unwrap()
-                        .1;
-
-                    if topic == format!("orderbook.1.{}", sym) {
-                        book.update_bba(data.bids, data.asks, timestamp);
-                        market_data.time = timestamp;
-                    } else {
-                        book.update(data.bids, data.asks, timestamp);
-                    }
-                }
-                WebsocketEvents::TickerEvent(tick) => {
-                    let sym = tick.topic.split('.').nth(1).unwrap();
-                    let ticker = &mut market_data
-                        .tickers
-                        .iter_mut()
-                        .find(|(s, _)| s == sym)
-                        .unwrap()
-                        .1;
-                    if ticker.len() == ticker.capacity() || (ticker.capacity() - ticker.len()) <= 1
-                    {
-                        for _ in 0..2 {
-                            ticker.pop_front();
-                        }
-                    }
-                    let d = match tick.data {
-                        Tickers::Linear(data) => data,
-                        _ => unreachable!(),
-                    };
-                    ticker.push_back(d);
+                    let sym = topic.split('.').nth(2).unwrap_or_default().to_string();
+                    // `orderbook.1.` is the best-bid/ask snapshot topic.
+                    let bba = topic.starts_with("orderbook.1.");
+                    let _ = sender.send(MarketEvent::Book {
+                        symbol: sym,
+                        bids: data.bids,
+                        asks: data.asks,
+                        timestamp,
+                        bba,
+                    });
                 }
                 WebsocketEvents::TradeEvent(data) => {
-                    let sym = data.topic.split('.').nth(1).unwrap();
-                    let trades = &mut market_data
-                        .trades
-                        .iter_mut()
-                        .find(|(s, _)| s == sym)
-                        .unwrap()
-                        .1;
-                    if trades.len() == trades.capacity()
-                        || (trades.capacity() - trades.len()) <= data.data.len()
-                    {
-                        for _ in 0..data.data.len() {
-                            trades.pop_front();
-                        }
+                    let sym = data.topic.split('.').nth(1).unwrap_or_default().to_string();
+                    for trade in data.data {
+                        let _ = sender.send(MarketEvent::Trade {
+                            symbol: sym.clone(),
+                            trade,
+                        });
                     }
-                    trades.extend(data.data);
                 }
-                _ => {
-                    eprintln!("Unhandled event: {:#?}", event);
-                }
+                _ => {}
             }
-            let _ = sender.send(market_data.clone());
             Ok(())
         };
+        // Reconnect loop with capped exponential backoff.
+        let mut delay = 50_u64;
         loop {
             match market
                 .ws_subscribe(request.clone(), category, handler.clone())
                 .await
             {
                 Ok(_) => {
-                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    delay = 50;
                 }
-                Err(_) => {
-                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                Err(e) => {
+                    eprintln!("Market subscription error: {}", e);
+                    delay = (delay * 2).min(5000);
                 }
             }
+            tokio::time::sleep(Duration::from_millis(delay)).await;
         }
     }
 
@@ -267,24 +197,21 @@ impl BybitClient {
         sender: mpsc::UnboundedSender<TaggedPrivate>,
         symbol: String,
     ) {
-        let delay = 50;
-        let user_stream: BybitStream = BybitStream::new(
+        let user_stream: Stream = Bybit::new(
             Some(self.key.clone()),    // API key
             Some(self.secret.clone()), // Secret Key
         );
-        let request_args = {
-            let mut args = vec![];
-            args.push("position.linear".to_string());
-            args.push("execution.fast".to_string());
-            args.push("order.linear".to_string());
-            args.push("wallet".to_string());
-            args
-        };
+        let request_args = [
+            "position.linear",
+            "execution.fast",
+            "order.linear",
+            "wallet",
+        ];
         let mut private_data = BybitPrivate::default();
-        let request = Subscription::new(
-            "subscribe",
-            request_args.iter().map(String::as_str).collect(),
-        );
+        let request = Subscription::new("subscribe", request_args.to_vec());
+        // The handler signature is fixed by the bybit crate and returns a
+        // large error type; boxing it here is not possible.
+        #[allow(clippy::result_large_err)]
         let handler = move |event| {
             match event {
                 WebsocketEvents::Wallet(data) => {
@@ -335,46 +262,37 @@ impl BybitClient {
                     }
                     private_data.orders.extend(data.data);
                 }
-                _ => {
-                    eprintln!("Unhandled event: {:#?}", event);
-                }
+                _ => {}
             }
             let tagged_data =
                 TaggedPrivate::new(symbol.clone(), PrivateData::Bybit(private_data.clone()));
-            sender.send(tagged_data).unwrap();
+            let _ = sender.send(tagged_data);
             Ok(())
         };
+        let mut delay = 50_u64;
         loop {
             match user_stream
                 .ws_priv_subscribe(request.clone(), handler.clone())
                 .await
             {
                 Ok(_) => {
-                    println!("Subscription successful");
-                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    delay = 50;
                 }
                 Err(e) => {
                     eprintln!("Subscription error: {}", e);
-                    tokio::time::sleep(Duration::from_millis(delay)).await;
+                    delay = (delay * 2).min(5000);
                 }
             }
+            tokio::time::sleep(Duration::from_millis(delay)).await;
         }
     }
 }
 
 /// Builds the request arguments for the WebSocket connection.
-///
-/// # Arguments
-///
-/// * `symbol` - The symbols to request data for.
-///
-/// # Returns
-///
-/// A vector of strings, each representing a different request.
 fn build_requests(symbol: &[String]) -> Vec<String> {
     let mut request_args = vec![];
 
-    // Building book requests
+    // Book requests: best-bid/ask plus 50- and 500-level depth snapshots.
     let book_req: Vec<String> = symbol
         .iter()
         .flat_map(|sym| vec![(1, sym), (50, sym), (500, sym)])
@@ -382,14 +300,7 @@ fn build_requests(symbol: &[String]) -> Vec<String> {
         .collect();
     request_args.extend(book_req);
 
-    // Building tickers requests
-    let tickers_req: Vec<String> = symbol
-        .iter()
-        .map(|sub| format!("tickers.{}", sub.to_uppercase()))
-        .collect();
-    request_args.extend(tickers_req);
-
-    // Building trade requests
+    // Trade requests.
     let trade_req: Vec<String> = symbol
         .iter()
         .map(|sub| format!("publicTrade.{}", sub.to_uppercase()))

@@ -2,11 +2,12 @@
 mod tests {
     use std::time::Duration;
 
-    use bybit::model::{Ask, Bid, WsTrade};
+    use bybit::{Ask, Bid, TickDirection, WsTrade};
     use skeleton::util::{
         candles::{TickCandle, VolumeCandle},
         helpers::{
-            generate_timestamp, geometric_weights, geomspace, nbsqrt, read_toml, round_step, spread_price_in_bps, watch_config, Round
+            generate_timestamp, geometric_weights, geomspace, nbsqrt, read_toml, round_step,
+            spread_price_in_bps, watch_config, Round,
         },
         localorderbook::LocalBook,
     };
@@ -14,57 +15,58 @@ mod tests {
 
     #[test]
     fn test_tick_candle() {
-        let mut trades = Vec::new();
-        trades.push(WsTrade {
-            timestamp: 0,
-            symbol: "BTCUSD".to_string(),
-            side: "Buy".to_string(),
-            tick_direction: "PlusTick".to_string(),
-            id: "0".to_string(),
-            buyer_is_maker: false,
-            price: 100.0,
-            volume: 1.0,
-        });
-        trades.push(WsTrade {
-            timestamp: 1,
-            symbol: "BTCUSD".to_string(),
-            side: "Sell".to_string(),
-            tick_direction: "MinusTick".to_string(),
-            id: "1".to_string(),
-            buyer_is_maker: false,
-            price: 101.0,
-            volume: 1.0,
-        });
-        trades.push(WsTrade {
-            timestamp: 2,
-            symbol: "BTCUSD".to_string(),
-            side: "Buy".to_string(),
-            tick_direction: "PlusTick".to_string(),
-            id: "2".to_string(),
-            buyer_is_maker: false,
-            price: 102.0,
-            volume: 1.0,
-        });
-        trades.push(WsTrade {
-            timestamp: 3,
-            symbol: "BTCUSD".to_string(),
-            side: "Sell".to_string(),
-            tick_direction: "MinusTick".to_string(),
-            id: "3".to_string(),
-            buyer_is_maker: false,
-            price: 103.0,
-            volume: 1.0,
-        });
-        trades.push(WsTrade {
-            timestamp: 4,
-            symbol: "BTCUSD".to_string(),
-            side: "Buy".to_string(),
-            tick_direction: "PlusTick".to_string(),
-            id: "4".to_string(),
-            buyer_is_maker: false,
-            price: 104.0,
-            volume: 1.0,
-        });
+        let trades = vec![
+            WsTrade {
+                timestamp: 0,
+                symbol: "BTCUSD".to_string(),
+                side: "Buy".to_string(),
+                tick_direction: TickDirection::PlusTick,
+                id: "0".to_string(),
+                buyer_is_maker: false,
+                price: 100.0,
+                volume: 1.0,
+            },
+            WsTrade {
+                timestamp: 1,
+                symbol: "BTCUSD".to_string(),
+                side: "Sell".to_string(),
+                tick_direction: TickDirection::MinusTick,
+                id: "1".to_string(),
+                buyer_is_maker: false,
+                price: 101.0,
+                volume: 1.0,
+            },
+            WsTrade {
+                timestamp: 2,
+                symbol: "BTCUSD".to_string(),
+                side: "Buy".to_string(),
+                tick_direction: TickDirection::PlusTick,
+                id: "2".to_string(),
+                buyer_is_maker: false,
+                price: 102.0,
+                volume: 1.0,
+            },
+            WsTrade {
+                timestamp: 3,
+                symbol: "BTCUSD".to_string(),
+                side: "Sell".to_string(),
+                tick_direction: TickDirection::MinusTick,
+                id: "3".to_string(),
+                buyer_is_maker: false,
+                price: 103.0,
+                volume: 1.0,
+            },
+            WsTrade {
+                timestamp: 4,
+                symbol: "BTCUSD".to_string(),
+                side: "Buy".to_string(),
+                tick_direction: TickDirection::PlusTick,
+                id: "4".to_string(),
+                buyer_is_maker: false,
+                price: 104.0,
+                volume: 1.0,
+            },
+        ];
 
         let candles = TickCandle::new(trades, 3);
         assert_eq!(candles.len(), 2);
@@ -78,57 +80,58 @@ mod tests {
 
     #[test]
     fn test_volume_candle() {
-        let mut trades = Vec::new();
-        trades.push(WsTrade {
-            timestamp: 0,
-            symbol: "BTCUSD".to_string(),
-            side: "Buy".to_string(),
-            tick_direction: "PlusTick".to_string(),
-            id: "0".to_string(),
-            buyer_is_maker: false,
-            price: 100.0,
-            volume: 1.0,
-        });
-        trades.push(WsTrade {
-            timestamp: 1,
-            symbol: "BTCUSD".to_string(),
-            side: "Sell".to_string(),
-            tick_direction: "MinusTick".to_string(),
-            id: "1".to_string(),
-            buyer_is_maker: false,
-            price: 101.0,
-            volume: 1.0,
-        });
-        trades.push(WsTrade {
-            timestamp: 2,
-            symbol: "BTCUSD".to_string(),
-            side: "Buy".to_string(),
-            tick_direction: "PlusTick".to_string(),
-            id: "2".to_string(),
-            buyer_is_maker: false,
-            price: 102.0,
-            volume: 2.0,
-        });
-        trades.push(WsTrade {
-            timestamp: 3,
-            symbol: "BTCUSD".to_string(),
-            side: "Sell".to_string(),
-            tick_direction: "MinusTick".to_string(),
-            id: "3".to_string(),
-            buyer_is_maker: false,
-            price: 103.0,
-            volume: 2.0,
-        });
-        trades.push(WsTrade {
-            timestamp: 4,
-            symbol: "BTCUSD".to_string(),
-            side: "Buy".to_string(),
-            tick_direction: "PlusTick".to_string(),
-            id: "4".to_string(),
-            buyer_is_maker: false,
-            price: 104.0,
-            volume: 3.0,
-        });
+        let trades = vec![
+            WsTrade {
+                timestamp: 0,
+                symbol: "BTCUSD".to_string(),
+                side: "Buy".to_string(),
+                tick_direction: TickDirection::PlusTick,
+                id: "0".to_string(),
+                buyer_is_maker: false,
+                price: 100.0,
+                volume: 1.0,
+            },
+            WsTrade {
+                timestamp: 1,
+                symbol: "BTCUSD".to_string(),
+                side: "Sell".to_string(),
+                tick_direction: TickDirection::MinusTick,
+                id: "1".to_string(),
+                buyer_is_maker: false,
+                price: 101.0,
+                volume: 1.0,
+            },
+            WsTrade {
+                timestamp: 2,
+                symbol: "BTCUSD".to_string(),
+                side: "Buy".to_string(),
+                tick_direction: TickDirection::PlusTick,
+                id: "2".to_string(),
+                buyer_is_maker: false,
+                price: 102.0,
+                volume: 2.0,
+            },
+            WsTrade {
+                timestamp: 3,
+                symbol: "BTCUSD".to_string(),
+                side: "Sell".to_string(),
+                tick_direction: TickDirection::MinusTick,
+                id: "3".to_string(),
+                buyer_is_maker: false,
+                price: 103.0,
+                volume: 2.0,
+            },
+            WsTrade {
+                timestamp: 4,
+                symbol: "BTCUSD".to_string(),
+                side: "Buy".to_string(),
+                tick_direction: TickDirection::PlusTick,
+                id: "4".to_string(),
+                buyer_is_maker: false,
+                price: 104.0,
+                volume: 3.0,
+            },
+        ];
 
         let candles = VolumeCandle::new(trades, 3.0);
         assert_eq!(candles.len(), 2);
@@ -172,11 +175,9 @@ mod tests {
         let num_geom = geomspace(0.6243, 0.6001, 5);
         let num_wei = geometric_weights(0.63, 5, true);
         let rev_geom = geomspace(0.6954, 0.6245, 5);
-
         let rev_wei = geometric_weights(0.37, 5, false);
 
         println!("{:#?}    {:#?}", num_geom, num_wei);
-
         println!("{:#?}    {:#?}", rev_geom, rev_wei);
     }
 
@@ -186,7 +187,8 @@ mod tests {
         println!("{:#?}", result);
     }
 
-
+    // The watch loop never terminates on its own; requires manual file edits.
+    #[ignore]
     #[tokio::test]
     async fn test_watch_file() {
         let (tx, mut rx) = mpsc::unbounded_channel();

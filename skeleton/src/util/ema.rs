@@ -1,6 +1,5 @@
 use std::collections::VecDeque;
 
-
 // The Exponential Moving Average (EMA) struct stores the EMA values and
 // other necessary data for the computation of the EMA.
 #[derive(Debug, Clone)]
@@ -68,4 +67,3 @@ impl EMA {
         self.arr.iter().cloned().collect()
     }
 }
-

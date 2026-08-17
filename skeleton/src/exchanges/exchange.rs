@@ -1,7 +1,7 @@
 use std::fmt::Debug;
 
 use binance::model::AggrTradesEvent;
-use bybit::model::WsTrade;
+use bybit::{Ask, Bid, TickDirection, WsTrade};
 
 use super::{
     ex_binance::{BinanceClient, BinanceMarket, BinancePrivate},
@@ -22,7 +22,6 @@ pub trait Exchange {
         leverage: u16,
     ) -> impl Future<Output = Result<String, String>>;
     fn trader(&self) -> Self::Quoter;
-    
 }
 
 #[derive(Clone, Debug)]
@@ -37,15 +36,6 @@ pub enum PrivateData {
     Binance(BinancePrivate),
 }
 
-impl PrivateData {
-    pub fn unwrap(self) -> Box<dyn Debug> {
-        match self {
-            Self::Bybit(v) => Box::new(v),
-            Self::Binance(v) => Box::new(v),
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct TaggedPrivate {
     pub symbol: String,
@@ -58,8 +48,26 @@ impl TaggedPrivate {
     }
 }
 
-unsafe impl Send for TaggedPrivate {}
-unsafe impl Sync for TaggedPrivate {}
+/// A lightweight market-data delta emitted by the websocket handlers.
+///
+/// The loaders in `ss` apply these deltas to the authoritative books/trades
+/// they own, which keeps the per-event channel payload small instead of
+/// cloning the entire market snapshot on every websocket event.
+#[derive(Clone, Debug)]
+pub enum MarketEvent {
+    Book {
+        symbol: String,
+        bids: Vec<Bid>,
+        asks: Vec<Ask>,
+        timestamp: u64,
+        /// Whether this is a best-bid/ask snapshot rather than a depth update.
+        bba: bool,
+    },
+    Trade {
+        symbol: String,
+        trade: WsTrade,
+    },
+}
 
 #[derive(Debug)]
 pub enum MarketMessage {
@@ -76,15 +84,6 @@ impl Clone for MarketMessage {
     }
 }
 
-impl MarketMessage {
-    pub fn unwrap(self) -> Box<dyn Debug> {
-        match self {
-            MarketMessage::Bybit(v) => Box::new(v),
-            MarketMessage::Binance(v) => Box::new(v),
-        }
-    }
-}
-
 pub trait ProcessTrade {
     fn process_trade(&self) -> WsTrade;
 }
@@ -97,7 +96,8 @@ impl ProcessTrade for AggrTradesEvent {
             price: self.price.parse::<f64>().unwrap(),
             volume: self.qty.parse::<f64>().unwrap(),
             side: self.event_type.clone(),
-            tick_direction: "Zero".to_string(),
+            // Aggregated trades carry no tick-direction info.
+            tick_direction: TickDirection::ZeroPlusTick,
             id: self.aggregated_trade_id.to_string(),
             buyer_is_maker: self.is_buyer_maker,
         }

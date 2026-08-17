@@ -21,8 +21,16 @@ RS_SMM is a sophisticated market making bot implemented in Rust. It's designed t
 - Rust (latest stable version)
 - Cargo
 - Git
+- OpenSSL development files (required by the `rs_bybit` crate)
 - An account with supported exchanges (currently Bybit and Binance)
 - API keys for the exchanges you plan to use
+
+> OpenSSL setup: on Linux install `libssl-dev` (Debian/Ubuntu) or
+> `openssl-devel` (Fedora). On Windows install the Shining Light
+> [Win64 OpenSSL](https://slproweb.com/products/Win32OpenSSL.html) package
+> (which provides `include/` and `lib/`), and point `openssl-sys` at it by
+> setting the `OPENSSL_DIR` environment variable, e.g.:
+> `$env:OPENSSL_DIR = "C:\Program Files\OpenSSL-Win64"` before running cargo.
 
 ## Installation
 
@@ -39,28 +47,32 @@ RS_SMM is a sophisticated market making bot implemented in Rust. It's designed t
 
 ## Configuration
 
-1. Create a `config.toml` file in the project root directory.
-2. Add your configuration settings. Here's a template:
+1. Create a `config.toml` file in the project root directory (or point the
+   `RS_SMM_CONFIG` environment variable at a different path).
+2. Add your configuration settings. Here's a template that matches what the
+   code expects:
 
    ```toml
-   exchange = "bybit"  # or "binance"
+   exchange = "bybit"  # or "binance" ("both" is experimental and not yet supported by the strategy loop)
    symbols = ["BTCUSDT", "ETHUSDT"]
    leverage = 10
    orders_per_side = 5
    final_order_distance = 0.01
    depths = [5, 50]
    rate_limit = 100
-   tick_window = 6000 // 1 mins
-   bps = [0.01, 0.02]  # Basis points for spread
+   tick_window = 6000  # 1 tick = 10ms, so 6000 ticks = 1 min
 
-   [[api_keys]]
-   key = "your_api_key"
-   secret = "your_api_secret"
-   symbol = "BTCUSDT"
+   # API keys as (key, secret, symbol) tuples.
+   # Prefix a value with "env:" to load it from an environment variable,
+   # e.g. ["env:RS_SMM_API_KEY", "env:RS_SMM_API_SECRET", "BTCUSDT"].
+   api_keys = [["your_api_key", "your_api_secret", "BTCUSDT"]]
 
-   [[balances]]
-   symbol = "BTCUSDT"
-   amount = 1000.0
+   balances = [["BTCUSDT", 1000.0]]
+
+   # Profit spread in basis points (1 bp = 0.01%), keyed by symbol.
+   [bps]
+   BTCUSDT = 1.0
+   ETHUSDT = 2.0
    ```
 
 3. Adjust the values according to your trading strategy and risk tolerance.
@@ -73,6 +85,7 @@ RS_SMM is a sophisticated market making bot implemented in Rust. It's designed t
    cargo run --release
    ```
 3. The bot will start, connect to the specified exchange(s), and begin market making based on your configuration.
+4. Press `Ctrl+C` to shut down gracefully: all open orders are cancelled before the process exits.
 
 ## Project Structure
 
@@ -82,6 +95,9 @@ RS_SMM is a sophisticated market making bot implemented in Rust. It's designed t
   - `strategy/`: Implements the market making strategy
   - `trader/`: Manages order generation and execution
   - `main.rs`: Entry point of the application
+- `skeleton/`
+  - `exchanges/`: Exchange clients, websocket subscriptions, and shared-state loading
+  - `util/`: Local order book, helpers, logger, and candles
 
 ## Making Changes
 
@@ -90,7 +106,7 @@ RS_SMM is a sophisticated market making bot implemented in Rust. It's designed t
    - Modify `src/trader/quote_gen.rs` to change how orders are generated.
 
 2. **Adjusting Parameters**:
-   - Edit `src/parameters/parameters.rs` to add or modify configurable parameters.
+   - Edit `skeleton/src/util/helpers.rs` (the `Config` struct) to add or modify configurable parameters.
    - Update `config.toml` to reflect any new parameters.
 
 3. **Adding New Features**:
@@ -112,6 +128,12 @@ RS_SMM is a sophisticated market making bot implemented in Rust. It's designed t
 - **Engine**: Calculates market microstructure features (`src/features/engine.rs`)
 - **Parameters**: Manages configuration and runtime parameters (`src/parameters/parameters.rs`)
 
+## Tests
+
+Pure unit tests run with `cargo test`. Integration tests that need live
+exchange connectivity or real credentials are marked `#[ignore]`; run them
+explicitly with `cargo test -- --ignored`.
+
 ## Contributing
 
 Contributions are welcome! Please follow these steps:
@@ -124,4 +146,4 @@ Contributions are welcome! Please follow these steps:
 
 ## Disclaimer
 
-This software is for educational and research purposes only. Use it at your own risk. Cryptocurrency trading carries a high level of risk and may not be suitable for all investors. Always thoroughly test any trading bot in a safe, simulated environment before deploying with real funds.
+This software is for educational and research purposes only. Use it at your own risk. Cryptocurrency trading carries a high level of risk and may not be suitable for all investors. Always thoroughly test any trading bot in a safe, simulated environment (e.g., an exchange testnet) before deploying with real funds.

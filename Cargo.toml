@@ -1,4 +1,6 @@
-workspace = { members = ["skeleton"] }
+[workspace]
+members = ["skeleton"]
+
 [package]
 name = "rs_smm"
 version = "0.1.2"
@@ -9,12 +11,17 @@ edition = "2021"
 [dependencies]
 tokio = { version = "1.36.0", features = ["full"] }
 skeleton = { path = "./skeleton" }
-rs_bybit = "0.3.2"
+# Latest rs_bybit (0.4.x). 0.4 re-exports everything at the crate root via a
+# `Bybit` constructor trait (e.g. `bybit::Trader`, `bybit::Stream`).
+rs_bybit = "0.4"
 linfa-linear = "0.7.0"
 linfa = "0.7.0"
 ndarray = "0.15"
-binance = "0.21.0"
+# User's binance-rs fork: async REST/WS APIs, TimeInForce::GTX post-only,
+# FuturesStream high-level subscriptions with auto listen-key keep-alive.
+binance = { git = "https://github.com/unkuseni/binance-rs", branch = "master" }
 
-
-[dev-dependencies]
-criterion = "0.5.1"
+# Trading is latency-sensitive; trade build time for a faster binary.
+[profile.release]
+lto = "thin"
+codegen-units = 1

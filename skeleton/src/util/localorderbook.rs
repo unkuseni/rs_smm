@@ -1,4 +1,4 @@
-use bybit::model::{Ask, Bid};
+use bybit::{Ask, Bid};
 use ordered_float::OrderedFloat;
 use std::collections::BTreeMap;
 
@@ -16,6 +16,12 @@ pub struct LocalBook {
     pub min_notional: f64,
     pub post_only_max: f64,
     pub last_update: u64,
+}
+
+impl Default for LocalBook {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl LocalBook {
@@ -52,9 +58,9 @@ impl LocalBook {
     ///
     /// After updating the bids and asks, it removes any entries with a quantity of 0 from both the bid and ask order books.
     ///
-    /// Finally, it updates the last_update timestamp to the input timestamp.
+    /// Finally, it recomputes the best bid/ask/mid and updates the last_update timestamp.
     pub fn update(&mut self, bids: Vec<Bid>, asks: Vec<Ask>, timestamp: u64) {
-        if timestamp == self.last_update {
+        if timestamp < self.last_update {
             return;
         }
 
@@ -77,118 +83,107 @@ impl LocalBook {
         self.bids.retain(|_, &mut v| v != 0.0);
         self.asks.retain(|_, &mut v| v != 0.0);
 
+        // Recompute best bid/ask and mid from the book so depth-only updates
+        // never leave a stale best bid/ask.
+        self.recompute_bba();
         self.last_update = timestamp;
     }
 
     /// Update the order book with the given bids, asks, and timestamp.
     pub fn update_bba(&mut self, bids: Vec<Bid>, asks: Vec<Ask>, timestamp: u64) {
         // If the timestamp is not newer than the last update, return early
-        if timestamp <= self.last_update {
+        if timestamp < self.last_update {
             return;
         }
 
         // Update the bids in the order book
+        let mut highest_bid = None;
         for bid in bids.iter() {
             let price = OrderedFloat::from(bid.price);
-            // Modify or insert the bid price and quantity into the bids HashMap
+            highest_bid = Some(highest_bid.map_or(price, |h: OrderedFloat<f64>| h.max(price)));
             self.bids
                 .entry(price)
                 .and_modify(|qty| *qty = bid.qty)
                 .or_insert(bid.qty);
-            // Remove bids with prices higher than the current bid price
-            self.bids.retain(|&key, _| key <= price);
+        }
+        // Remove bids with prices higher than the current best bid
+        if let Some(highest_bid) = highest_bid {
+            self.bids.retain(|&key, _| key <= highest_bid);
         }
 
+        let mut lowest_ask = None;
         for ask in asks.iter() {
             let price = OrderedFloat::from(ask.price);
-            // Modify or insert the ask price and quantity into the asks HashMap
+            lowest_ask = Some(lowest_ask.map_or(price, |l: OrderedFloat<f64>| l.min(price)));
             self.asks
                 .entry(price)
                 .and_modify(|qty| *qty = ask.qty)
                 .or_insert(ask.qty);
-            // Remove asks with prices lower than the current ask price
-            self.asks.retain(|&key, _| key >= price);
+        }
+        // Remove asks with prices lower than the current best ask
+        if let Some(lowest_ask) = lowest_ask {
+            self.asks.retain(|&key, _| key >= lowest_ask);
         }
 
-        // Remove any bids with quantity equal to 0
+        // Remove any bids/asks with quantity equal to 0
         self.bids.retain(|_, &mut v| v != 0.0);
-        // Remove any asks with quantity equal to 0
         self.asks.retain(|_, &mut v| v != 0.0);
 
-        // Set the best bid based on the highest bid price and quantity in the order book
-        self.best_bid = self
-            .bids
-            .iter()
-            .next_back()
-            .map(|(price, qty)| Bid {
-                price: **price,
-                qty: *qty,
-            })
-            .unwrap_or_else(|| Bid {
-                price: 0.0,
-                qty: 0.0,
-            });
-        // Set the best ask based on the lowest ask price and quantity in the order boo
-        self.best_ask = self
-            .asks
-            .iter()
-            .next()
-            .map(|(price, qty)| Ask {
-                price: **price,
-                qty: *qty,
-            })
-            .unwrap_or_else(|| Ask {
-                price: 0.0,
-                qty: 0.0,
-            });
+        // Recompute the best bid/ask and mid price
+        self.recompute_bba();
 
-        // Calculate the mid price
-        self.set_mid_price();
         // Update the last update timestamp
         self.last_update = timestamp;
     }
 
     pub fn update_binance_bba(&mut self, bids: Vec<Bid>, asks: Vec<Ask>, timestamp: u64) {
         // If the timestamp is not newer than the last update, return early
-        if timestamp <= self.last_update {
+        if timestamp < self.last_update {
             return;
         }
 
         // Update the bids in the order book
-        let prices_iter = bids.iter().map(|bid| OrderedFloat::from(bid.price));
+        let mut highest_bid = None;
         for bid in bids.iter() {
             let price = OrderedFloat::from(bid.price);
-
-            // Modify or insert the bid price and quantity into the bids HashMap
+            highest_bid = Some(highest_bid.map_or(price, |h: OrderedFloat<f64>| h.max(price)));
             self.bids
                 .entry(price)
                 .and_modify(|qty| *qty = bid.qty)
                 .or_insert(bid.qty);
-            // Remove bids with prices higher than the current bid price
         }
-        if let Some(highest_bid_price) = prices_iter.max() {
-            self.bids.retain(|&key, _| key <= highest_bid_price);
+        // Remove bids with prices higher than the current best bid
+        if let Some(highest_bid) = highest_bid {
+            self.bids.retain(|&key, _| key <= highest_bid);
         }
 
-        let ask_prices_iter = asks.iter().map(|ask| OrderedFloat::from(ask.price));
+        let mut lowest_ask = None;
         for ask in asks.iter() {
             let price = OrderedFloat::from(ask.price);
-            // Modify or insert the ask price and quantity into the asks HashMap
+            lowest_ask = Some(lowest_ask.map_or(price, |l: OrderedFloat<f64>| l.min(price)));
             self.asks
                 .entry(price)
                 .and_modify(|qty| *qty = ask.qty)
                 .or_insert(ask.qty);
-            // Remove asks with prices lower than the current ask price
         }
-        if let Some(lowest_ask_price) = ask_prices_iter.min() {
-            self.asks.retain(|&key, _| key >= lowest_ask_price);
+        // Remove asks with prices lower than the current best ask
+        if let Some(lowest_ask) = lowest_ask {
+            self.asks.retain(|&key, _| key >= lowest_ask);
         }
 
-        // Remove any bids with quantity equal to 0
+        // Remove any bids/asks with quantity equal to 0
         self.bids.retain(|_, &mut v| v != 0.0);
-        // Remove any asks with quantity equal to 0
         self.asks.retain(|_, &mut v| v != 0.0);
 
+        // Recompute the best bid/ask and mid price
+        self.recompute_bba();
+
+        // Update the last update timestamp
+        self.last_update = timestamp;
+    }
+
+    /// Recomputes the best bid, best ask, and mid price from the book maps.
+    fn recompute_bba(&mut self) {
         // Set the best bid based on the highest bid price and quantity in the order book
         self.best_bid = self
             .bids
@@ -202,7 +197,7 @@ impl LocalBook {
                 price: 0.0,
                 qty: 0.0,
             });
-        // Set the best ask based on the lowest ask price and quantity in the order boo
+        // Set the best ask based on the lowest ask price and quantity in the order book
         self.best_ask = self
             .asks
             .iter()
@@ -218,8 +213,6 @@ impl LocalBook {
 
         // Set the mid price
         self.set_mid_price();
-        // Update the last update timestamp
-        self.last_update = timestamp;
     }
 
     fn set_mid_price(&mut self) {
@@ -355,10 +348,13 @@ impl LocalBook {
                 self.best_ask.qty,
             ),
         };
-        let ask =
-            (best_bid_qty / (best_bid_qty + best_ask_qty)) * ask_price;
-        let bid =
-            (best_ask_qty / (best_bid_qty + best_ask_qty)) * bid_price;
+        let total_qty = best_bid_qty + best_ask_qty;
+        // Guard against an empty book before the first update arrives.
+        if total_qty <= 0.0 {
+            return self.mid_price;
+        }
+        let ask = (best_bid_qty / total_qty) * ask_price;
+        let bid = (best_ask_qty / total_qty) * bid_price;
         bid + ask
     }
 
@@ -367,34 +363,6 @@ impl LocalBook {
             self.best_bid.price - self.mid_price
         } else {
             self.mid_price - self.best_ask.price
-        }
-    }
-}
-
-unsafe impl Send for LocalBook {}
-
-pub trait ProcessAsks {
-    fn process_asks(ask: Self) -> Ask;
-}
-
-pub trait ProcessBids {
-    fn process_bids(bid: Self) -> Bid;
-}
-
-impl ProcessAsks for binance::model::Asks {
-    fn process_asks(ask: Self) -> Ask {
-        Ask {
-            price: ask.price,
-            qty: ask.qty,
-        }
-    }
-}
-
-impl ProcessBids for binance::model::Bids {
-    fn process_bids(bid: Self) -> Bid {
-        Bid {
-            price: bid.price,
-            qty: bid.qty,
         }
     }
 }
@@ -416,12 +384,12 @@ pub fn map_range(value: f64) -> f64 {
 /// # Returns
 ///
 /// The weighted ask quantity as a `f64`.
-fn calculate_weighted_ask(book: &LocalBook, depth: usize) -> f64 {
+pub fn calculate_weighted_ask(book: &LocalBook, depth: usize) -> f64 {
     book.asks
         .iter()
         .take(depth)
         .enumerate()
-        .map(|(i, (_, qty))| (calculate_exponent(i as f64) * qty) as f64)
+        .map(|(i, (_, qty))| calculate_exponent(i as f64) * qty)
         .sum::<f64>()
 }
 
@@ -438,12 +406,12 @@ fn calculate_weighted_ask(book: &LocalBook, depth: usize) -> f64 {
 /// # Returns
 ///
 /// The weighted bid quantity as a `f64`.
-fn calculate_weighted_bid(book: &LocalBook, depth: usize) -> f64 {
+pub fn calculate_weighted_bid(book: &LocalBook, depth: usize) -> f64 {
     book.bids
         .iter()
         .rev()
         .take(depth)
         .enumerate()
-        .map(|(i, (_, qty))| (calculate_exponent(i as f64) * qty) as f64)
+        .map(|(i, (_, qty))| calculate_exponent(i as f64) * qty)
         .sum::<f64>()
 }

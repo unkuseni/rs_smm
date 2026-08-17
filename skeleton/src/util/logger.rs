@@ -1,5 +1,5 @@
-use std::fmt;
 use super::helpers::generate_timestamp;
+use std::fmt;
 
 #[derive(Debug, Clone)]
 pub struct Logger;

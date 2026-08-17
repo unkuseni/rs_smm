@@ -1,46 +1,33 @@
 use std::collections::{HashMap, VecDeque};
+use std::fmt;
 use std::sync::atomic::AtomicBool;
-use std::thread;
+use std::sync::Arc;
 use std::time::Duration;
 
+use binance::api::Binance;
 use binance::config::Config;
 use binance::futures::account::FuturesAccount;
-use binance::futures::general::FuturesGeneral;
-use binance::futures::model::Filters::PriceFilter;
 use binance::futures::model::{OrderTradeEvent, OrderUpdate};
 use binance::futures::userstream::FuturesUserStream;
-use binance::model::{
-    AccountUpdateEvent, Asks, Bids, BookTickerEvent, DepthOrderBookEvent, EventBalance,
-    EventPosition,
-};
-use binance::{api::Binance, futures::websockets::*, general::General};
-use bybit::model::{Category, FastExecData, WsTrade};
+use binance::futures::websockets::FuturesStream;
+use binance::futures::{FuturesMarket, FuturesWebSockets, FuturesWebsocketEvent};
+use binance::general::General;
+use binance::model::{AccountUpdateEvent, DepthOrderBookEvent, EventBalance, EventPosition};
+use bybit::{Ask, Bid, Category, FastExecData, WsTrade};
 use tokio::sync::mpsc;
-use tokio::task;
 
-use crate::util::localorderbook::{LocalBook, ProcessAsks, ProcessBids};
+use crate::util::localorderbook::LocalBook;
 
-use super::exchange::{Exchange, PrivateData, ProcessTrade, TaggedPrivate};
-#[derive(Clone, Debug)]
+use super::exchange::{Exchange, MarketEvent, PrivateData, ProcessTrade, TaggedPrivate};
+
+/// A market snapshot for one symbol, referencing the loader's authoritative
+/// book and trade buffers through `Arc` so sending a message is a cheap
+/// reference-count bump rather than a full clone.
+#[derive(Clone, Debug, Default)]
 pub struct BinanceMarket {
     pub time: u64,
-    pub books: Vec<(String, LocalBook)>,
-    pub trades: Vec<(String, VecDeque<WsTrade>)>,
-    pub tickers: Vec<(String, VecDeque<BookTickerEvent>)>,
-}
-
-unsafe impl Send for BinanceMarket {}
-unsafe impl Sync for BinanceMarket {}
-
-impl Default for BinanceMarket {
-    fn default() -> Self {
-        Self {
-            time: 0,
-            books: Vec::new(),
-            trades: Vec::new(),
-            tickers: Vec::new(),
-        }
-    }
+    pub books: Vec<(String, Arc<LocalBook>)>,
+    pub trades: Vec<(String, Arc<VecDeque<WsTrade>>)>,
 }
 
 #[derive(Clone, Debug)]
@@ -51,9 +38,6 @@ pub struct BinancePrivate {
     pub positions: VecDeque<EventPosition>,
     pub executions: HashMap<u64, OrderUpdate>,
 }
-
-unsafe impl Send for BinancePrivate {}
-unsafe impl Sync for BinancePrivate {}
 
 impl Default for BinancePrivate {
     fn default() -> Self {
@@ -67,10 +51,20 @@ impl Default for BinancePrivate {
     }
 }
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct BinanceClient {
     pub key: String,
     pub secret: String,
+}
+
+// Redact credentials so `{:?}` of any struct holding a client never leaks keys.
+impl fmt::Debug for BinanceClient {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("BinanceClient")
+            .field("key", &"<redacted>")
+            .field("secret", &"<redacted>")
+            .finish()
+    }
 }
 
 impl Exchange for BinanceClient {
@@ -94,220 +88,135 @@ impl Exchange for BinanceClient {
     }
 
     async fn time(&self) -> u64 {
-        task::spawn_blocking(move || {
-            let general: General = Binance::new(None, None);
-
-            match general.get_server_time() {
-                Ok(v) => v.server_time,
-                Err(_) => 0,
-            }
-        })
-        .await
-        .unwrap_or(0)
+        let general: General = Binance::new(None, None);
+        general
+            .get_server_time()
+            .await
+            .map(|v| v.server_time)
+            .unwrap_or(0)
     }
-    async fn fees(&self) -> f64 {
-        let key = self.key.clone();
-        let secret = self.secret.clone();
-        task::spawn_blocking(move || {
-            let client: FuturesAccount = Binance::new(Some(key), Some(secret));
 
-            match client.account_information() {
-                Ok(v) => v.fee_tier,
-                Err(_) => 0.0,
-            }
-        })
-        .await
-        .unwrap()
+    async fn fees(&self) -> f64 {
+        let client: FuturesAccount =
+            Binance::new(Some(self.key.clone()), Some(self.secret.clone()));
+        client
+            .account_information()
+            .await
+            .map(|v| v.fee_tier)
+            .unwrap_or(0.0)
     }
 
     async fn set_leverage(&self, symbol: &str, leverage: u16) -> Result<String, String> {
-        let key = self.key.clone();
-        let secret = self.secret.clone();
-        let symbol = symbol.to_string();
-        task::spawn_blocking(move || {
-            let client: FuturesAccount = Binance::new(Some(key), Some(secret));
-
-            match client.change_initial_leverage(symbol, leverage as u8) {
-                Ok(_) => Ok(String::from("YES")),
-                Err(_) => Err("Failed to set leverage".into()),
-            }
-        })
-        .await
-        .unwrap()
+        let client: FuturesAccount =
+            Binance::new(Some(self.key.clone()), Some(self.secret.clone()));
+        let leverage = leverage.clamp(1, 100) as u8;
+        match client.change_initial_leverage(symbol, leverage).await {
+            Ok(_) => Ok(String::from("YES")),
+            Err(e) => Err(format!("Failed to set leverage: {}", e)),
+        }
     }
 
     fn trader(&self) -> Self::Quoter {
-        let config = {
-            let x = Config::default();
-            x.set_recv_window(2500)
-        };
-        let trader: FuturesAccount = Binance::new_with_config(
+        let config = Config::default().set_recv_window(2500);
+        Binance::new_with_config(
             Some(self.key.to_string()),
             Some(self.secret.to_string()),
             &config,
-        );
-        trader
+        )
     }
 }
 
 impl BinanceClient {
-    pub fn market_subscribe(
+    /// Subscribes to public market streams for the given symbols and forwards
+    /// lightweight deltas (`MarketEvent`) to the sender.
+    pub async fn market_subscribe(
         &self,
         symbol: Vec<String>,
-        sender: mpsc::UnboundedSender<BinanceMarket>,
+        sender: mpsc::UnboundedSender<MarketEvent>,
     ) {
-        let mut delay = 600;
-        let keep_running = AtomicBool::new(true);
         let request = bin_build_requests(&symbol);
+        let stream = FuturesStream::default();
+        let mut delay = 600_u64;
 
-        let mut market_data = BinanceMarket::default();
-        market_data.books = symbol
-            .iter()
-            .map(|s| (s.to_string(), LocalBook::new()))
-            .collect::<Vec<(String, LocalBook)>>();
-        for (s, b) in &mut market_data.books {
-            let cl_symbol = format!("{}", s);
-            let cl: FuturesGeneral = Binance::new(None, None);
-            match cl.get_symbol_info(cl_symbol) {
-                Ok(v) => {
-                    let price_filter = match &v.filters[0] {
-                        PriceFilter { tick_size, .. } => tick_size.parse().unwrap_or(0.0),
-                        _ => 0.0,
-                    };
-                    b.tick_size = price_filter;
-                    b.min_order_size = {
-                        match &v.filters[1] {
-                            binance::model::Filters::LotSize { min_qty, .. } => {
-                                min_qty.parse().unwrap_or(0.0)
-                            }
-                            _ => 0.0,
-                        }
-                    };
-                    b.min_notional = match &v.filters[5] {
-                        binance::model::Filters::MinNotional { notional, .. } => {
-                            notional.clone().unwrap().parse().unwrap_or(0.0)
-                        }
-                        _ => 0.0,
-                    };
-                }
-                Err(_) => {
-                    b.tick_size = 0.0;
-                }
-            }
-        }
-        market_data.trades = symbol
-            .iter()
-            .map(|s| (s.to_string(), VecDeque::with_capacity(5000)))
-            .collect::<Vec<(String, VecDeque<WsTrade>)>>();
-        market_data.tickers = symbol
-            .iter()
-            .map(|s| (s.to_string(), VecDeque::with_capacity(10)))
-            .collect::<Vec<(String, VecDeque<BookTickerEvent>)>>();
-
-        let handler = move |event| {
-            match event {
-                FuturesWebsocketEvent::DepthOrderBook(DepthOrderBookEvent {
-                    symbol,
-                    event_time,
-                    bids,
-                    asks,
-                    ..
-                }) => {
-                    let sym = symbol.as_str();
-                    let book = &mut market_data
-                        .books
-                        .iter_mut()
-                        .find(|(s, _)| s == sym)
-                        .unwrap()
-                        .1;
-                    let new_bids = {
-                        let mut arr = Vec::new();
-                        for bid in bids {
-                            arr.push(Bids::process_bids(bid));
-                        }
-                        arr
-                    };
-                    let new_asks = {
-                        let mut arr = Vec::new();
-                        for ask in asks {
-                            arr.push(Asks::process_asks(ask));
-                        }
-                        arr
-                    };
-                    if new_bids.len() == new_asks.len()
-                        && (new_bids.len() == 5 || new_bids.len() == 10 || new_bids.len() == 20)
-                    {
-                        // Process when the lengths are equal and equal to 5, 10, or 20
-                        book.update_binance_bba(new_bids.clone(), new_asks.clone(), event_time);
-                    } else {
-                        // Process when the lengths are not equal or not equal to 5, 10, or 20
-                        book.update(new_bids.clone(), new_asks.clone(), event_time);
-                    }
-
-                    market_data.time = event_time;
-                }
-                FuturesWebsocketEvent::AggrTrades(agg) => {
-                    let sym = agg.symbol.as_str();
-                    let trades = &mut market_data
-                        .trades
-                        .iter_mut()
-                        .find(|(s, _)| s == sym)
-                        .unwrap()
-                        .1;
-                    if trades.len() == trades.capacity() || (trades.capacity() - trades.len()) <= 5
-                    {
-                        for _ in 0..10 {
-                            trades.pop_front();
-                        }
-                    }
-                    trades.push_back(agg.process_trade());
-                }
-                FuturesWebsocketEvent::BookTicker(ticker) => {
-                    let sym = ticker.symbol.as_str();
-                    let ticker_data = &mut market_data
-                        .tickers
-                        .iter_mut()
-                        .find(|(s, _)| s == sym)
-                        .unwrap()
-                        .1;
-                    if ticker_data.len() == ticker_data.capacity()
-                        || (ticker_data.capacity() - ticker_data.len()) <= 10
-                    {
-                        for _ in 0..10 {
-                            ticker_data.pop_front();
-                        }
-                    }
-                    ticker_data.push_back(ticker);
-                }
-                _ => {}
-            }
-            let _ = sender.send(market_data.clone());
-            Ok(())
-        };
-
-        let mut market: FuturesWebSockets<'_> = FuturesWebSockets::new(handler);
         loop {
-            market
-                .connect_multiple_streams(&FuturesMarket::USDM, &request)
-                .unwrap();
-            // check error
-            if let Err(e) = market.event_loop(&keep_running) {
-                eprintln!("Error: {}", e);
-                thread::sleep(Duration::from_millis(delay));
-                delay *= 2;
+            let sender = sender.clone();
+            // The handler signature is fixed by the binance crate and returns
+            // a large error type; boxing it here is not possible.
+            #[allow(clippy::result_large_err)]
+            let handler = move |event| {
+                match event {
+                    FuturesWebsocketEvent::DepthOrderBook(DepthOrderBookEvent {
+                        symbol,
+                        event_time,
+                        bids,
+                        asks,
+                        ..
+                    }) => {
+                        let new_bids: Vec<Bid> = bids
+                            .into_iter()
+                            .map(|bid| Bid {
+                                price: bid.price,
+                                qty: bid.qty,
+                            })
+                            .collect();
+                        let new_asks: Vec<Ask> = asks
+                            .into_iter()
+                            .map(|ask| Ask {
+                                price: ask.price,
+                                qty: ask.qty,
+                            })
+                            .collect();
+                        // Treat the small equal-sided snapshots as best-bid/ask updates.
+                        let bba = new_bids.len() == new_asks.len()
+                            && matches!(new_bids.len(), 5 | 10 | 20);
+                        let _ = sender.send(MarketEvent::Book {
+                            symbol,
+                            bids: new_bids,
+                            asks: new_asks,
+                            timestamp: event_time,
+                            bba,
+                        });
+                    }
+                    FuturesWebsocketEvent::AggrTrades(agg) => {
+                        let trade = agg.process_trade();
+                        let sym = trade.symbol.clone();
+                        let _ = sender.send(MarketEvent::Trade { symbol: sym, trade });
+                    }
+                    _ => {}
+                }
+                Ok(())
+            };
+
+            match stream.ws_subscribe_multiple(&request, handler).await {
+                Ok(_) => {
+                    delay = 600;
+                }
+                Err(e) => {
+                    eprintln!("Error: {}", e);
+                    delay = (delay * 2).min(60_000);
+                }
             }
+            tokio::time::sleep(Duration::from_millis(delay)).await;
         }
     }
 
-    pub fn private_subscribe(&self, sender: mpsc::UnboundedSender<TaggedPrivate>, symbol: String) {
-        let mut delay = 600;
-        let keep_running = AtomicBool::new(true); // Used to control the event loop
+    /// Subscribes to the user data stream (account, order, and position
+    /// updates) for one symbol's API key. The listen key is refreshed on
+    /// every (re)connection and kept alive in the background.
+    pub async fn private_subscribe(
+        &self,
+        sender: mpsc::UnboundedSender<TaggedPrivate>,
+        symbol: String,
+    ) {
         let user_stream: FuturesUserStream = Binance::new(Some(self.key.to_string()), None);
 
         let mut private_data = BinancePrivate::default();
         let mut orders_keys: VecDeque<u64> = VecDeque::new();
         let mut executions_keys: VecDeque<u64> = VecDeque::new();
-        let handler = |event: FuturesWebsocketEvent| {
+        // The handler signature is fixed by the binance crate and returns a
+        // large error type; boxing it here is not possible.
+        #[allow(clippy::result_large_err)]
+        let handler = move |event: FuturesWebsocketEvent| {
             match event {
                 FuturesWebsocketEvent::AccountUpdate(AccountUpdateEvent {
                     event_time,
@@ -326,7 +235,11 @@ impl BinanceClient {
                         || (private_data.positions.capacity() - private_data.positions.len())
                             <= data.positions.len()
                     {
-                        for _ in 0..(data.positions.len() - private_data.positions.len()) {
+                        for _ in 0..(data
+                            .positions
+                            .len()
+                            .saturating_sub(private_data.positions.len()))
+                        {
                             private_data.positions.pop_front();
                         }
                     }
@@ -369,22 +282,49 @@ impl BinanceClient {
             let _ = sender.send(tagged_data);
             Ok(())
         };
-        if let Ok(answer) = user_stream.start() {
-            println!("Data Stream Started ...");
-            let listen_key = answer.listen_key;
-            let mut web_socket: FuturesWebSockets<'_> = FuturesWebSockets::new(handler);
-            loop {
-                web_socket
-                    .connect(&FuturesMarket::USDM, &listen_key)
-                    .unwrap(); // check error
-                if let Err(e) = web_socket.event_loop(&keep_running) {
-                    println!("Error: {}", e);
-                    thread::sleep(Duration::from_millis(delay));
-                    delay *= 2
+
+        let mut delay = 600_u64;
+        // The listen key expires after ~60 minutes, so re-request it on every
+        // (re)connection and keep it alive in the background.
+        loop {
+            match user_stream.start().await {
+                Ok(answer) => {
+                    let listen_key = answer.listen_key.clone();
+
+                    // Background keep-alive: PUT /fapi/v1/listenKey every 50 minutes.
+                    let keep_alive_stream = user_stream.clone();
+                    let keep_alive_key = listen_key.clone();
+                    tokio::spawn(async move {
+                        let mut interval = tokio::time::interval(Duration::from_secs(50 * 60));
+                        loop {
+                            interval.tick().await;
+                            if let Err(e) = keep_alive_stream.keep_alive(&keep_alive_key).await {
+                                eprintln!("Failed to keep user stream alive: {}", e);
+                            }
+                        }
+                    });
+
+                    let mut web_socket = FuturesWebSockets::new(handler.clone());
+                    if let Err(e) = web_socket.connect(&FuturesMarket::USDM, &listen_key).await {
+                        eprintln!("Error: {}", e);
+                        delay = (delay * 2).min(60_000);
+                    } else {
+                        let running = AtomicBool::new(true);
+                        match web_socket.event_loop(&running).await {
+                            Ok(_) => delay = 600,
+                            Err(e) => {
+                                eprintln!("Error: {}", e);
+                                delay = (delay * 2).min(60_000);
+                            }
+                        }
+                    }
+                }
+                Err(_) => {
+                    eprintln!("Not able to start a user stream (Check your API_KEY)");
+                    delay = (delay * 2).min(60_000);
                 }
             }
-        } else {
-            println!("Not able to start an User Stream (Check your API_KEY)");
+            tokio::time::sleep(Duration::from_millis(delay)).await;
         }
     }
 }
@@ -412,12 +352,6 @@ fn bin_build_requests(symbol: &[String]) -> Vec<String> {
         .map(|sub| format!("{}@depth@100ms", sub))
         .collect();
     request_args.extend(book);
-    let tickers: Vec<String> = symbol
-        .iter()
-        .map(|sub| sub.to_lowercase())
-        .map(|sub| format!("{}@bookTicker", sub))
-        .collect();
-    request_args.extend(tickers);
     request_args
 }
 
@@ -434,17 +368,21 @@ pub fn remove_oldest_if_needed<T>(
 }
 
 impl BinancePrivate {
+    /// Converts the stored Binance order updates into Bybit-shaped
+    /// `FastExecData` so `QuoteGenerator::check_for_fills` can process both
+    /// exchanges uniformly. Binance reports cumulative filled quantities and
+    /// string fields, which are parsed here into the typed bybit model.
     pub fn into_fastexec(&self) -> VecDeque<FastExecData> {
         let mut arr = VecDeque::new();
-        for (_, v) in self.executions.iter() {
+        for v in self.executions.values() {
             arr.push_back(FastExecData {
                 category: Category::Linear.as_str().to_string(),
                 symbol: v.symbol.clone(),
                 order_id: v.order_id.to_string(),
                 exec_id: v.trade_id.to_string(),
-                exec_price: v.average_price.to_string(),
-                exec_qty: v.accumulated_qty_filled_trades.to_string(),
-                exec_time: v.trade_order_time.to_string(),
+                exec_price: v.average_price.parse().unwrap_or(0.0),
+                exec_qty: v.accumulated_qty_filled_trades.parse().unwrap_or(0.0),
+                exec_time: v.trade_order_time,
                 side: v.side.to_string(),
                 seq: v.trade_id as u64,
                 order_link_id: v.new_client_order_id.to_string(),

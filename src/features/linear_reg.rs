@@ -1,58 +1,50 @@
 use linfa::{
-     traits::{Fit, Predict}, Dataset
+    traits::{Fit, Predict},
+    Dataset,
 };
 use linfa_linear::LinearRegression;
-use ndarray::{Array1, Array2};
-/// Performs linear regression on the given mid price data using the provided features.
+use ndarray::{s, Array1, Array2};
+
+/// Fits a linear regression of mid prices on the provided features and
+/// returns a one-step-ahead prediction: the model is trained on all but the
+/// last observation and predicts the most recent feature row.
 ///
 /// # Arguments
 ///
-/// * `mid_price_array` - The array of mid prices to be used for regression.
-/// * `features` - The array of features used for regression.
-/// * `curr_spread` - The current spread used to normalize the features.
+/// * `mid_price_array` - The mid prices used as regression targets.
+/// * `features` - The feature matrix (one row per observation).
+/// * `curr_spread` - The current spread in basis points, used to normalize the features.
 ///
 /// # Returns
 ///
-/// The mean of the prediction or 0.0 if the prediction is empty.
+/// The predicted mid price for the latest observation, or an error message.
 pub fn mid_price_regression(
     mid_price_array: Array1<f64>,
-    features: Array2<f64>, // imbalance_ratio, voi, ofi
+    features: Array2<f64>,
     curr_spread: f64,
 ) -> Result<f64, String> {
-    // Normalize features if needed
+    let n = features.nrows();
+    if n < 2 {
+        return Err("Not enough observations for regression".to_string());
+    }
+    if !curr_spread.is_finite() || curr_spread <= 0.0 {
+        return Err("Invalid current spread".to_string());
+    }
+
+    // Normalize features by the current spread.
     let normalized_features = features.map(|&x| x / curr_spread);
 
-    // Create the dataset
-    let dataset = Dataset::new(normalized_features, mid_price_array);
+    // Train on all but the last observation.
+    let train_features = normalized_features.slice(s![0..n - 1, ..]).to_owned();
+    let train_targets = mid_price_array.slice(s![0..n - 1]).to_owned();
+    let dataset = Dataset::new(train_features, train_targets);
 
-    // Create and fit the model
     let model = LinearRegression::default()
         .fit(&dataset)
         .map_err(|e| format!("Failed to fit the model: {}", e))?;
 
-    // Make predictions
-    let predictions = model.predict(&dataset);
-
-    // Return the mean of the predictions
-    Ok(predictions.mean().unwrap_or(0.0))
-}
-
-pub fn default_regression_single_feature(
-    mid_price_array: &[f64],
-    feature: &[f64],
-) -> Result<f64, String> {
-
-    // Convert slices to Array1
-    let mid_prices = Array1::from_vec(mid_price_array.to_vec());
-    let features = Array1::from_vec(feature.to_vec());
-
-    // Reshape features to a 2D array with one column
-    let features_2d = features.clone().into_shape((features.len(), 1)).map_err(|e| format!("Failed to reshape features: {}", e))?;
-
-    let dataset = Dataset::new(features_2d, mid_prices);
-    let model = LinearRegression::default().fit(&dataset).map_err(|e| format!("Failed to fit the model: {}", e))?;
-
-    let predictions = model.predict(&dataset);
-
-    Ok(predictions.mean().unwrap_or(0.0))
+    // Predict the most recent feature row.
+    let last_row = normalized_features.slice(s![n - 1..n, ..]).to_owned();
+    let prediction = model.predict(&last_row);
+    Ok(prediction[0])
 }

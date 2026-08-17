@@ -37,7 +37,7 @@ pub fn round_step<T: Float>(num: T, step: T) -> T {
 /// A vector of geometric weights.
 pub fn geometric_weights(ratio: f64, n: usize, reverse: bool) -> Vec<f64> {
     assert!(
-        ratio >= 0.0 && ratio <= 1.0,
+        (0.0..=1.0).contains(&ratio),
         "Ratio must be between 0 and 1"
     );
     let mut weights = Vec::with_capacity(n);
@@ -235,16 +235,13 @@ impl Round<f64> for f64 {
     }
 
     fn count_decimal_places(&self) -> usize {
-        self.to_string().split('.').skip(1).next().map_or(0, |s| s.len())
+        self.to_string().split('.').nth(1).map_or(0, |s| s.len())
     }
 }
 
 /// This section is for a toml parser that will be used for reading config files
 ///
-pub fn read_toml<T>(path: T) -> Config
-where
-    T: AsRef<Path>,
-{
+pub fn read_toml(path: impl AsRef<Path>) -> Config {
     let mut file = std::fs::File::open(path).expect("Unable to open file");
     let mut contents = String::new();
     file.read_to_string(&mut contents)
@@ -283,7 +280,8 @@ pub struct Config {
     pub final_order_distance: f64,
     pub depths: Vec<usize>,
     pub rate_limit: u32,
-    pub bps: Vec<f64>,
+    /// Profit spread in basis points, keyed by symbol.
+    pub bps: std::collections::HashMap<String, f64>,
     pub tick_window: usize,
 }
 
@@ -300,20 +298,5 @@ impl PartialEq for Config {
             && self.rate_limit == other.rate_limit
             && self.bps == other.bps
             && self.tick_window == other.tick_window
-    }
-
-    fn ne(&self, other: &Self) -> bool {
-        self.exchange != other.exchange
-            || self.symbols != other.symbols
-            || self.api_keys != other.api_keys
-            || self.balances != other.balances
-            || self.leverage != other.leverage
-            || self.orders_per_side != other.orders_per_side
-            || self.final_order_distance != other.final_order_distance
-            || self.depths != other.depths
-            || self.rate_limit != other.rate_limit
-            || self.bps != other.bps
-            || self.tick_window != other.tick_window
-    
     }
 }

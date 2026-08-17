@@ -1,6 +1,6 @@
- use bybit::model::WsTrade;
- 
- // This module contains two structs: TickCandle and VolumeCandle.
+use bybit::WsTrade;
+
+// This module contains two structs: TickCandle and VolumeCandle.
 // These structs are used to create candlestick charts based on tick or volume thresholds.
 
 // The TickCandle struct represents a single candlestick chart based on a number of ticks.
@@ -171,4 +171,3 @@ impl VolumeCandle {
         candles
     }
 }
-

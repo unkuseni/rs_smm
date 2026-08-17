@@ -1,100 +1,74 @@
-// Declare the ss struct
-use std::fmt::Debug;
-use std::{collections::HashMap, sync::Arc};
-use tokio::sync::{mpsc, Mutex};
+// Shared-state loading and distribution.
+//
+// The loaders own the authoritative order books and trade buffers for every
+// symbol. Websocket handlers forward lightweight `MarketEvent` deltas, which
+// are applied here before an `Arc<SharedState>` snapshot is sent to the
+// market maker. `Arc::make_mut` copy-on-write semantics mean the snapshot is
+// only actually cloned while the consumer is still holding the previous one,
+// so the steady-state cost per event is a delta application plus a reference
+// count bump.
 
-use crate::exchanges::ex_binance::BinancePrivate;
-use crate::exchanges::ex_bybit::BybitPrivate;
-use crate::exchanges::exchange::TaggedPrivate;
-use crate::{
-    exchanges::{
-        ex_binance::{BinanceClient, BinanceMarket},
-        ex_bybit::{BybitClient, BybitMarket},
-        exchange::{Client, Exchange, MarketMessage, PrivateData},
-    },
-    util::logger::Logger,
+use std::{collections::HashMap, sync::Arc};
+use tokio::sync::mpsc;
+
+use crate::exchanges::ex_binance::{BinanceClient, BinanceMarket, BinancePrivate};
+use crate::exchanges::ex_bybit::{BybitClient, BybitMarket, BybitPrivate};
+use crate::exchanges::exchange::{
+    Client, Exchange, MarketEvent, MarketMessage, PrivateData, TaggedPrivate,
 };
+use crate::util::logger::Logger;
+use bybit::{Bybit, Category, InstrumentInfo, InstrumentRequest, MarketData, WsTrade};
+use std::collections::VecDeque;
+
+use crate::util::localorderbook::LocalBook;
+use binance::api::Binance as BinanceApi;
+use binance::futures::general::FuturesGeneral;
+use binance::futures::model::Filters;
 
 /// A struct to hold the shared state of the program.
 ///
-/// This struct is used to share data between threads. It contains the following fields:
-///
-/// * `exchange`: The exchange where the market is traded. Can be "bybit", "binance", or "both".
-/// * `logging`: The logger to use for logging events.
-/// * `clients`: A mapping of symbols to clients. The client is used to access the private data.
-/// * `private`: A mapping of symbols to the private data for that symbol.
-/// * `markets`: A vector of market messages.
-/// * `symbols`: A vector of symbols.
+/// * `exchange` - "bybit", "binance", or "both".
+/// * `logging` - The logger used for events.
+/// * `clients` - A mapping of symbols to exchange clients.
+/// * `private` - A mapping of symbols to the latest private data.
+/// * `markets` - The market messages (one per exchange).
+/// * `symbols` - The symbols being traded.
 #[derive(Debug, Clone)]
 pub struct SharedState {
-    /// The exchange where the market is traded. Can be "bybit", "binance", or "both".
     pub exchange: String,
-    /// The logger to use for logging events.
     pub logging: Logger,
-    /// A mapping of symbols to clients. The client is used to access the private data.
     pub clients: HashMap<String, Client>,
-    /// A mapping of symbols to the private data for that symbol.
     pub private: HashMap<String, PrivateData>,
-    /// A vector of market messages.
     pub markets: Vec<MarketMessage>,
-    /// A vector of symbols.
     pub symbols: Vec<String>,
 }
 
 impl SharedState {
-    /// Creates a new instance of `SharedState`.
-    ///
-    /// # Arguments
-    ///
-    /// * `exchange` - The exchange where the market is traded. Can be "bybit", "binance", or "both".
-    ///
-    /// # Returns
-    ///
-    /// A new instance of `SharedState` with default values.
+    /// Creates a new `SharedState` for the given exchange.
     pub fn new(exchange: String) -> Self {
-        // Create a new logger
         let log = Logger;
-
-        // Initialize the `SharedState` struct with default values
         Self {
-            exchange: exchange.clone(), // The exchange where the market is traded
-            logging: log,               // The logger for the application
-            clients: HashMap::new(),    // A hashmap to store exchange clients
-            private: HashMap::new(),    // A hashmap to store private data
+            exchange: exchange.clone(),
+            logging: log,
+            clients: HashMap::new(),
+            private: HashMap::new(),
             markets: match exchange.as_str() {
-                "bybit" => {
-                    // If the exchange is "bybit", initialize the `markets` vector with a Bybit market
-                    vec![MarketMessage::Bybit(BybitMarket::default())]
-                }
-                "binance" => {
-                    // If the exchange is "binance", initialize the `markets` vector with a Binance market
-                    vec![MarketMessage::Binance(BinanceMarket::default())]
-                }
-                "both" => {
-                    // If the exchange is "both", initialize the `markets` vector with both a Bybit and Binance market
-                    vec![
-                        MarketMessage::Bybit(BybitMarket::default()),
-                        MarketMessage::Binance(BinanceMarket::default()),
-                    ]
-                }
-                _ => panic!("Invalid exchange"), // Panic if the exchange is not valid
+                "bybit" => vec![MarketMessage::Bybit(BybitMarket::default())],
+                "binance" => vec![MarketMessage::Binance(BinanceMarket::default())],
+                "both" => vec![
+                    MarketMessage::Bybit(BybitMarket::default()),
+                    MarketMessage::Binance(BinanceMarket::default()),
+                ],
+                _ => panic!("Invalid exchange"),
             },
-            symbols: Vec::new(), // A vector to store symbols of markets
+            symbols: Vec::new(),
         }
     }
 
-    /// Adds clients to the `SharedState` struct.
+    /// Adds a client for the given symbol on the configured exchange.
     ///
-    /// # Arguments
-    ///
-    /// * `key` - The API key used for authentication.
-    /// * `secret` - The API secret used for authentication.
-    /// * `symbol` - The symbol of the market.
-    /// * `exchange` - The exchange where the market is traded.
-    ///
-    /// # Panics
-    ///
-    /// If the `exchange` is not "bybit", "binance", or "both".
+    /// When the configured exchange is "both", the per-client `exchange`
+    /// argument selects which exchange the key belongs to.
     pub fn add_clients(
         &mut self,
         key: String,
@@ -102,38 +76,35 @@ impl SharedState {
         symbol: String,
         exchange: Option<String>,
     ) {
-        // Check the exchange and add the corresponding client.
         match self.exchange.as_str() {
-            // If the exchange is "bybit", add a BybitClient.
             "bybit" => {
                 let client = BybitClient::init(key, secret);
                 self.clients.insert(symbol, Client::Bybit(client));
             }
-            // If the exchange is "binance", add a BinanceClient.
             "binance" => {
                 let client = BinanceClient::init(key, secret);
                 self.clients.insert(symbol, Client::Binance(client));
             }
-            // If the exchange is "both", check the `exchange` argument and add the corresponding client.
             "both" => {
-                if let Some(v) = exchange {
-                    match v.as_str() {
-                        // If the `exchange` is "bybit", add a BybitClient.
-                        "bybit" => {
-                            let client = BybitClient::init(key, secret);
-                            self.clients.insert(symbol, Client::Bybit(client));
-                        }
-                        // If the `exchange` is "binance", add a BinanceClient.
-                        "binance" => {
-                            let client = BinanceClient::init(key, secret);
-                            self.clients.insert(symbol, Client::Binance(client));
-                        }
-                        // If the `exchange` is neither "bybit" nor "binance", panic.
-                        _ => panic!("Invalid exchange"),
+                let Some(v) = exchange else {
+                    eprintln!(
+                        "No exchange specified for client of {}; client ignored",
+                        symbol
+                    );
+                    return;
+                };
+                match v.as_str() {
+                    "bybit" => {
+                        let client = BybitClient::init(key, secret);
+                        self.clients.insert(symbol, Client::Bybit(client));
                     }
+                    "binance" => {
+                        let client = BinanceClient::init(key, secret);
+                        self.clients.insert(symbol, Client::Binance(client));
+                    }
+                    _ => panic!("Invalid exchange"),
                 }
             }
-            // If the exchange is neither "bybit", "binance", nor "both", panic.
             _ => panic!("Invalid exchange"),
         }
     }
@@ -147,324 +118,454 @@ impl SharedState {
     }
 }
 
-/// Asynchronously loads data from the shared state and sends it to the main thread using an unbounded
-/// sender.
-///
-/// # Arguments
-///
-/// * `state` - The shared state containing the market data.
-/// * `state_sender` - The unbounded sender used to send updated state to the main thread.
-///
-/// # Returns
-///
-/// This function does not return anything.
-///
-/// # Panics
-///
-/// If an invalid exchange is provided, this function will panic.
-pub async fn load_data(state: SharedState, state_sender: mpsc::UnboundedSender<SharedState>) {
+/// Asynchronously loads data from the configured exchange and sends `Arc`
+/// snapshots of the shared state to the market maker.
+pub async fn load_data(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<SharedState>>) {
     let exchange = state.exchange.clone();
     match exchange.as_str() {
-        "bybit" => load_bybit(state.clone(), state_sender).await,
-        "binance" => load_binance(state.clone(), state_sender).await,
-        "both" => load_both(state.clone(), state_sender).await,
+        "bybit" => load_bybit(state, state_sender).await,
+        "binance" => load_binance(state, state_sender).await,
+        "both" => load_both(state, state_sender).await,
         _ => {
             panic!("Invalid exchange");
         }
     };
 }
 
-/// Asynchronously loads data from the Binance exchange.
-///
-/// # Arguments
-///
-/// * `state` - The shared state containing the market data.
-/// * `state_sender` - The unbounded sender used to send updated state to the main thread.
-///
-/// This function creates an Arc and Mutex to allow safe concurrent access to the shared state.
-/// It then clones the symbols and clients from the shared state.
-///
-/// It creates an unbounded channel to receive market data and iterates over the clients,
-/// starting the private subscription for each symbol. The private receiver is inserted into
-/// the shared state.
-///
-/// A blocking task is spawned to handle the market subscription. A loop is used to receive market
-/// data from both exchanges.
-///
-/// When market data is received, it is updated in the shared state and sent to the main thread.
-/// When private data is received, it is inserted into the shared state and sent to the main thread.
-async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<SharedState>) {
-    // Create an Arc and Mutex to allow safe concurrent access to the shared state
-    let state = Arc::new(Mutex::new(state));
-
-    // Clone the symbols and clients from the shared state
-    let symbols = state.lock().await.symbols.clone();
-    let clients = state.lock().await.clients.clone();
-
-    // Create an unbounded channel to receive market data
-    let (sender, mut receiver) = mpsc::unbounded_channel::<BinanceMarket>();
-
-    // Iterate over the clients and start the private subscription for each symbol
-    let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<TaggedPrivate>();
-    for (symbol, client) in clients {
-        let sender_clone = private_sender.clone();
-        // Insert the private receiver into the shared state
-        let _ = &state.lock().await.private.insert(
-            symbol.clone(),
-            PrivateData::Binance(BinancePrivate::default()),
-        );
-
-        // Spawn a blocking task to handle the private subscription
-        tokio::task::spawn_blocking(move || {
-            // Match the client to a Binance client and start the private subscription
-            let subscriber = match client {
-                Client::Binance(client) => client,
-                _ => panic!("Invalid exchange"),
+/// Fetches Bybit instrument info and populates a fresh `LocalBook` per symbol.
+async fn bybit_instrument_books(symbols: &[String]) -> HashMap<String, Arc<LocalBook>> {
+    let mut books = HashMap::new();
+    for s in symbols {
+        books.insert(s.clone(), Arc::new(LocalBook::new()));
+    }
+    let cl: MarketData = Bybit::new(None, None);
+    for s in symbols {
+        let req = InstrumentRequest::new(Category::Linear, Some(s), None, None, None, None, None);
+        if let Ok(res) = cl.get_instrument_info(req).await {
+            // 0.4 returns an untagged enum; linear perps come back as `Futures`.
+            let InstrumentInfo::Futures(info) = res.result else {
+                continue;
             };
-
-            let _ = subscriber.private_subscribe(sender_clone, symbol);
-        });
-    }
-
-    // Spawn a blocking task to handle the market subscription
-    tokio::task::spawn_blocking(move || {
-        // Create a new BinanceClient instance
-        let subscriber = BinanceClient::default();
-
-        // Subscribe to the specified symbols and send the received data to the sender channel
-
-        let _ = subscriber.market_subscribe(symbols, sender);
-    });
-
-    // Process the received market data and update the shared state
-    // Loop to receive market data from both exchanges.
-    loop {
-        tokio::select! {
-                // Receive Binance market data.
-                Some(v) = receiver.recv() => {
-            let mut state = state.lock().await;
-            // Update the market data in the shared state
-            state.markets[0] = MarketMessage::Binance(v);
-
-            // Send the updated state to the main thread
-            state_sender
-                .send(state.clone())
-                .expect("Failed to send state to main thread");
-        }
-
-        Some(data) = private_receiver.recv() => {
-            let mut state = state.lock().await;
-            let key = data.symbol;
-            state.private.insert(key, data.data);
-
-            // Send the updated state to the main thread
-            state_sender
-                .send(state.clone())
-                .expect("Failed to send state to main thread");
-        }
+            let Some(inst) = info.list.first() else {
+                continue;
+            };
+            if let Some(book) = books.get_mut(s) {
+                let b = Arc::make_mut(book);
+                b.tick_size = inst.price_filter.tick_size;
+                b.lot_size = inst.lot_size_filter.qty_step.unwrap_or(0.0);
+                b.post_only_max = inst
+                    .lot_size_filter
+                    .post_only_max_order_qty
+                    .unwrap_or(inst.lot_size_filter.max_order_qty);
+                b.min_order_size = inst.lot_size_filter.min_order_qty;
+                b.min_notional = inst.lot_size_filter.min_notional_value.unwrap_or(0.0);
+            }
         }
     }
+    books
 }
 
-/// Asynchronously loads data from the Bybit exchange.
-///
-/// # Arguments
-///
-/// * `state` - The shared state containing the market data.
-/// * `state_sender` - The unbounded sender used to send updated state to the main thread.
-///
-/// This function creates an Arc and Mutex to allow safe concurrent access to the shared state.
-/// It then clones the symbols and clients from the shared state.
-/// It creates an unbounded channel to receive market data.
-/// It iterates over the clients and starts the private subscription for each symbol.
-/// It spawns a blocking task to handle the private subscription.
-/// It spawns a blocking task to handle the market subscription.
-/// Finally, it enters a loop to receive market data and update the shared state.
-async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<SharedState>) {
-    // Create an Arc and Mutex to allow safe concurrent access to the shared state
-    let state = Arc::new(Mutex::new(state));
+/// Fetches Binance symbol info and populates a fresh `LocalBook` per symbol.
+async fn binance_instrument_books(symbols: &[String]) -> HashMap<String, Arc<LocalBook>> {
+    let mut books = HashMap::new();
+    for s in symbols {
+        books.insert(s.clone(), Arc::new(LocalBook::new()));
+    }
+    let cl: FuturesGeneral = BinanceApi::new(None, None);
+    for s in symbols {
+        let Ok(info) = cl.get_symbol_info(s).await else {
+            continue;
+        };
+        let mut tick = 0.0;
+        let mut step = 0.0;
+        let mut min_qty = 0.0;
+        let mut max_qty = 0.0;
+        let mut min_notional = 0.0;
+        for f in &info.filters {
+            match f {
+                Filters::PriceFilter { tick_size, .. } => {
+                    tick = tick_size.parse().unwrap_or(0.0);
+                }
+                Filters::LotSize {
+                    min_qty: m,
+                    max_qty: mx,
+                    step_size: st,
+                    ..
+                } => {
+                    min_qty = m.parse().unwrap_or(0.0);
+                    max_qty = mx.parse().unwrap_or(0.0);
+                    step = st.parse().unwrap_or(0.0);
+                }
+                Filters::MinNotional { notional, .. } => {
+                    min_notional = notional
+                        .as_ref()
+                        .and_then(|v| v.parse().ok())
+                        .unwrap_or(0.0);
+                }
+                _ => {}
+            }
+        }
+        if let Some(book) = books.get_mut(s) {
+            let b = Arc::make_mut(book);
+            b.tick_size = tick;
+            b.lot_size = step;
+            b.min_order_size = min_qty;
+            b.min_notional = min_notional;
+            b.post_only_max = max_qty;
+        }
+    }
+    books
+}
 
-    // Clone the symbols and clients from the shared state
-    let symbols = state.lock().await.symbols.clone();
-    let clients = state.lock().await.clients.clone();
+fn new_trade_buffers(symbols: &[String]) -> HashMap<String, Arc<VecDeque<WsTrade>>> {
+    symbols
+        .iter()
+        .map(|s| (s.clone(), Arc::new(VecDeque::with_capacity(5000))))
+        .collect()
+}
 
-    // Create an unbounded channel to receive market data
-    let (sender, mut receiver) = mpsc::unbounded_channel::<BybitMarket>();
+/// Asynchronously loads market and private data from Bybit.
+async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<SharedState>>) {
+    let symbols = state.symbols.clone();
+    let clients = state.clients.clone();
 
-    // Iterate over the clients and start the private subscription for each symbol
+    // Seed private-data entries before sharing the state.
+    let mut state = state;
+    for symbol in clients.keys() {
+        state
+            .private
+            .insert(symbol.clone(), PrivateData::Bybit(BybitPrivate::default()));
+    }
+    let mut shared = Arc::new(state);
+
+    // Authoritative books and trades owned by this loader.
+    let mut books = bybit_instrument_books(&symbols).await;
+    let mut trades = new_trade_buffers(&symbols);
+
+    // Private subscriptions (one task per client).
     let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<TaggedPrivate>();
     for (symbol, client) in clients {
         let sender_clone = private_sender.clone();
-        // Insert the private receiver into the shared state
-        let _ = &state
-            .lock()
-            .await
-            .private
-            .insert(symbol.clone(), PrivateData::Bybit(BybitPrivate::default()));
-
-        // Spawn a blocking task to handle the private subscription
         tokio::spawn(async move {
-            // Match the client to a Bybit client and start the private subscription
             let subscriber = match client {
                 Client::Bybit(client) => client,
-                _ => panic!("Invalid exchange"),
+                _ => {
+                    eprintln!("Invalid exchange client for {}", symbol);
+                    return;
+                }
             };
-
-            let _ = subscriber.private_subscribe(sender_clone, symbol).await;
+            subscriber.private_subscribe(sender_clone, symbol).await;
         });
     }
 
-    // Spawn a blocking task to handle the market subscription
+    // Public market subscription.
+    let (market_sender, mut market_receiver) = mpsc::unbounded_channel::<MarketEvent>();
     tokio::spawn(async move {
-        // Create a new Bybit client and start the market subscription
         let subscriber = BybitClient::default();
-
-        let _ = subscriber.market_subscribe(symbols, sender).await;
+        subscriber.market_subscribe(symbols, market_sender).await;
     });
 
-    // Process the received market data and update the shared state
-    // Loop to receive market data from both exchanges.
     loop {
         tokio::select! {
-            // Receive Bybit market data.
-            Some(v) = receiver.recv() => {
-                let mut state = state.lock().await;
-                // Update the market data in the shared state
-                state.markets[0] = MarketMessage::Bybit(v);
+            Some(ev) = market_receiver.recv() => {
+                let (symbol, timestamp) = match ev {
+                    MarketEvent::Book { symbol, bids, asks, timestamp, bba } => {
+                        if let Some(book_arc) = books.get_mut(&symbol) {
+                            let book = Arc::make_mut(book_arc);
+                            if bba {
+                                book.update_bba(bids, asks, timestamp);
+                            } else {
+                                book.update(bids, asks, timestamp);
+                            }
+                        }
+                        (symbol, timestamp)
+                    }
+                    MarketEvent::Trade { symbol, trade } => {
+                        let ts = trade.timestamp;
+                        if let Some(queue) = trades.get_mut(&symbol) {
+                            let q = Arc::make_mut(queue);
+                            if q.len() == q.capacity() {
+                                q.pop_front();
+                            }
+                            q.push_back(trade);
+                        }
+                        (symbol, ts)
+                    }
+                };
 
-                // Send the updated state to the main thread
-                state_sender
-                    .send(state.clone())
-                    .expect("Failed to send state to main thread");
+                let state = Arc::make_mut(&mut shared);
+                let books_msg = books
+                    .get(&symbol)
+                    .map(|b| vec![(symbol.clone(), b.clone())])
+                    .unwrap_or_default();
+                let trades_msg = trades
+                    .get(&symbol)
+                    .map(|t| vec![(symbol.clone(), t.clone())])
+                    .unwrap_or_default();
+                state.markets[0] = MarketMessage::Bybit(BybitMarket {
+                    time: timestamp,
+                    books: books_msg,
+                    trades: trades_msg,
+                });
+                if state_sender.send(shared.clone()).is_err() {
+                    break;
+                }
             }
 
             Some(data) = private_receiver.recv() => {
-                let mut state = state.lock().await;
-                let key = data.symbol;
-                state.private.insert(key, data.data);
-
-                // Send the updated state to the main thread
-                state_sender
-                    .send(state.clone())
-                    .expect("Failed to send state to main thread");
+                let state = Arc::make_mut(&mut shared);
+                state.private.insert(data.symbol, data.data);
+                if state_sender.send(shared.clone()).is_err() {
+                    break;
+                }
             }
         }
     }
 }
 
-/// Asynchronously loads data from both Bybit and Binance exchanges.
-///
-/// # Arguments
-///
-/// * `state` - The shared state containing the market data.
-/// * `state_sender` - The unbounded sender used to send updated state to the main thread.
-async fn load_both(state: SharedState, state_sender: mpsc::UnboundedSender<SharedState>) {
-    // Clone the state to allow for multiple mutable borrows.
-    let state = Arc::new(Mutex::new(state));
+/// Asynchronously loads market and private data from Binance.
+async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<SharedState>>) {
+    let symbols = state.symbols.clone();
+    let clients = state.clients.clone();
 
-    // Get a reference to the logging object.
-    let logger = state.lock().await.logging.clone();
-
-    // Clone the state sender for use in the Bybit and Binance spawned tasks.
-    let bit_ss_sender_clone = state_sender.clone();
-
-    // Clone the state for use in the Bybit and Binance tasks.
-    let bybit_state_clone = state.clone();
-    let binance_state_clone = state.clone();
-
-    // Clone the symbols for use in the Bybit and Binance tasks.
-    let binance_symbols = state.lock().await.symbols.clone();
-    let symbols = state.lock().await.symbols.clone();
-
-    // Clone the clients for use in the Bybit and Binance tasks.
-    let clients = state.lock().await.clients.clone();
-
-    // Create unbounded channels for receiving Bybit and Binance market data.
-    let (bybit_sender, mut bybit_receiver) = mpsc::unbounded_channel::<BybitMarket>();
-    let (binance_sender, mut binance_receiver) = mpsc::unbounded_channel::<BinanceMarket>();
-
-    // Check if there are no clients.
-    if clients.is_empty() {
-        logger.error("No clients found");
+    let mut state = state;
+    for symbol in clients.keys() {
+        state.private.insert(
+            symbol.clone(),
+            PrivateData::Binance(BinancePrivate::default()),
+        );
     }
+    let mut shared = Arc::new(state);
 
-    // Spawn tasks for each client.
+    let mut books = binance_instrument_books(&symbols).await;
+    let mut trades = new_trade_buffers(&symbols);
+
     let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<TaggedPrivate>();
     for (symbol, client) in clients {
         let sender_clone = private_sender.clone();
+        tokio::spawn(async move {
+            let subscriber = match client {
+                Client::Binance(client) => client,
+                _ => {
+                    eprintln!("Invalid exchange client for {}", symbol);
+                    return;
+                }
+            };
+            subscriber.private_subscribe(sender_clone, symbol).await;
+        });
+    }
 
-        // Insert the private receiver into the state.
+    let (market_sender, mut market_receiver) = mpsc::unbounded_channel::<MarketEvent>();
+    tokio::spawn(async move {
+        let subscriber = BinanceClient::default();
+        subscriber.market_subscribe(symbols, market_sender).await;
+    });
+
+    loop {
+        tokio::select! {
+            Some(ev) = market_receiver.recv() => {
+                let (symbol, timestamp) = match ev {
+                    MarketEvent::Book { symbol, bids, asks, timestamp, bba } => {
+                        if let Some(book_arc) = books.get_mut(&symbol) {
+                            let book = Arc::make_mut(book_arc);
+                            if bba {
+                                book.update_binance_bba(bids, asks, timestamp);
+                            } else {
+                                book.update(bids, asks, timestamp);
+                            }
+                        }
+                        (symbol, timestamp)
+                    }
+                    MarketEvent::Trade { symbol, trade } => {
+                        let ts = trade.timestamp;
+                        if let Some(queue) = trades.get_mut(&symbol) {
+                            let q = Arc::make_mut(queue);
+                            if q.len() == q.capacity() {
+                                q.pop_front();
+                            }
+                            q.push_back(trade);
+                        }
+                        (symbol, ts)
+                    }
+                };
+
+                let state = Arc::make_mut(&mut shared);
+                let books_msg = books
+                    .get(&symbol)
+                    .map(|b| vec![(symbol.clone(), b.clone())])
+                    .unwrap_or_default();
+                let trades_msg = trades
+                    .get(&symbol)
+                    .map(|t| vec![(symbol.clone(), t.clone())])
+                    .unwrap_or_default();
+                state.markets[0] = MarketMessage::Binance(BinanceMarket {
+                    time: timestamp,
+                    books: books_msg,
+                    trades: trades_msg,
+                });
+                if state_sender.send(shared.clone()).is_err() {
+                    break;
+                }
+            }
+
+            Some(data) = private_receiver.recv() => {
+                let state = Arc::make_mut(&mut shared);
+                state.private.insert(data.symbol, data.data);
+                if state_sender.send(shared.clone()).is_err() {
+                    break;
+                }
+            }
+        }
+    }
+}
+
+/// Asynchronously loads data from both Bybit and Binance. Experimental.
+async fn load_both(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<SharedState>>) {
+    let logger = state.logging.clone();
+    let symbols = state.symbols.clone();
+    let clients = state.clients.clone();
+
+    if clients.is_empty() {
+        logger.error("No clients found");
+        return;
+    }
+
+    let mut shared = Arc::new(state);
+
+    let mut bybit_books = bybit_instrument_books(&symbols).await;
+    let mut binance_books = binance_instrument_books(&symbols).await;
+    let mut bybit_trades = new_trade_buffers(&symbols);
+    let mut binance_trades = new_trade_buffers(&symbols);
+
+    let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<TaggedPrivate>();
+    for (symbol, client) in clients {
+        let sender_clone = private_sender.clone();
         match client {
             Client::Bybit(client) => {
-                // Insert the private receiver for Bybit into the state.
-                let _ = &state
-                    .lock()
-                    .await
+                let state = Arc::make_mut(&mut shared);
+                state
                     .private
                     .insert(symbol.clone(), PrivateData::Bybit(BybitPrivate::default()));
-
-                // Spawn a task for Bybit private subscription.
                 tokio::spawn(async move {
                     client.private_subscribe(sender_clone, symbol).await;
                 });
             }
             Client::Binance(client) => {
-                // Insert the private receiver for Binance into the state.
-                let _ = &state.lock().await.private.insert(
+                let state = Arc::make_mut(&mut shared);
+                state.private.insert(
                     symbol.clone(),
                     PrivateData::Binance(BinancePrivate::default()),
                 );
-
-                // Spawn a blocking task for Binance private subscription.
-                tokio::task::spawn_blocking(move || {
-                    client.private_subscribe(sender_clone, symbol);
+                tokio::spawn(async move {
+                    client.private_subscribe(sender_clone, symbol).await;
                 });
             }
         }
     }
 
-    // Spawn a task to subscribe to Bybit market data.
+    let (bybit_sender, mut bybit_receiver) = mpsc::unbounded_channel::<MarketEvent>();
+    let bybit_symbols = symbols.clone();
     tokio::spawn(async move {
         let subscriber = BybitClient::default();
-        let _ = subscriber.market_subscribe(symbols, bybit_sender).await;
+        subscriber
+            .market_subscribe(bybit_symbols, bybit_sender)
+            .await;
     });
 
-    // Spawn a blocking task to subscribe to Binance market data.
-    tokio::task::spawn_blocking(move || {
+    let (binance_sender, mut binance_receiver) = mpsc::unbounded_channel::<MarketEvent>();
+    let binance_symbols = symbols.clone();
+    tokio::spawn(async move {
         let subscriber = BinanceClient::default();
-        let _ = subscriber.market_subscribe(binance_symbols, binance_sender);
+        subscriber
+            .market_subscribe(binance_symbols, binance_sender)
+            .await;
     });
 
-    // Loop to receive market data from both exchanges.
     loop {
         tokio::select! {
-            // Receive Bybit market data.
-            Some(v) = bybit_receiver.recv() => {
-                let mut state = bybit_state_clone.lock().await;
-                state.markets[0] = MarketMessage::Bybit(v);
-                bit_ss_sender_clone
-                    .send(state.clone())
-                    .expect("Failed to send state to main thread");
-            }
-            // Receive Binance market data.
-            Some(v) = binance_receiver.recv() => {
-                let mut state = binance_state_clone.lock().await;
-                state.markets[1] = MarketMessage::Binance(v);
-                state_sender
-                    .send(state.clone())
-                    .expect("Failed to send state to main thread");
+            Some(ev) = bybit_receiver.recv() => {
+                let (symbol, timestamp) = match ev {
+                    MarketEvent::Book { symbol, bids, asks, timestamp, bba } => {
+                        if let Some(book_arc) = bybit_books.get_mut(&symbol) {
+                            let book = Arc::make_mut(book_arc);
+                            if bba { book.update_bba(bids, asks, timestamp); } else { book.update(bids, asks, timestamp); }
+                        }
+                        (symbol, timestamp)
+                    }
+                    MarketEvent::Trade { symbol, trade } => {
+                        let ts = trade.timestamp;
+                        if let Some(queue) = bybit_trades.get_mut(&symbol) {
+                            let q = Arc::make_mut(queue);
+                            if q.len() == q.capacity() { q.pop_front(); }
+                            q.push_back(trade);
+                        }
+                        (symbol, ts)
+                    }
+                };
+                let state = Arc::make_mut(&mut shared);
+                let books_msg = bybit_books
+                    .get(&symbol)
+                    .map(|b| vec![(symbol.clone(), b.clone())])
+                    .unwrap_or_default();
+                let trades_msg = bybit_trades
+                    .get(&symbol)
+                    .map(|t| vec![(symbol.clone(), t.clone())])
+                    .unwrap_or_default();
+                state.markets[0] = MarketMessage::Bybit(BybitMarket {
+                    time: timestamp,
+                    books: books_msg,
+                    trades: trades_msg,
+                });
+                if state_sender.send(shared.clone()).is_err() {
+                    break;
+                }
             }
 
-            // Receive private data.
-            Some(data) = private_receiver.recv() => {
-                let mut state = state.lock().await;
-                let key = data.symbol;
-                state.private.insert(key, data.data);
-                state_sender
-                    .send(state.clone())
-                    .expect("Failed to send state to main thread");
+            Some(ev) = binance_receiver.recv() => {
+                let (symbol, timestamp) = match ev {
+                    MarketEvent::Book { symbol, bids, asks, timestamp, bba } => {
+                        if let Some(book_arc) = binance_books.get_mut(&symbol) {
+                            let book = Arc::make_mut(book_arc);
+                            if bba { book.update_binance_bba(bids, asks, timestamp); } else { book.update(bids, asks, timestamp); }
+                        }
+                        (symbol, timestamp)
+                    }
+                    MarketEvent::Trade { symbol, trade } => {
+                        let ts = trade.timestamp;
+                        if let Some(queue) = binance_trades.get_mut(&symbol) {
+                            let q = Arc::make_mut(queue);
+                            if q.len() == q.capacity() { q.pop_front(); }
+                            q.push_back(trade);
+                        }
+                        (symbol, ts)
+                    }
+                };
+                let state = Arc::make_mut(&mut shared);
+                let books_msg = binance_books
+                    .get(&symbol)
+                    .map(|b| vec![(symbol.clone(), b.clone())])
+                    .unwrap_or_default();
+                let trades_msg = binance_trades
+                    .get(&symbol)
+                    .map(|t| vec![(symbol.clone(), t.clone())])
+                    .unwrap_or_default();
+                state.markets[1] = MarketMessage::Binance(BinanceMarket {
+                    time: timestamp,
+                    books: books_msg,
+                    trades: trades_msg,
+                });
+                if state_sender.send(shared.clone()).is_err() {
+                    break;
+                }
             }
-            // Exit the loop if both channels are closed.
+
+            Some(data) = private_receiver.recv() => {
+                let state = Arc::make_mut(&mut shared);
+                state.private.insert(data.symbol, data.data);
+                if state_sender.send(shared.clone()).is_err() {
+                    break;
+                }
+            }
             else => break,
         }
     }

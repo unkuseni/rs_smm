@@ -1,29 +1,40 @@
 #[cfg(test)]
 mod tests {
+    // The network tests below are throwaway live-feed diagnostics (marked
+    // #[ignore]); allow lints that only flag their ad-hoc structure.
+    #![allow(
+        clippy::single_match,
+        clippy::needless_borrow,
+        clippy::useless_borrows_in_formatting
+    )]
 
-    use std::collections::HashMap;
+    use std::collections::{HashMap, VecDeque};
 
+    use bybit::{TickDirection, WsTrade};
     use ndarray::{array, Array1, Array2};
     use rs_smm::{
         features::{
             imbalance::{calculate_ofi, imbalance_ratio, voi},
-            impact::{expected_return, expected_value, mid_price_change, price_flu},
+            impact::{
+                avg_trade_price, expected_return, expected_value, mid_price_change, price_flu,
+            },
             linear_reg::mid_price_regression,
         },
-        parameters::parameters::use_toml,
+        parameters::use_toml,
     };
     use skeleton::{
         exchanges::exchange::MarketMessage,
         ss::{self, SharedState},
         util::localorderbook::LocalBook,
     };
+    use std::sync::Arc;
     use tokio::sync::mpsc::{self, UnboundedReceiver};
 
-    #[test]
-    fn test() {
-        println!("test");
-    }
+    // The tests marked #[ignore] require live exchange connectivity and the
+    // real config.toml credentials; run them explicitly with
+    // `cargo test -- --ignored`.
 
+    #[ignore]
     #[tokio::test]
     async fn test_imbalance() {
         let mut receiver = setup();
@@ -50,6 +61,7 @@ mod tests {
         }
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_wmid() {
         let mut receiver = setup();
@@ -87,6 +99,7 @@ mod tests {
         );
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_price() {
         let mut receiver = setup();
@@ -116,7 +129,7 @@ mod tests {
         }
     }
 
-    fn setup() -> UnboundedReceiver<ss::SharedState> {
+    fn setup() -> UnboundedReceiver<Arc<ss::SharedState>> {
         let config = use_toml();
         let mut state = SharedState::new(config.exchange);
         state.add_symbols(config.symbols);
@@ -124,13 +137,14 @@ mod tests {
             state.add_clients(key, secret, symbol, None);
         }
 
-        let (state_sender, receiver) = mpsc::unbounded_channel::<ss::SharedState>();
+        let (state_sender, receiver) = mpsc::unbounded_channel::<Arc<ss::SharedState>>();
         tokio::spawn(async move {
             ss::load_data(state, state_sender).await;
         });
         receiver
     }
 
+    #[ignore]
     #[tokio::test]
     async fn test_def_reg() {
         let mut receiver = setup();
@@ -203,7 +217,7 @@ mod tests {
                         } else {
                             tick += 1;
                         }
-                        old_book.insert(symbol.to_string(), b.1.clone());
+                        old_book.insert(symbol.to_string(), (*b.1).clone());
                     }
                 }
                 _ => {}
@@ -258,6 +272,42 @@ mod tests {
     }
 
     #[test]
+    fn test_avg_trade_price() {
+        let trade = |price: f64, volume: f64| WsTrade {
+            timestamp: 0,
+            symbol: "NOTUSDT".to_string(),
+            side: "Buy".to_string(),
+            tick_direction: TickDirection::PlusTick,
+            id: "0".to_string(),
+            buyer_is_maker: false,
+            price,
+            volume,
+        };
+
+        // Old window: 2 units at 100, current window adds 1 unit at 103.
+        let old_trades: VecDeque<WsTrade> = VecDeque::from([trade(100.0, 1.0), trade(100.0, 1.0)]);
+        let curr_trades: VecDeque<WsTrade> =
+            VecDeque::from([trade(100.0, 1.0), trade(100.0, 1.0), trade(103.0, 1.0)]);
+
+        // Incremental VWAP = (303 - 200) / (3 - 2) = 103, divided by the
+        // USD value of one tick (0.5) => 206 tick units.
+        let result = avg_trade_price(101.5, Some(&old_trades), &curr_trades, 0.0, 0.5);
+        assert!((result - 206.0).abs() < 1e-9);
+
+        // No new volume: the previous average is returned unchanged.
+        let result = avg_trade_price(101.5, Some(&curr_trades), &curr_trades, 7.25, 0.5);
+        assert!((result - 7.25).abs() < 1e-9);
+
+        // Unknown tick value: fall back to the previous average.
+        let result = avg_trade_price(101.5, Some(&old_trades), &curr_trades, 7.25, 0.0);
+        assert!((result - 7.25).abs() < 1e-9);
+
+        // No previous window: return the current mid price.
+        let result = avg_trade_price(101.5, None, &curr_trades, 0.0, 0.5);
+        assert!((result - 101.5).abs() < 1e-9);
+    }
+
+    #[test]
     fn test_flu() {
         let value = vec![price_flu(0.001234, 0.001239), price_flu(0.001239, 0.001234)];
         println!("Value: {:#?}", value);
@@ -265,23 +315,25 @@ mod tests {
 
     #[test]
     fn test_mid_price_regression() {
-        let mid_price = array![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0];
-        let features = array![
-            [1.0, 2.0, 3.0],
-            [1.1, 2.2, 2.9],
-            [1.2, 2.1, 3.1],
-            [1.3, 2.3, 2.8],
-            [1.4, 2.4, 3.2],
-            [1.5, 2.5, 3.3],
-            [1.6, 2.6, 3.4],
-            [1.7, 2.7, 3.5],
-            [1.8, 2.8, 3.6],
-            [1.9, 2.9, 3.7]
-        ];
+        // mid = 1.0*f0 + 2.0*f1 + 0.5*f2 exactly, so the hold-out prediction
+        // of the last feature row must recover the last mid price.
+        let rows: Vec<[f64; 3]> = (0..10)
+            .map(|i| {
+                let i = i as f64;
+                [i, i * i, i * i * i * 0.1]
+            })
+            .collect();
+        let mids: Vec<f64> = rows
+            .iter()
+            .map(|r| r[0] + 2.0 * r[1] + 0.5 * r[2])
+            .collect();
+        let features =
+            Array2::from_shape_vec((10, 3), rows.into_iter().flatten().collect()).unwrap();
         let curr_spread = 2.0;
-        let result = mid_price_regression(mid_price, features, curr_spread).unwrap();
+        let result =
+            mid_price_regression(Array1::from(mids.clone()), features, curr_spread).unwrap();
         println!("Result: {}", result);
-        assert!((result - 5.5).abs() < 1e-6);
+        assert!((result - mids.last().unwrap()).abs() < 1e-6);
     }
 
     #[test]
@@ -301,62 +353,46 @@ mod tests {
 
     #[test]
     fn test_mid_price_regression_extended() {
-        let mid_price = array![
-            1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0,
-            17.0, 18.0, 19.0, 20.0
-        ];
-
-        let features = array![
-            [1.0, 2.0, 3.0],
-            [1.1, 2.2, 2.9],
-            [1.2, 2.1, 3.1],
-            [1.3, 2.3, 2.8],
-            [1.4, 2.4, 3.2],
-            [1.5, 2.5, 3.3],
-            [1.6, 2.6, 3.4],
-            [1.7, 2.7, 3.5],
-            [1.8, 2.8, 3.6],
-            [1.9, 2.9, 3.7],
-            [2.0, 3.0, 3.8],
-            [2.1, 3.1, 3.9],
-            [2.2, 3.2, 4.0],
-            [2.3, 3.3, 4.1],
-            [2.4, 3.4, 4.2],
-            [2.5, 3.5, 4.3],
-            [2.6, 3.6, 4.4],
-            [2.7, 3.7, 4.5],
-            [2.8, 3.8, 4.6],
-            [2.9, 3.9, 4.7]
-        ];
-
+        // Same exact-linear-relationship check with a longer window.
+        let rows: Vec<[f64; 3]> = (0..20)
+            .map(|i| {
+                let i = i as f64;
+                [i, i * i, i * i * i * 0.1]
+            })
+            .collect();
+        let mids: Vec<f64> = rows
+            .iter()
+            .map(|r| r[0] + 2.0 * r[1] + 0.5 * r[2])
+            .collect();
+        let features =
+            Array2::from_shape_vec((20, 3), rows.into_iter().flatten().collect()).unwrap();
         let curr_spread = 2.5;
-        let result = mid_price_regression(mid_price, features, curr_spread).unwrap();
+        let result =
+            mid_price_regression(Array1::from(mids.clone()), features, curr_spread).unwrap();
         println!("Result: {}", result);
-        assert!((result - 10.5).abs() < 1e-6);
+        assert!((result - mids.last().unwrap()).abs() < 1e-6);
     }
 
     #[test]
     fn test_mid_price_regression_with_negatives() {
-        let mid_price = array![-1.0, -0.5, 0.0, 0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5];
-
-        let features = array![
-            [-1.0, -0.5, 0.0],
-            [-0.8, -0.3, 0.2],
-            [-0.6, -0.1, 0.4],
-            [-0.4, 0.1, 0.6],
-            [-0.2, 0.3, 0.8],
-            [0.0, 0.5, 1.0],
-            [0.2, 0.7, 1.2],
-            [0.4, 0.9, 1.4],
-            [0.6, 1.1, 1.6],
-            [0.8, 1.3, 1.8]
-        ];
-
+        // mid = 1.0*f0 + 2.0*f1 + 0.5*f2 exactly, including negative values.
+        let rows: Vec<[f64; 3]> = (-10..10)
+            .map(|i| {
+                let i = i as f64;
+                [i, i * i, i * i * i * 0.1]
+            })
+            .collect();
+        let mids: Vec<f64> = rows
+            .iter()
+            .map(|r| r[0] + 2.0 * r[1] + 0.5 * r[2])
+            .collect();
+        let features =
+            Array2::from_shape_vec((20, 3), rows.into_iter().flatten().collect()).unwrap();
         let curr_spread = 1.0;
-        let result = mid_price_regression(mid_price, features, curr_spread).unwrap();
+        let result =
+            mid_price_regression(Array1::from(mids.clone()), features, curr_spread).unwrap();
         println!("Result: {}", result);
-        // Adjust this assertion based on the expected result
-        assert!((result - 1.25).abs() < 1e-6);
+        assert!((result - mids.last().unwrap()).abs() < 1e-6);
     }
 
     #[test]
