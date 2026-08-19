@@ -37,3 +37,60 @@ tick_window = 8000
 # Profit spread per symbol in basis points (1 bp = 0.01%)
 [bps]
 NOTUSDT = 25
+
+# Optional: record websocket deltas to this file for offline replay with
+# `cargo run --release --bin backtest -- <file>`.
+# record = "session.rec"
+
+# Optional: persist position and live orders here across restarts.
+# state_file = "state.json"
+
+# Strategy constants. Every key is optional and falls back to the default
+# shown; a config without this table keeps the historical behavior.
+[strategy]
+# Skew weights (sum roughly to 1.0).
+imb_weight = 0.25          # top-of-book imbalance
+deep_imb_weight = 0.10     # average deep imbalance
+trade_weight = 0.30        # trade imbalance
+voi_weight = 0.10          # volume of interest (sign only)
+deep_ofi_weight = 0.10     # depth-normalized OFI magnitude
+predict_weight = 0.15      # regression-based predicted move
+# Deadbands: signals inside the band contribute nothing.
+imb_deadband = 0.20
+trade_deadband = 0.20
+# Gates for the predicted-price / basis components of the skew.
+predict_gate = 0.0005
+basis_gate = 0.0005
+# Inventory control.
+inventory_adjustment = 0.63
+aggression_min = 0.10
+aggression_max = 0.63
+# Volatility-adaptive spread: quotes widen by (1 + vol_spread_scaling * vol)
+# where vol is the std of mid returns over the feature window, rescaled to
+# per-second volatility (updates run on a ~10ms cadence).
+vol_spread_scaling = 200.0
+# Anchor the quote grid at the microprice instead of the mid price.
+use_microprice_anchor = true
+# Market-order rebalancing when |inventory_delta| reaches the threshold
+# (0 disables it); at most one order per cooldown.
+rebalance_threshold = 0.45
+rebalance_cooldown_ms = 30000
+# Grid lifecycle.
+grid_stale_ms = 180000
+position_sync_ms = 60000
+# Avellaneda-Stoikov reservation pricing (0 keeps the heuristic inventory
+# adjustment). gamma is risk aversion (large for perps, e.g. 1e4..1e6);
+# kappa approximates order-arrival intensity.
+as_gamma = 0
+as_horizon_secs = 10.0
+as_kappa = 1.0
+# Cont et al. linear OFI impact fallback predictor (0 disables).
+ofi_impact_k = 0.0
+# Cartea-style regime-smoothed imbalance offset (0 disables).
+regime_weight = 0.0
+# Funding cost for held inventory in bps per hour (backtest; 0 disables).
+funding_bps_per_hour = 0.0
+# Portfolio risk limits (0 disables): halt and cancel all orders when the
+# mark-to-market drawdown or aggregate inventory exceeds the limit.
+max_drawdown_frac = 0.0
+max_portfolio_delta = 0.0

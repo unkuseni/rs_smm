@@ -123,7 +123,7 @@ mod tests {
         let (sender, mut receiver) = mpsc::unbounded_channel::<Arc<ss::SharedState>>();
         let instant = Instant::now();
         tokio::spawn(async move {
-            ss::load_data(state, sender).await;
+            ss::load_data(state, sender, None).await;
         });
         while let Some(v) = receiver.recv().await {
             v.logging.info("Received state");

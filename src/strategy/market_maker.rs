@@ -1,16 +1,44 @@
 use bybit::WsTrade;
 use skeleton::exchanges::exchange::{Client, Exchange, PrivateData};
+use skeleton::util::helpers::{Config, StrategyConfig};
 use skeleton::util::localorderbook::LocalBook;
 use skeleton::{exchanges::exchange::MarketMessage, ss::SharedState};
 use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::sync::Arc;
-use std::time::Duration;
 use tokio::sync::mpsc::UnboundedReceiver;
-use tokio::time::interval;
 
 use crate::features::engine::Engine;
-use crate::trader::quote_gen::QuoteGenerator;
+use crate::trader::quote_gen::{QuoteGenerator, SymbolState};
+
+/// The outcome of the portfolio risk check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RiskDecision {
+    Ok,
+    Halt,
+}
+
+/// Pure risk evaluation: halt when the mark-to-market drawdown exceeds
+/// `max_drawdown_frac` of initial equity, or when the sum of absolute
+/// inventory deltas across symbols exceeds `max_portfolio_delta`.
+/// Limits of 0 disable the respective check.
+pub fn evaluate_risk(
+    initial_equity: f64,
+    equity: f64,
+    portfolio_delta: f64,
+    strategy: &StrategyConfig,
+) -> RiskDecision {
+    if initial_equity > 0.0 && strategy.max_drawdown_frac > 0.0 {
+        let drawdown = (initial_equity - equity) / initial_equity;
+        if drawdown > strategy.max_drawdown_frac {
+            return RiskDecision::Halt;
+        }
+    }
+    if strategy.max_portfolio_delta > 0.0 && portfolio_delta > strategy.max_portfolio_delta {
+        return RiskDecision::Halt;
+    }
+    RiskDecision::Ok
+}
 
 pub struct MarketMaker {
     pub features: HashMap<String, Engine>,
@@ -21,6 +49,15 @@ pub struct MarketMaker {
     pub generators: HashMap<String, QuoteGenerator>,
     pub depths: Vec<usize>,
     pub tick_window: usize,
+    /// Initial account equity (sum of configured balances), for the
+    /// mark-to-market drawdown kill switch.
+    pub initial_equity: f64,
+    /// True once the risk kill switch has tripped; quoting stops.
+    pub halted: bool,
+    /// Optional path where per-symbol state is saved on shutdown.
+    pub state_file: Option<String>,
+    /// Current strategy constants (kept in sync by apply_config).
+    pub strategy: StrategyConfig,
 }
 
 impl MarketMaker {
@@ -36,8 +73,7 @@ impl MarketMaker {
     /// * `depths` - The depths at which to calculate features.
     /// * `rate_limit` - The per-refresh batch-call limit.
     /// * `tick_window` - The feature lookback window in ticks.
-    // The constructor mirrors the flat config fields; grouping them into a
-    // struct would add a parallel type to keep in sync.
+    /// * `strategy` - Strategy constants for the engines and quote generators.
     #[allow(clippy::too_many_arguments)]
     pub async fn new(
         ss: SharedState,
@@ -48,9 +84,11 @@ impl MarketMaker {
         depths: Vec<usize>,
         rate_limit: u32,
         tick_window: usize,
+        strategy: StrategyConfig,
     ) -> Self {
+        let initial_equity = assets.values().sum();
         MarketMaker {
-            features: MarketMaker::build_features(ss.symbols.clone(), tick_window),
+            features: MarketMaker::build_features(ss.symbols.clone(), tick_window, strategy.clone()),
             old_books: HashMap::new(),
             old_trades: HashMap::new(),
             curr_trades: HashMap::new(),
@@ -62,54 +100,142 @@ impl MarketMaker {
                 leverage,
                 final_order_distance,
                 rate_limit,
+                strategy.clone(),
             )
             .await,
             depths,
             tick_window,
+            initial_equity,
+            halted: false,
+            state_file: None,
+            strategy: strategy.clone(),
         }
     }
 
-    /// Continuously receives and processes shared state snapshots.
+    /// Continuously receives and processes shared state snapshots, and
+    /// applies hot-reloaded configurations from the watcher channel.
     ///
     /// The first `tick_window` messages are used only to warm up the features;
-    /// after that the grid is (re)placed whenever needed.
-    pub async fn start_loop(&mut self, mut receiver: UnboundedReceiver<Arc<SharedState>>) {
+    /// after that the grid is (re)placed whenever needed. Snapshots are
+    /// consumed as fast as they arrive: feature updates are cheap, and an
+    /// artificial throttle would only let the channel back up during warmup.
+    pub async fn start_loop(
+        &mut self,
+        mut receiver: UnboundedReceiver<Arc<SharedState>>,
+        mut config_rx: UnboundedReceiver<Config>,
+    ) {
         let mut warmup_ticks = 0;
-        let mut wait = interval(Duration::from_millis(30));
         let mut warned_both = false;
-        while let Some(data) = receiver.recv().await {
-            match data.exchange.as_str() {
-                "bybit" | "binance" => {
-                    // Update features with the latest market data.
-                    self.update_features(data.markets[0].clone(), self.depths.clone());
+        loop {
+            tokio::select! {
+                data = receiver.recv() => {
+                    let Some(data) = data else { break };
+                    match data.exchange.as_str() {
+                        "bybit" | "binance" => {
+                            // Update features with the latest market data.
+                            self.update_features(data.markets[0].clone(), self.depths.clone());
 
-                    // Replace the grid once the features are warmed up.
-                    if warmup_ticks > self.tick_window {
-                        self.potentially_update(data.private.clone(), data.markets[0].clone())
-                            .await;
-                    } else {
-                        wait.tick().await;
-                        warmup_ticks += 1;
+                            // Replace the grid once the features are warmed up.
+                            if warmup_ticks > self.tick_window {
+                                if !self.halted {
+                                    self.potentially_update(data.private.clone(), data.markets[0].clone())
+                                        .await;
+                                }
+                            } else {
+                                warmup_ticks += 1;
+                            }
+                        }
+                        "both" => {
+                            if !warned_both {
+                                eprintln!(
+                                    "'both' exchange mode is not yet supported by the strategy loop; \
+                                     no orders will be placed"
+                                );
+                                warned_both = true;
+                            }
+                        }
+                        _ => {
+                            panic!("Invalid exchange");
+                        }
                     }
                 }
-                "both" => {
-                    if !warned_both {
-                        eprintln!(
-                            "'both' exchange mode is not yet supported by the strategy loop; \
-                             no orders will be placed"
-                        );
-                        warned_both = true;
-                    }
-                }
-                _ => {
-                    panic!("Invalid exchange");
+                Some(config) = config_rx.recv() => {
+                    self.apply_config(&config);
                 }
             }
         }
     }
 
-    /// Cancels all open orders and prints the final position per symbol.
-    /// Called on graceful shutdown.
+    /// Applies a (re)loaded configuration: per-symbol spreads and strategy
+    /// constants for every engine and generator.
+    pub fn apply_config(&mut self, config: &Config) {
+        for (symbol, generator) in self.generators.iter_mut() {
+            match config.bps.get(symbol) {
+                Some(spread) => generator.set_spread(*spread),
+                None => eprintln!("No spread configured for {}; keeping current", symbol),
+            }
+            generator.set_strategy(config.strategy.clone());
+        }
+        for engine in self.features.values_mut() {
+            engine.set_strategy(config.strategy.clone());
+        }
+        self.strategy = config.strategy.clone();
+        println!(
+            "Config hot-reloaded: {} symbols, strategy updated",
+            self.generators.len()
+        );
+    }
+
+    /// Mark-to-market equity and aggregate inventory exposure, fed to the
+    /// pure risk evaluation.
+    fn risk_decision(&self) -> RiskDecision {
+        let mut equity = self.initial_equity;
+        let mut portfolio_delta = 0.0;
+        for (symbol, generator) in &self.generators {
+            if let Some(book) = self.old_books.get(symbol) {
+                equity += generator.position * book.get_mid_price();
+            }
+            portfolio_delta += generator.inventory_delta.abs();
+        }
+        evaluate_risk(self.initial_equity, equity, portfolio_delta, &self.strategy)
+    }
+
+    /// Saves per-symbol position and live orders to the configured state file.
+    pub fn save_state(&self) -> Result<(), String> {
+        let Some(path) = &self.state_file else {
+            return Ok(());
+        };
+        let snapshot: HashMap<String, SymbolState> = self
+            .generators
+            .iter()
+            .map(|(symbol, generator)| (symbol.clone(), generator.snapshot_state()))
+            .collect();
+        let json = serde_json::to_string_pretty(&snapshot).map_err(|e| e.to_string())?;
+        std::fs::write(path, json).map_err(|e| e.to_string())
+    }
+
+    /// Restores previously saved per-symbol state (position and live orders),
+    /// if the state file exists.
+    pub fn load_state(&mut self) -> Result<(), String> {
+        let Some(path) = &self.state_file else {
+            return Ok(());
+        };
+        let Ok(json) = std::fs::read_to_string(path) else {
+            return Ok(()); // no previous state; start fresh
+        };
+        let snapshot: HashMap<String, SymbolState> =
+            serde_json::from_str(&json).map_err(|e| e.to_string())?;
+        for (symbol, state) in snapshot {
+            if let Some(generator) = self.generators.get_mut(&symbol) {
+                generator.restore_state(state);
+            }
+        }
+        println!("Restored state for {} symbols", self.generators.len());
+        Ok(())
+    }
+
+    /// Cancels all open orders, prints the final position and structured
+    /// stats per symbol, and persists state. Called on graceful shutdown.
     pub async fn shutdown(&mut self) {
         for (symbol, generator) in self.generators.iter() {
             match generator.cancel_all(symbol).await {
@@ -117,14 +243,22 @@ impl MarketMaker {
                 Err(_) => eprintln!("Failed to cancel all orders for {}", symbol),
             }
             println!("Final position for {}: {:.6}", symbol, generator.position);
+            println!("Stats for {}: {}", symbol, generator.stats_summary());
+        }
+        if let Err(e) = self.save_state() {
+            eprintln!("Failed to save state: {}", e);
         }
     }
 
     /// Builds a feature engine per symbol.
-    fn build_features(symbol: Vec<String>, tick_window: usize) -> HashMap<String, Engine> {
+    fn build_features(
+        symbol: Vec<String>,
+        tick_window: usize,
+        strategy: StrategyConfig,
+    ) -> HashMap<String, Engine> {
         symbol
             .into_iter()
-            .map(|v| (v, Engine::new(tick_window)))
+            .map(|v| (v, Engine::new(tick_window, strategy.clone())))
             .collect()
     }
 
@@ -137,6 +271,7 @@ impl MarketMaker {
         leverage: f64,
         final_order_distance: f64,
         rate_limit: u32,
+        strategy: StrategyConfig,
     ) -> HashMap<String, QuoteGenerator> {
         let mut hash: HashMap<String, QuoteGenerator> = HashMap::new();
         let leverage = leverage.clamp(1.0, 100.0);
@@ -169,6 +304,7 @@ impl MarketMaker {
                 orders_per_side,
                 final_order_distance,
                 rate_limit,
+                strategy.clone(),
             );
             // Reconcile with the exchange's actual position before quoting.
             generator.sync_position(&symbol).await;
@@ -228,16 +364,32 @@ impl MarketMaker {
         private: HashMap<String, PrivateData>,
         data: MarketMessage,
     ) {
+        // Portfolio risk kill switch: halt quoting (and cancel everything)
+        // when the configured drawdown or aggregate-inventory limit trips.
+        match self.risk_decision() {
+            RiskDecision::Halt => {
+                self.halted = true;
+                eprintln!("RISK HALT: limits breached; cancelling all orders and stopping quoting");
+                for (symbol, generator) in &self.generators {
+                    let _ = generator.cancel_all(symbol).await;
+                }
+                return;
+            }
+            RiskDecision::Ok => {}
+        }
+
         let books = match data {
             MarketMessage::Bybit(v) => v.books,
             MarketMessage::Binance(v) => v.books,
         };
 
         for (symbol, book) in books {
-            let Some(skew) = self.features.get(&symbol).map(|f| f.skew) else {
+            let Some(engine) = self.features.get(&symbol) else {
                 eprintln!("No feature engine for {}; skipping update", symbol);
                 continue;
             };
+            let skew = engine.skew;
+            let vol = engine.mid_return_vol();
             let Some(symbol_quoter) = self.generators.get_mut(&symbol) else {
                 eprintln!("No quote generator for {}; skipping update", symbol);
                 continue;
@@ -245,7 +397,7 @@ impl MarketMaker {
 
             if let Some(private_data) = private.get(&symbol) {
                 symbol_quoter
-                    .update_grid(private_data.clone(), skew, (*book).clone(), symbol)
+                    .update_grid(private_data.clone(), skew, vol, (*book).clone(), symbol)
                     .await;
             }
         }

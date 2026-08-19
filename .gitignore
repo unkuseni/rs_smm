@@ -5,3 +5,4 @@
 
 # Portable OpenSSL tree used for local builds on Windows.
 /.openssl/
+/*.pdf

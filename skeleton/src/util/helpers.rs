@@ -269,6 +269,105 @@ where
     }
 }
 
+/// Strategy constants that used to be hardcoded in the engine and quote
+/// generator. Every field has a default (matching the historical constants),
+/// so a config file that omits the [strategy] table keeps the old behavior.
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct StrategyConfig {
+    // Skew weights (should roughly sum to 1.0).
+    pub imb_weight: f64,
+    pub deep_imb_weight: f64,
+    pub voi_weight: f64,
+    pub trade_weight: f64,
+    pub deep_ofi_weight: f64,
+    pub predict_weight: f64,
+    // Deadbands: signals inside the band contribute nothing.
+    pub imb_deadband: f64,
+    pub trade_deadband: f64,
+    // Gates for the predicted-price and basis components of the skew.
+    pub predict_gate: f64,
+    pub basis_gate: f64,
+    // Inventory adjustment strength (Avellaneda-Stoikov style).
+    pub inventory_adjustment: f64,
+    // Aggression clip for the skew-driven quote tilt.
+    pub aggression_min: f64,
+    pub aggression_max: f64,
+    // Volatility-adaptive spread: the quote spread is widened by
+    // (1 + vol_spread_scaling * vol) where vol is the standard deviation
+    // of mid returns over the feature window.
+    pub vol_spread_scaling: f64,
+    /// Anchor the quote grid at the microprice instead of the mid price.
+    pub use_microprice_anchor: bool,
+    // Inventory rebalancing: when |inventory_delta| reaches the threshold,
+    // a reducing market order is submitted (at most once per cooldown).
+    pub rebalance_threshold: f64,
+    pub rebalance_cooldown_ms: u64,
+    // Grid lifecycle: staleness before a forced refresh and the cadence of
+    // exchange position re-syncs.
+    pub grid_stale_ms: u64,
+    pub position_sync_ms: u64,
+    // Avellaneda-Stoikov reservation pricing. When as_gamma > 0 the grid is
+    // centered at the reservation price r = s - q*gamma*sigma^2*(T-t) and the
+    // quote spread is floored at gamma*sigma^2*(T-t) + (2/gamma)*ln(1+gamma/kappa).
+    // gamma is the risk-aversion coefficient (calibrate it: for perps it is
+    // typically large, on the order of 1e4..1e6); kappa approximates the
+    // order arrival intensity. 0 keeps the heuristic inventory adjustment.
+    pub as_gamma: f64,
+    pub as_horizon_secs: f64,
+    pub as_kappa: f64,
+    // Cont, Kukanov & Stoikov (2011) linear impact fallback predictor:
+    // predicted mid = mid * (1 + ofi_impact_k * ofi_scaled), used when the
+    // regression cannot produce a prediction. 0 disables.
+    pub ofi_impact_k: f64,
+    // Cartea et al. (2018) regime-smoothed imbalance: the EMA-smoothed
+    // imbalance is quantized into 5 regimes (-2..=2) and regime_weight *
+    // regime is added to the skew. 0 disables.
+    pub regime_weight: f64,
+    // Funding cost of held inventory in basis points per hour, charged in
+    // the backtest (long pays when positive). 0 disables.
+    pub funding_bps_per_hour: f64,
+    // Portfolio risk limits (0 disables): halt quoting and cancel all orders
+    // when the mark-to-market drawdown exceeds max_drawdown_frac of initial
+    // equity, or when the sum of |inventory_delta| across symbols exceeds
+    // max_portfolio_delta.
+    pub max_drawdown_frac: f64,
+    pub max_portfolio_delta: f64,
+}
+
+impl Default for StrategyConfig {
+    fn default() -> Self {
+        Self {
+            imb_weight: 0.25,
+            deep_imb_weight: 0.10,
+            voi_weight: 0.10,
+            trade_weight: 0.30,
+            deep_ofi_weight: 0.10,
+            predict_weight: 0.15,
+            imb_deadband: 0.20,
+            trade_deadband: 0.20,
+            predict_gate: 0.0005,
+            basis_gate: 0.0005,
+            inventory_adjustment: 0.63,
+            aggression_min: 0.10,
+            aggression_max: 0.63,
+            vol_spread_scaling: 200.0,
+            use_microprice_anchor: true,
+            rebalance_threshold: 0.45,
+            rebalance_cooldown_ms: 30_000,
+            grid_stale_ms: 180_000,
+            position_sync_ms: 60_000,
+            as_gamma: 0.0,
+            as_horizon_secs: 10.0,
+            as_kappa: 1.0,
+            ofi_impact_k: 0.0,
+            regime_weight: 0.0,
+            funding_bps_per_hour: 0.0,
+            max_drawdown_frac: 0.0,
+            max_portfolio_delta: 0.0,
+        }
+    }
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
     pub exchange: String,
@@ -283,6 +382,16 @@ pub struct Config {
     /// Profit spread in basis points, keyed by symbol.
     pub bps: std::collections::HashMap<String, f64>,
     pub tick_window: usize,
+    /// Optional path to record websocket deltas to for offline replay.
+    #[serde(default)]
+    pub record: Option<String>,
+    /// Optional path where position/live-order state is saved on shutdown and
+    /// restored on startup, so a restart does not start the bot blind.
+    #[serde(default)]
+    pub state_file: Option<String>,
+    /// Strategy constants; omitted keys fall back to StrategyConfig::default().
+    #[serde(default)]
+    pub strategy: StrategyConfig,
 }
 
 impl PartialEq for Config {
@@ -298,5 +407,8 @@ impl PartialEq for Config {
             && self.rate_limit == other.rate_limit
             && self.bps == other.bps
             && self.tick_window == other.tick_window
+            && self.record == other.record
+            && self.state_file == other.state_file
+            && self.strategy == other.strategy
     }
 }

@@ -17,9 +17,16 @@ rs_bybit = "0.4"
 linfa-linear = "0.7.0"
 linfa = "0.7.0"
 ndarray = "0.15"
+futures = "0.3"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 # User's binance-rs fork: async REST/WS APIs, TimeInForce::GTX post-only,
 # FuturesStream high-level subscriptions with auto listen-key keep-alive.
 binance = { git = "https://github.com/unkuseni/binance-rs", branch = "master" }
+
+[[bin]]
+name = "backtest"
+path = "src/bin/backtest.rs"
 
 # Trading is latency-sensitive; trade build time for a faster binary.
 [profile.release]

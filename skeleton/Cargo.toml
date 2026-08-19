@@ -9,8 +9,9 @@ edition = "2021"
 # User's binance-rs fork: async REST/WS APIs, TimeInForce::GTX post-only,
 # FuturesStream high-level subscriptions with auto listen-key keep-alive.
 binance = { git = "https://github.com/unkuseni/binance-rs", branch = "master" }
+bincode = "1.3.3"
 num-traits = "0.2.19"
-ordered-float = "4.2.0"
+ordered-float = { version = "4.2.0", features = ["serde"] }
 # Latest rs_bybit (0.4.x): flat crate-root re-exports plus a `Bybit`
 # constructor trait.
 rs_bybit = "0.4"

@@ -16,7 +16,7 @@ mod tests {
         features::{
             imbalance::{calculate_ofi, imbalance_ratio, voi},
             impact::{
-                avg_trade_price, expected_return, expected_value, mid_price_change, price_flu,
+                avg_trade_price, expected_return, expected_value, mid_price_avg, price_flu,
             },
             linear_reg::mid_price_regression,
         },
@@ -139,7 +139,7 @@ mod tests {
 
         let (state_sender, receiver) = mpsc::unbounded_channel::<Arc<ss::SharedState>>();
         tokio::spawn(async move {
-            ss::load_data(state, state_sender).await;
+            ss::load_data(state, state_sender, None).await;
         });
         receiver
     }
@@ -253,11 +253,11 @@ mod tests {
 
     #[test]
     fn test_mid_change() {
+        // mid_price_change was removed as dead code; keep a smoke test for
+        // the mid-price helpers that remain in the module.
         let value = vec![
-            mid_price_change(0.0012567, 0.0012572, 0.0000001),
-            mid_price_change(0.0012572, 0.0012567, 0.0000001),
-            mid_price_change(0.0012572, 0.0012586, 0.000001),
-            mid_price_change(0.0012582, 0.0012573, 0.000001),
+            mid_price_avg(0.0012567, 0.0012572),
+            mid_price_avg(0.0012572, 0.0012567),
         ];
         println!("Value: {:#?}", value);
     }

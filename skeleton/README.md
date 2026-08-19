@@ -28,9 +28,11 @@
 
 #### Loading data from the shared state
 
-  The load_data associated function takes in the shared state and a unbounded sender.
+  The load_data associated function takes in the shared state, an
+  unbounded sender, and an optional recording path (websocket deltas are
+  written there for offline replay).
 
-  ss::SharedState::load_data(&self, sender)
+  ss::load_data(state, sender, record)
 
 #### CLIENTS AND MARKET DATA
 

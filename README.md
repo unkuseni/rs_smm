@@ -73,9 +73,76 @@ RS_SMM is a sophisticated market making bot implemented in Rust. It's designed t
    [bps]
    BTCUSDT = 1.0
    ETHUSDT = 2.0
+
+   # Optional: record websocket deltas for offline replay.
+   # record = "session.rec"
+
+   # Strategy constants (all optional; defaults shown).
+   [strategy]
+   imb_weight = 0.25
+   deep_imb_weight = 0.10
+   trade_weight = 0.30
+   voi_weight = 0.10
+   deep_ofi_weight = 0.10
+   predict_weight = 0.15
+   imb_deadband = 0.20
+   trade_deadband = 0.20
+   predict_gate = 0.0005
+   basis_gate = 0.0005
+   inventory_adjustment = 0.63
+   aggression_min = 0.10
+   aggression_max = 0.63
+   vol_spread_scaling = 200.0
+   use_microprice_anchor = true
+   rebalance_threshold = 0.45
+   rebalance_cooldown_ms = 30000
+   grid_stale_ms = 180000
+   position_sync_ms = 60000
+   # Avellaneda-Stoikov reservation pricing (0 = heuristic inventory term).
+   as_gamma = 0
+   as_horizon_secs = 10.0
+   as_kappa = 1.0
+   # Cont et al. OFI impact fallback predictor (0 disables).
+   ofi_impact_k = 0.0
+   # Cartea-style regime-smoothed imbalance offset (0 disables).
+   regime_weight = 0.0
+   # Funding cost in bps/hour for the backtest (0 disables).
+   funding_bps_per_hour = 0.0
+   # Portfolio risk kill switch (0 disables): halt + cancel-all on breach.
+   max_drawdown_frac = 0.0
+   max_portfolio_delta = 0.0
+   # Optional: persist position/live orders across restarts.
+   # state_file = "state.json"
    ```
 
+   The config file is watched for changes: edit and save `config.toml` while
+   the bot is running and the new spreads/strategy constants are applied
+   within a few seconds (hot reload).
+
 3. Adjust the values according to your trading strategy and risk tolerance.
+
+## Backtesting / Offline Replay
+
+1. Set `record = "session.rec"` in `config.toml` and run the bot; it writes
+   the raw websocket deltas (book and trades) to that file.
+2. Replay the recording offline with the same or modified strategy settings:
+   ```
+   cargo run --release --bin backtest -- session.rec
+   ```
+   The harness replays the deltas through the real feature engine and a
+   simulated quote generator: resting orders fill with a FIFO queue-position
+   model (a trade at your level consumes the visible queue ahead first),
+   market-order rebalances fill at the best bid/ask, funding is accrued on
+   held inventory, and maker/taker fees (2/5 bps) are charged. It reports
+   PnL, Sharpe (mean/std of per-update PnL), fees, grid refreshes, and fills
+   per grid level — use it to A/B test `[strategy]` settings on recorded
+   data before deploying.
+3. Parameter sensitivity sweep over one strategy key:
+   ```
+   cargo run --release --bin backtest -- session.rec --sweep trade_weight 0.0 0.6 0.05
+   ```
+
+   Before deploying with real funds, follow [docs/TESTNET.md](docs/TESTNET.md).
 
 ## Running the Bot
 
@@ -94,16 +161,22 @@ RS_SMM is a sophisticated market making bot implemented in Rust. It's designed t
   - `parameters/`: Handles configuration and parameter management
   - `strategy/`: Implements the market making strategy
   - `trader/`: Manages order generation and execution
+  - `backtest.rs`: Offline replay/backtest harness (recording -> simulated trading)
+  - `bin/backtest.rs`: CLI entry point for replaying a recording
   - `main.rs`: Entry point of the application
 - `skeleton/`
   - `exchanges/`: Exchange clients, websocket subscriptions, and shared-state loading
-  - `util/`: Local order book, helpers, logger, and candles
+  - `util/`: Local order book, helpers, logger, candles, and the recorder/replay module
 
 ## Making Changes
 
 1. **Modifying the Strategy**:
    - Edit `src/strategy/market_maker.rs` to adjust the core market making logic.
    - Modify `src/trader/quote_gen.rs` to change how orders are generated.
+   - Skew weights, deadbands, spread scaling, the microprice anchor, and
+     inventory rebalancing are configurable through the `[strategy]` table
+     in `config.toml` (defaults in `skeleton/src/util/helpers.rs`,
+     `StrategyConfig`) — no code edits needed to tune them.
 
 2. **Adjusting Parameters**:
    - Edit `skeleton/src/util/helpers.rs` (the `Config` struct) to add or modify configurable parameters.

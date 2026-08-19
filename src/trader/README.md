@@ -43,10 +43,20 @@ let quote_gen = QuoteGenerator::new(
 );
 
 // In your main loop:
-quote_gen.update_grid(private_data, skew, order_book, symbol).await;
+quote_gen
+    .update_grid(private_data, skew, vol, order_book, symbol)
+    .await;
+// vol is the mid-return volatility from Engine::mid_return_vol(); it widens
+// the quoted spread in volatile regimes.
 ```
 
 # Inventory Control
+
+> The current implementation reads the adjustment strength from
+> `config.toml` `[strategy] inventory_adjustment` (default 0.63) and adds
+> optional market-order rebalancing (`rebalance_threshold`,
+> `rebalance_cooldown_ms`). The trend-following variant below is documented
+> but **not implemented**.
 
   This prioritizes trend-following when inventory aligns with trend
 

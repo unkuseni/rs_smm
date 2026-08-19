@@ -2,6 +2,7 @@ use std::fmt::Debug;
 
 use binance::model::AggrTradesEvent;
 use bybit::{Ask, Bid, TickDirection, WsTrade};
+use serde::{Deserialize, Serialize};
 
 use super::{
     ex_binance::{BinanceClient, BinanceMarket, BinancePrivate},
@@ -53,7 +54,7 @@ impl TaggedPrivate {
 /// The loaders in `ss` apply these deltas to the authoritative books/trades
 /// they own, which keeps the per-event channel payload small instead of
 /// cloning the entire market snapshot on every websocket event.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum MarketEvent {
     Book {
         symbol: String,

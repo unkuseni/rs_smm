@@ -12,13 +12,11 @@ This module implements a suite of advanced market microstructure features for hi
    - Volume at the Offset (VOI)
    - Trade imbalance
 
-3. `impact.rs`: Calculates various price impact and return metrics:
-   - Price impact of trades
-   - Expected value and improved expected value
-   - Mid-price changes and basis
-   - Expected returns
+3. `impact.rs`: Calculates various return metrics:
+   - Expected value
+   - Mid-price basis and expected returns
    - Price fluctuations
-   - Average trade price
+   - Average trade price (incremental VWAP)
 
 4. `linear_reg.rs`: Provides linear regression tools for price prediction:
    - Mid-price regression using multiple features
@@ -45,16 +43,30 @@ let skew = engine.skew;
 
 ## Configuration
 
-Adjust weights in `engine.rs` to fine-tune the skew calculation:
+Skew weights, deadbands, gates and the prediction setup are driven by the
+`[strategy]` table in `config.toml` (defaults live in
+`skeleton::util::helpers::StrategyConfig`):
 
-```rust
-const IMB_WEIGHT: f64 = 0.25;
-const DEEP_IMB_WEIGHT: f64 = 0.10;
-const VOI_WEIGHT: f64 = 0.10;
-const OFI_WEIGHT: f64 = 0.20;
-const DEEP_OFI_WEIGHT: f64 = 0.10;
-const PREDICT_WEIGHT: f64 = 0.25;
+```toml
+[strategy]
+imb_weight = 0.25          # top-of-book imbalance
+deep_imb_weight = 0.10     # average deep imbalance
+trade_weight = 0.30        # trade imbalance
+voi_weight = 0.10          # volume of interest (sign only)
+deep_ofi_weight = 0.10     # depth-normalized OFI magnitude
+predict_weight = 0.15      # regression-based predicted move
 ```
+
+Notes:
+- Deep OFI now enters the skew with its **magnitude**, normalized by the
+depth-weighted volume at the widest requested depth (Cont, Kukanov &
+Stoikov 2011: price impact is linear in OFI, scaled by inverse depth).
+- The regression uses lagged feature pairs `[f_t, f_{t-1}]` (8 columns) to
+predict the next mid price (Shen 2015 finds instantaneous and lag-1
+imbalance are the significant predictors).
+- `Engine::mid_return_vol` exposes the rolling std of mid returns, which the
+  quote generator uses for its volatility-adaptive spread (rescaled to
+  per-second volatility under the ~10ms update cadence).
 
 ## Dependencies
 

@@ -17,6 +17,7 @@ use crate::exchanges::exchange::{
     Client, Exchange, MarketEvent, MarketMessage, PrivateData, TaggedPrivate,
 };
 use crate::util::logger::Logger;
+use crate::util::recorder::Recorder;
 use bybit::{Bybit, Category, InstrumentInfo, InstrumentRequest, MarketData, WsTrade};
 use std::collections::VecDeque;
 
@@ -41,6 +42,8 @@ pub struct SharedState {
     pub private: HashMap<String, PrivateData>,
     pub markets: Vec<MarketMessage>,
     pub symbols: Vec<String>,
+    /// Optional path to record websocket deltas to for offline replay.
+    pub record: Option<String>,
 }
 
 impl SharedState {
@@ -62,6 +65,7 @@ impl SharedState {
                 _ => panic!("Invalid exchange"),
             },
             symbols: Vec::new(),
+            record: None,
         }
     }
 
@@ -118,9 +122,37 @@ impl SharedState {
     }
 }
 
+/// Records one event, flushing to disk periodically so a Ctrl+C shutdown
+/// loses at most the last flush interval rather than the buffered tail.
+fn record_event(recorder: &mut Option<Recorder>, ev: &MarketEvent, counter: &mut u64) {
+    let Some(rec) = recorder.as_mut() else {
+        return;
+    };
+    if let Err(e) = rec.record(ev) {
+        eprintln!("Failed to record event: {}", e);
+        *recorder = None;
+        return;
+    }
+    *counter += 1;
+    if (*counter).is_multiple_of(1024) {
+        if let Err(e) = rec.flush() {
+            eprintln!("Failed to flush recording: {}", e);
+            *recorder = None;
+        }
+    }
+}
+
 /// Asynchronously loads data from the configured exchange and sends `Arc`
 /// snapshots of the shared state to the market maker.
-pub async fn load_data(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<SharedState>>) {
+///
+/// When `record` is set, the websocket deltas are written to that file so the
+/// session can be replayed offline through the backtest harness.
+pub async fn load_data(
+    mut state: SharedState,
+    state_sender: mpsc::UnboundedSender<Arc<SharedState>>,
+    record: Option<String>,
+) {
+    state.record = record;
     let exchange = state.exchange.clone();
     match exchange.as_str() {
         "bybit" => load_bybit(state, state_sender).await,
@@ -228,6 +260,8 @@ fn new_trade_buffers(symbols: &[String]) -> HashMap<String, Arc<VecDeque<WsTrade
 async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<SharedState>>) {
     let symbols = state.symbols.clone();
     let clients = state.clients.clone();
+    let exchange = state.exchange.clone();
+    let record_path = state.record.clone();
 
     // Seed private-data entries before sharing the state.
     let mut state = state;
@@ -241,6 +275,29 @@ async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<
     // Authoritative books and trades owned by this loader.
     let mut books = bybit_instrument_books(&symbols).await;
     let mut trades = new_trade_buffers(&symbols);
+
+    // Optional delta recorder for offline replay.
+    let mut recorder = record_path.as_ref().and_then(|path| {
+        let meta: Vec<(String, &LocalBook)> = books
+            .iter()
+            .map(|(s, b)| (s.clone(), b.as_ref()))
+            .collect();
+        match Recorder::new(
+            path,
+            &exchange,
+            crate::util::helpers::generate_timestamp(),
+            &meta,
+        ) {
+            Ok(rec) => Some(rec),
+            Err(e) => {
+                eprintln!("Failed to create recording at {}: {}", path, e);
+                None
+            }
+        }
+    });
+
+    // Events written since the last flush.
+    let mut recorded: u64 = 0;
 
     // Private subscriptions (one task per client).
     let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<TaggedPrivate>();
@@ -268,6 +325,7 @@ async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<
     loop {
         tokio::select! {
             Some(ev) = market_receiver.recv() => {
+                record_event(&mut recorder, &ev, &mut recorded);
                 let (symbol, timestamp) = match ev {
                     MarketEvent::Book { symbol, bids, asks, timestamp, bba } => {
                         if let Some(book_arc) = books.get_mut(&symbol) {
@@ -327,6 +385,8 @@ async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<
 async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<SharedState>>) {
     let symbols = state.symbols.clone();
     let clients = state.clients.clone();
+    let exchange = state.exchange.clone();
+    let record_path = state.record.clone();
 
     let mut state = state;
     for symbol in clients.keys() {
@@ -339,6 +399,29 @@ async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Ar
 
     let mut books = binance_instrument_books(&symbols).await;
     let mut trades = new_trade_buffers(&symbols);
+
+    // Optional delta recorder for offline replay.
+    let mut recorder = record_path.as_ref().and_then(|path| {
+        let meta: Vec<(String, &LocalBook)> = books
+            .iter()
+            .map(|(s, b)| (s.clone(), b.as_ref()))
+            .collect();
+        match Recorder::new(
+            path,
+            &exchange,
+            crate::util::helpers::generate_timestamp(),
+            &meta,
+        ) {
+            Ok(rec) => Some(rec),
+            Err(e) => {
+                eprintln!("Failed to create recording at {}: {}", path, e);
+                None
+            }
+        }
+    });
+
+    // Events written since the last flush.
+    let mut recorded: u64 = 0;
 
     let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<TaggedPrivate>();
     for (symbol, client) in clients {
@@ -364,6 +447,7 @@ async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Ar
     loop {
         tokio::select! {
             Some(ev) = market_receiver.recv() => {
+                record_event(&mut recorder, &ev, &mut recorded);
                 let (symbol, timestamp) = match ev {
                     MarketEvent::Book { symbol, bids, asks, timestamp, bba } => {
                         if let Some(book_arc) = books.get_mut(&symbol) {
@@ -424,6 +508,8 @@ async fn load_both(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<S
     let logger = state.logging.clone();
     let symbols = state.symbols.clone();
     let clients = state.clients.clone();
+    let exchange = state.exchange.clone();
+    let record_path = state.record.clone();
 
     if clients.is_empty() {
         logger.error("No clients found");
@@ -436,6 +522,36 @@ async fn load_both(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<S
     let mut binance_books = binance_instrument_books(&symbols).await;
     let mut bybit_trades = new_trade_buffers(&symbols);
     let mut binance_trades = new_trade_buffers(&symbols);
+
+    // Optional delta recorder for offline replay. Both streams share one
+    // recording; the header merges instrument metadata from both exchanges
+    // so every recorded symbol can be replayed.
+    let mut recorder = record_path.as_ref().and_then(|path| {
+        let mut meta: Vec<(String, &LocalBook)> = bybit_books
+            .iter()
+            .map(|(s, b)| (s.clone(), b.as_ref()))
+            .collect();
+        for (s, b) in &binance_books {
+            if !meta.iter().any(|(sym, _)| sym == s) {
+                meta.push((s.clone(), b.as_ref()));
+            }
+        }
+        match Recorder::new(
+            path,
+            &exchange,
+            crate::util::helpers::generate_timestamp(),
+            &meta,
+        ) {
+            Ok(rec) => Some(rec),
+            Err(e) => {
+                eprintln!("Failed to create recording at {}: {}", path, e);
+                None
+            }
+        }
+    });
+
+    // Events written since the last flush.
+    let mut recorded: u64 = 0;
 
     let (private_sender, mut private_receiver) = mpsc::unbounded_channel::<TaggedPrivate>();
     for (symbol, client) in clients {
@@ -484,6 +600,7 @@ async fn load_both(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<S
     loop {
         tokio::select! {
             Some(ev) = bybit_receiver.recv() => {
+                record_event(&mut recorder, &ev, &mut recorded);
                 let (symbol, timestamp) = match ev {
                     MarketEvent::Book { symbol, bids, asks, timestamp, bba } => {
                         if let Some(book_arc) = bybit_books.get_mut(&symbol) {
@@ -522,6 +639,7 @@ async fn load_both(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<S
             }
 
             Some(ev) = binance_receiver.recv() => {
+                record_event(&mut recorder, &ev, &mut recorded);
                 let (symbol, timestamp) = match ev {
                     MarketEvent::Book { symbol, bids, asks, timestamp, bba } => {
                         if let Some(book_arc) = binance_books.get_mut(&symbol) {

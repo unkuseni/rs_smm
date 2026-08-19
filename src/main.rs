@@ -21,10 +21,15 @@ async fn main() {
         rate_limit,
         tick_window,
         bps,
+        record,
+        state_file,
+        strategy,
     } = use_toml();
 
     // Initialize shared state with the exchange, clients, and symbols.
     let mut state = ss::SharedState::new(exchange);
+    // Optional websocket-delta recording for offline replay.
+    state.record = record.clone();
     state.add_symbols(symbols);
     for (key, secret, symbol) in api_keys {
         // A value prefixed with "env:" is resolved from the environment so
@@ -48,24 +53,48 @@ async fn main() {
         depths,
         rate_limit,
         tick_window,
+        strategy,
     )
     .await;
 
     // Set the base spread in bps for profit, keyed by symbol.
     market_maker.set_spread_toml(bps);
 
+    // Optional per-symbol state persistence across restarts.
+    market_maker.state_file = state_file;
+    if let Err(e) = market_maker.load_state() {
+        eprintln!("Failed to restore state: {}", e);
+    }
+
     // Create a channel for shared-state snapshots.
     let (sender, receiver) = mpsc::unbounded_channel::<Arc<ss::SharedState>>();
 
+    // Watch the config file and push reloads to the strategy loop.
+    let (config_sender, config_receiver) = mpsc::unbounded_channel::<Config>();
+    {
+        let config_path = rs_smm::parameters::config_path();
+        tokio::spawn(async move {
+            if let Err(e) = skeleton::util::helpers::watch_config(
+                config_path,
+                std::time::Duration::from_secs(5),
+                config_sender,
+            )
+            .await
+            {
+                eprintln!("Config watcher stopped: {}", e);
+            }
+        });
+    }
+
     // Load market/private data and send snapshots across the channel.
     tokio::spawn(async move {
-        ss::load_data(state, sender).await;
+        ss::load_data(state, sender, record).await;
     });
 
     // Run the strategy loop until it ends or the user interrupts (Ctrl+C),
     // then cancel all open orders before exiting.
     tokio::select! {
-        _ = market_maker.start_loop(receiver) => {}
+        _ = market_maker.start_loop(receiver, config_receiver) => {}
         _ = tokio::signal::ctrl_c() => {
             println!("Received Ctrl+C; shutting down");
         }

@@ -1,51 +1,6 @@
 use std::collections::VecDeque;
 
 use bybit::WsTrade;
-use skeleton::util::localorderbook::LocalBook;
-
-/// Calculates the change in quoted depth between two order book states.
-///
-/// This is the change in resting volume across the bid and ask sides at the
-/// given depth, which serves as a coarse measure of liquidity pressure.
-///
-/// # Arguments
-///
-/// * `new_book` - The current order book state.
-/// * `old_book` - The previous order book state.
-/// * `depth` - The depth of the order book to consider, if any.
-///
-/// # Returns
-///
-/// The change in quoted volume.
-pub fn price_impact(new_book: &LocalBook, old_book: &LocalBook, depth: Option<usize>) -> f64 {
-    let (mut old_bid_vol, mut curr_bid_vol, mut old_ask_vol, mut curr_ask_vol) = (
-        old_book.best_bid.qty,
-        new_book.best_bid.qty,
-        old_book.best_ask.qty,
-        new_book.best_ask.qty,
-    );
-
-    if let Some(depth) = depth {
-        old_bid_vol = old_book
-            .bids
-            .iter()
-            .rev()
-            .take(depth)
-            .map(|(_, qty)| qty)
-            .sum();
-        curr_bid_vol = new_book
-            .bids
-            .iter()
-            .rev()
-            .take(depth)
-            .map(|(_, qty)| qty)
-            .sum();
-        old_ask_vol = old_book.asks.iter().take(depth).map(|(_, qty)| qty).sum();
-        curr_ask_vol = new_book.asks.iter().take(depth).map(|(_, qty)| qty).sum();
-    }
-
-    (curr_bid_vol - old_bid_vol) + (curr_ask_vol - old_ask_vol)
-}
 
 /// Calculates the expected price given the old price, current price, and an
 /// imbalance signal in [-1, 1].
@@ -53,11 +8,6 @@ pub fn expected_value(old_price: f64, curr_price: f64, imbalance: f64) -> f64 {
     let norm_imb = imbalance.abs();
     let price_change = (curr_price - old_price) * norm_imb;
     curr_price + price_change.copysign(imbalance)
-}
-
-/// Calculates the change in the mid price relative to the average tick size.
-pub fn mid_price_change(old_price: f64, curr_price: f64, avg_tick: f64) -> f64 {
-    (curr_price - old_price) / avg_tick
 }
 
 /// Calculates the average of two prices.
@@ -100,8 +50,9 @@ pub fn price_flu(old_price: f64, curr_price: f64) -> f64 {
 /// tick.
 ///
 /// * `prev_avg` is returned unchanged when no new volume has traded.
-/// * `tick_value` is the USD value of a one-tick price move (for
-///   USDT-margined linear contracts this is the book's tick size).
+/// * `tick_value` is the USD value of a one-tick price move. For
+///   USDT-margined linear contracts the caller passes the book's tick size
+///   as an approximation of the per-contract tick value.
 ///
 /// The result is the VWAP of the new trades expressed in tick units.
 pub fn avg_trade_price(

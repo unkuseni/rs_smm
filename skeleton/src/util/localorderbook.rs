@@ -11,6 +11,11 @@ pub struct LocalBook {
     pub best_bid: Bid,
     pub mid_price: f64,
     pub tick_size: f64,
+    /// Contract multiplier. For USDT-margined linear contracts the quantity
+    /// is quoted in base-asset units, so the per-unit tick value is the tick
+    /// size itself and the multiplier is 1.0. Populate a different value if
+    /// an exchange exposes one (e.g. inverse contracts).
+    pub contract_size: f64,
     pub lot_size: f64,
     pub min_order_size: f64,
     pub min_notional: f64,
@@ -35,13 +40,14 @@ impl LocalBook {
                 qty: 0.0,
             },
             mid_price: 0.0,
+            tick_size: 0.0,
+            contract_size: 1.0,
             lot_size: 0.0,
             min_order_size: 0.0,
             best_bid: Bid {
                 price: 0.0,
                 qty: 0.0,
             },
-            tick_size: 0.0,
             post_only_max: 0.0,
             min_notional: 0.0,
         }
@@ -136,50 +142,10 @@ impl LocalBook {
         self.last_update = timestamp;
     }
 
+    /// Binance best-bid/ask snapshots share the exact same update
+    /// semantics as Bybit's, so this delegates to `update_bba`.
     pub fn update_binance_bba(&mut self, bids: Vec<Bid>, asks: Vec<Ask>, timestamp: u64) {
-        // If the timestamp is not newer than the last update, return early
-        if timestamp < self.last_update {
-            return;
-        }
-
-        // Update the bids in the order book
-        let mut highest_bid = None;
-        for bid in bids.iter() {
-            let price = OrderedFloat::from(bid.price);
-            highest_bid = Some(highest_bid.map_or(price, |h: OrderedFloat<f64>| h.max(price)));
-            self.bids
-                .entry(price)
-                .and_modify(|qty| *qty = bid.qty)
-                .or_insert(bid.qty);
-        }
-        // Remove bids with prices higher than the current best bid
-        if let Some(highest_bid) = highest_bid {
-            self.bids.retain(|&key, _| key <= highest_bid);
-        }
-
-        let mut lowest_ask = None;
-        for ask in asks.iter() {
-            let price = OrderedFloat::from(ask.price);
-            lowest_ask = Some(lowest_ask.map_or(price, |l: OrderedFloat<f64>| l.min(price)));
-            self.asks
-                .entry(price)
-                .and_modify(|qty| *qty = ask.qty)
-                .or_insert(ask.qty);
-        }
-        // Remove asks with prices lower than the current best ask
-        if let Some(lowest_ask) = lowest_ask {
-            self.asks.retain(|&key, _| key >= lowest_ask);
-        }
-
-        // Remove any bids/asks with quantity equal to 0
-        self.bids.retain(|_, &mut v| v != 0.0);
-        self.asks.retain(|_, &mut v| v != 0.0);
-
-        // Recompute the best bid/ask and mid price
-        self.recompute_bba();
-
-        // Update the last update timestamp
-        self.last_update = timestamp;
+        self.update_bba(bids, asks, timestamp);
     }
 
     /// Recomputes the best bid, best ask, and mid price from the book maps.
@@ -356,6 +322,16 @@ impl LocalBook {
         let ask = (best_bid_qty / total_qty) * ask_price;
         let bid = (best_ask_qty / total_qty) * bid_price;
         bid + ask
+    }
+
+    /// Visible resting quantity at an exact bid price level, if present.
+    pub fn bid_qty_at(&self, price: f64) -> Option<f64> {
+        self.bids.get(&OrderedFloat(price)).copied()
+    }
+
+    /// Visible resting quantity at an exact ask price level, if present.
+    pub fn ask_qty_at(&self, price: f64) -> Option<f64> {
+        self.asks.get(&OrderedFloat(price)).copied()
     }
 
     pub fn effective_spread(&self, is_buy_order: bool) -> f64 {
