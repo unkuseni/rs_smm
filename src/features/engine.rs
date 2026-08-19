@@ -11,7 +11,7 @@ use skeleton::util::{
 use super::{
     imbalance::{calculate_ofi, imbalance_ratio, trade_imbalance, voi},
     impact::{avg_trade_price, expected_return, mid_price_basis},
-    linear_reg::mid_price_regression,
+    linear_reg::{ridge_fit, ridge_predict, RIDGE_LAMBDA},
 };
 
 /// The engine tracks rolling market-microstructure features per symbol and
@@ -42,6 +42,9 @@ pub struct Engine {
     pub predicted_price: f64,
     pub skew: f64,
     mid_prices: VecDeque<f64>,
+    /// Book timestamps aligned with mid_prices, used to build wall-clock
+    /// prediction horizons (updates are event-driven, not fixed-rate).
+    mid_ts: VecDeque<u64>,
     /// One row per tick: [voi, imbalance_ratio, mid_price_basis, ofi_scaled].
     features: VecDeque<[f64; 4]>,
     ticks_since_refit: usize,
@@ -68,6 +71,7 @@ impl Engine {
             predicted_price: 0.0,
             skew: 0.0,
             mid_prices: VecDeque::new(),
+            mid_ts: VecDeque::new(),
             features: VecDeque::new(),
             ticks_since_refit: 0,
             tick_window,
@@ -158,10 +162,13 @@ impl Engine {
         // Update the EMA of the basis.
         self.price_basis.update(self.mid_price_basis);
 
-        // Maintain a rolling window of mid prices for the regression.
+        // Maintain a rolling window of mid prices (and their timestamps)
+        // for the regression.
         self.mid_prices.push_back(curr_book.get_mid_price());
+        self.mid_ts.push_back(curr_book.last_update);
         if self.mid_prices.len() > self.tick_window {
             self.mid_prices.pop_front();
+            self.mid_ts.pop_front();
         }
 
         // Maintain a rolling window of features for the regression.
@@ -201,12 +208,25 @@ impl Engine {
     }
 
     /// Fits a linear model on lagged feature pairs and returns the
-    /// one-step-ahead prediction for the most recent feature row.
+    /// prediction for the most recent feature row.
     ///
     /// Row t carries [f_t, f_{t-1}] (current features plus their one-lag
-    /// values, 8 columns total) and predicts mid_{t+1}; Shen (2015) finds the
-    /// instantaneous and lag-1 imbalance are the significant predictors, with
-    /// mean reversion at further lags.
+    /// values, 8 columns total); Shen (2015) finds the instantaneous and
+    /// lag-1 imbalance are the significant predictors, with mean reversion
+    /// at further lags.
+    ///
+    /// The target depends on the configured horizon:
+    /// - predict_horizon_ms = 0 and predict_horizon_bps = 0: the next
+    ///   update's mid (one-step ahead, the default),
+    /// - predict_horizon_ms > 0: the mid observed at least that many
+    ///   milliseconds ahead (wall-clock timestamps, so the uneven cadence of
+    ///   book updates does not bias the horizon), e.g. 3000..10000 for
+    ///   3-10 second predictions,
+    /// - predict_horizon_bps > 0 (takes precedence): the barrier-touch price
+    ///   (mid * (1 +- bps)) hit first inside the lookahead window, or the
+    ///   last mid in the window when the barrier is never touched. With e.g.
+    ///   30.0 bps the model learns the conditional direction of a 30 bps
+    ///   move; any value works (configurable bps).
     fn predict_price(&mut self, curr_spread: f64) -> Result<f64, String> {
         if !curr_spread.is_finite() || curr_spread <= 0.0 {
             return Err("Invalid current spread".to_string());
@@ -216,24 +236,100 @@ impl Engine {
         }
 
         let n = self.features.len();
-        // Targets: mid prices from index 2 on, aligned with rows t=1..n-1
-        // which predict mid_{t+1}.
-        let mids: Vec<f64> = self.mid_prices.iter().skip(2).copied().collect();
-        let rows: Vec<f64> = (1..n - 1)
-            .flat_map(|t| {
-                let f0 = self.features[t];
-                let f1 = self.features[t - 1];
-                [
-                    f0[0], f0[1], f0[2], f0[3], f1[0], f1[1], f1[2], f1[3],
-                ]
-            })
-            .collect();
-        let x = Array2::from_shape_vec((n - 2, 8), rows)
+        let horizon_ms = self.strategy.predict_horizon_ms;
+        let barrier_bps = self.strategy.predict_horizon_bps;
+
+        let mut xs: Vec<[f64; 8]> = Vec::new();
+        let mut ys: Vec<f64> = Vec::new();
+        let mut last_row: Option<[f64; 8]> = None;
+
+        for t in 1..n {
+            let f0 = self.features[t];
+            let f1 = self.features[t - 1];
+            // Features are normalized by the current spread (in bps) so the
+            // regression is scale-free across assets and regimes, matching
+            // the historical mid_price_regression normalization.
+            let row: [f64; 8] = [
+                f0[0], f0[1], f0[2], f0[3], f1[0], f1[1], f1[2], f1[3],
+            ]
+            .map(|x| x / curr_spread);
+
+            if t == n - 1 {
+                last_row = Some(row);
+                continue;
+            }
+
+            let target = if barrier_bps > 0.0 {
+                // bps mode wins; horizon_ms only bounds the lookahead when set.
+                Some(self.barrier_target(t, horizon_ms, barrier_bps))
+            } else if horizon_ms > 0 {
+                self.time_target(t, horizon_ms)
+            } else if t + 1 < n {
+                Some(self.mid_prices[t + 1])
+            } else {
+                None
+            };
+
+            if let Some(target) = target {
+                xs.push(row);
+                ys.push(target);
+            }
+        }
+
+        let Some(last_row) = last_row else {
+            return Err("No current feature row".to_string());
+        };
+        if xs.len() < 2 {
+            return Err("Not enough observations for the configured horizon".to_string());
+        }
+
+        // Ridge-regularized fit: the lagged feature pairs are nearly
+        // collinear, so plain least squares can explode (see
+        // linear_reg::ridge_fit). The current row is the prediction input.
+        let x = Array2::from_shape_vec((xs.len(), 8), xs.iter().flatten().copied().collect())
             .map_err(|e| format!("Failed to reshape features: {}", e))?;
-        let y = Array1::from(mids);
-        // mid_price_regression trains on all but the last row and predicts
-        // the last row, so the model maps a feature row to the next mid.
-        mid_price_regression(y, x, curr_spread)
+        let y = Array1::from(ys);
+        let weights = ridge_fit(&x, &y, RIDGE_LAMBDA)?;
+        Ok(ridge_predict(&weights, &last_row))
+    }
+
+    /// The mid observed at least `horizon_ms` after row t, if the window
+    /// reaches that far into the future.
+    fn time_target(&self, t: usize, horizon_ms: u64) -> Option<f64> {
+        let ts_t = self.mid_ts[t];
+        let n = self.mid_ts.len();
+        for j in t + 1..n {
+            if self.mid_ts[j].saturating_sub(ts_t) >= horizon_ms {
+                return Some(self.mid_prices[j]);
+            }
+        }
+        None
+    }
+
+    /// The barrier-touch price for row t: the first of mid*(1 +- bps)
+    /// reached inside the lookahead window, or the last mid in the window
+    /// when neither barrier is touched. The lookahead is bounded by
+    /// `horizon_ms` when set, otherwise by the whole remaining window.
+    fn barrier_target(&self, t: usize, horizon_ms: u64, barrier_bps: f64) -> f64 {
+        let mid_t = self.mid_prices[t];
+        let ts_t = self.mid_ts[t];
+        let up = mid_t * (1.0 + barrier_bps / 10_000.0);
+        let down = mid_t * (1.0 - barrier_bps / 10_000.0);
+        let mut last = mid_t;
+        let n = self.mid_ts.len();
+        for j in t + 1..n {
+            if horizon_ms > 0 && self.mid_ts[j].saturating_sub(ts_t) > horizon_ms {
+                break;
+            }
+            last = self.mid_prices[j];
+            if self.mid_prices[j] >= up {
+                return up;
+            }
+            if self.mid_prices[j] <= down {
+                return down;
+            }
+        }
+        last
     }
 
     /// Replaces the strategy configuration (used by config hot-reload).
@@ -547,6 +643,67 @@ mod tests {
         assert!(
             engine.predicted_price > b3.get_mid_price(),
             "OFI fallback should predict above the mid with positive OFI"
+        );
+    }
+
+    #[test]
+    fn time_horizon_prediction_targets_future_mid() {
+        // 10 ms update steps with a 30 ms horizon: targets are ~3 updates
+        // ahead, addressed by wall-clock timestamps.
+        let strategy = StrategyConfig {
+            predict_horizon_ms: 30,
+            ..Default::default()
+        };
+        let mut engine = Engine::new(10, strategy);
+        let empty = empty_trades();
+        let mut prev = make_book(&[(100.0, 10.0)], &[(100.5, 10.0)], 0);
+        for i in 1..12u64 {
+            let ts = i * 10;
+            let bid = 100.0 + i as f64 * 0.01;
+            let next = make_book(&[(bid, 10.0)], &[(bid + 0.5, 10.0)], ts);
+            engine.update(&next, &prev, &empty, &empty, &0.0, vec![3]);
+            prev = next;
+        }
+        assert!(
+            engine.predicted_price.is_finite() && engine.predicted_price > 0.0,
+            "horizon prediction should be finite: {}",
+            engine.predicted_price
+        );
+    }
+
+    #[test]
+    fn bps_barrier_prediction_stays_within_barrier() {
+        // 30 bps barrier targets; a gently rising market keeps the predicted
+        // price inside the barrier band around the current mid.
+        let strategy = StrategyConfig {
+            predict_horizon_bps: 30.0,
+            ..Default::default()
+        };
+        let mut engine = Engine::new(10, strategy);
+        let empty = empty_trades();
+        let mut prev = make_book(&[(100.0, 10.0)], &[(100.5, 10.0)], 0);
+        // Steps large enough that some windows touch the up barrier, so the
+        // targets are not degenerate.
+        let mut lo_band = f64::MAX;
+        let mut hi_band = f64::MIN;
+        for i in 1..12u64 {
+            let ts = i * 10;
+            let bid = 100.0 + i as f64 * 0.06;
+            let next = make_book(&[(bid, 10.0)], &[(bid + 0.5, 10.0)], ts);
+            let mid = next.get_mid_price();
+            lo_band = lo_band.min(mid * (1.0 - 30.0 / 10_000.0));
+            hi_band = hi_band.max(mid * (1.0 + 30.0 / 10_000.0));
+            engine.update(&next, &prev, &empty, &empty, &0.0, vec![3]);
+            prev = next;
+        }
+        // Every training target lives inside the global barrier band, so the
+        // prediction must too.
+        assert!(
+            engine.predicted_price >= lo_band - 1e-9 && engine.predicted_price <= hi_band + 1e-9,
+            "predicted {} outside barrier band [{:.5} .. {:.5}]",
+            engine.predicted_price,
+            lo_band,
+            hi_band
         );
     }
 

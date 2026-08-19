@@ -41,7 +41,7 @@ async fn main() {
             panic!("--sweep step must be positive");
         }
 
-        println!("key	value	symbol	total_pnl	sharpe	maker_fills	taker_fills	funding_paid");
+        println!("key	value	symbol	total_pnl	sharpe	maker_fills	taker_fills	funding_paid	hit_rate");
         let mut value = start;
         while value <= end + 1e-12 {
             let mut cfg = config.clone();
@@ -52,8 +52,13 @@ async fn main() {
             match backtest::run(&path, &cfg).await {
                 Ok(report) => {
                     for s in &report.symbols {
+                        let hit_rate = if s.pred_evals > 0 {
+                            s.pred_hits as f64 / s.pred_evals as f64
+                        } else {
+                            0.0
+                        };
                         println!(
-                            "{}	{}	{}	{:.6}	{:.4}	{}	{}	{:.6}",
+                            "{}	{}	{}	{:.6}	{:.4}	{}	{}	{:.6}	{:.4}",
                             key,
                             value,
                             s.symbol,
@@ -61,7 +66,8 @@ async fn main() {
                             s.sharpe,
                             s.maker_fills,
                             s.taker_fills,
-                            s.funding_paid
+                            s.funding_paid,
+                            hit_rate
                         );
                     }
                 }
@@ -108,5 +114,16 @@ fn print_report(report: &BacktestReport) {
         );
         println!("  total pnl:         {:.6}", s.total_pnl);
         println!("  pnl mean/std:      {:.4}", s.sharpe);
+        println!("  adverse ratio:     {:.3}", s.adverse_ratio);
+        println!("  grid amends:       {}", s.grid_amends);
+        println!("  rebalances:        {}", s.rebalance_count);
+        if s.pred_evals > 0 {
+            println!(
+                "  pred hit-rate:     {:.4} ({}/{} evals)",
+                s.pred_hits as f64 / s.pred_evals as f64,
+                s.pred_hits,
+                s.pred_evals
+            );
+        }
     }
 }

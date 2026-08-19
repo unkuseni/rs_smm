@@ -56,6 +56,15 @@ pub struct SymbolReport {
     pub sharpe: f64,
     /// Maker fills per grid level (0 = closest to the anchor price).
     pub fill_by_level: Vec<u64>,
+    /// Running realized/quoted spread ratio (adverse selection, < 1 = picked
+    /// off), in-place grid amendments, and market-order rebalances.
+    pub adverse_ratio: f64,
+    pub grid_amends: u64,
+    pub rebalance_count: u64,
+    /// Horizon-prediction evaluation: how often the predicted direction
+    /// matched the realized horizon outcome (only when a horizon is set).
+    pub pred_evals: u64,
+    pub pred_hits: u64,
 }
 
 /// The result of one replay run.
@@ -77,6 +86,9 @@ struct SymState {
     cash: f64,
     pnl_path: Vec<f64>,
     last_fund_ts: u64,
+    /// (timestamp, mid, predicted) at each book update after warmup, for the
+    /// offline horizon-prediction evaluation.
+    pred_log: Vec<(u64, f64, f64)>,
     report: SymbolReport,
 }
 
@@ -84,6 +96,78 @@ struct SymState {
 /// `bps_per_hour`. Long positions pay funding when the rate is positive.
 pub fn funding_pnl(position: f64, mark: f64, bps_per_hour: f64, dt_hours: f64) -> f64 {
     -position * mark * (bps_per_hour / 10_000.0) * dt_hours
+}
+
+/// Offline evaluation of the engine's horizon predictions against the
+/// recorded future. For each prediction made at (ts, mid), the outcome is
+/// determined by the same horizon rule the engine trains on (milliseconds,
+/// or +-bps barrier first touch) applied to the recorded mids that follow.
+/// Returns (evaluated, hits). Only meaningful when a horizon is configured;
+/// returns (0, 0) otherwise.
+pub fn evaluate_predictions(
+    entries: &[(u64, f64, f64)],
+    strategy: &StrategyConfig,
+) -> (u64, u64) {
+    let horizon_ms = strategy.predict_horizon_ms;
+    let bps = strategy.predict_horizon_bps;
+    if horizon_ms == 0 && bps <= 0.0 {
+        return (0, 0);
+    }
+    let mut evaluated = 0u64;
+    let mut hits = 0u64;
+    for (i, (ts, mid, pred)) in entries.iter().enumerate() {
+        let dir = if *pred > *mid {
+            1i8
+        } else if *pred < *mid {
+            -1
+        } else {
+            0
+        };
+        if dir == 0 {
+            continue;
+        }
+        let outcome = if bps > 0.0 {
+            let up = mid * (1.0 + bps / 10_000.0);
+            let down = mid * (1.0 - bps / 10_000.0);
+            let mut outcome = 0i8;
+            for (ts2, mid2, _) in &entries[i + 1..] {
+                if horizon_ms > 0 && ts2.saturating_sub(*ts) > horizon_ms {
+                    break;
+                }
+                if *mid2 >= up {
+                    outcome = 1;
+                    break;
+                }
+                if *mid2 <= down {
+                    outcome = -1;
+                    break;
+                }
+            }
+            outcome
+        } else {
+            let mut outcome = 0i8;
+            for (ts2, mid2, _) in &entries[i + 1..] {
+                if ts2.saturating_sub(*ts) >= horizon_ms {
+                    outcome = if *mid2 > *mid {
+                        1
+                    } else if *mid2 < *mid {
+                        -1
+                    } else {
+                        0
+                    };
+                    break;
+                }
+            }
+            outcome
+        };
+        if outcome != 0 {
+            evaluated += 1;
+            if outcome == dir {
+                hits += 1;
+            }
+        }
+    }
+    (evaluated, hits)
 }
 
 /// Applies one sweep parameter to a strategy config by key name. Used by the
@@ -102,6 +186,10 @@ pub fn sweep_value(key: &str, value: f64, strategy: &mut StrategyConfig) -> Resu
         "aggression_max" => strategy.aggression_max = value,
         "rebalance_threshold" => strategy.rebalance_threshold = value,
         "ofi_impact_k" => strategy.ofi_impact_k = value,
+        "predict_horizon_ms" => strategy.predict_horizon_ms = value.max(0.0) as u64,
+        "predict_horizon_bps" => strategy.predict_horizon_bps = value,
+        "predict_gate" => strategy.predict_gate = value,
+        "basis_gate" => strategy.basis_gate = value,
         "regime_weight" => strategy.regime_weight = value,
         "as_gamma" => strategy.as_gamma = value,
         "funding_bps_per_hour" => strategy.funding_bps_per_hour = value,
@@ -110,6 +198,7 @@ pub fn sweep_value(key: &str, value: f64, strategy: &mut StrategyConfig) -> Resu
                 "unknown sweep key: {} (supported: imb_weight, deep_imb_weight, trade_weight, \
                  voi_weight, deep_ofi_weight, predict_weight, vol_spread_scaling, \
                  inventory_adjustment, aggression_max, rebalance_threshold, ofi_impact_k, \
+                 predict_horizon_ms, predict_horizon_bps, predict_gate, basis_gate, \
                  regime_weight, as_gamma, funding_bps_per_hour)",
                 other
             ))
@@ -356,6 +445,15 @@ async fn on_book_event(
     st.prev_book = Some(st.book.clone());
     st.prev_trades = Some(st.trades.clone());
 
+    // Record the latest prediction (as of this update) for the offline
+    // horizon evaluation. Capped so very long recordings stay bounded.
+    if st.engine.predicted_price > 0.0 {
+        st.pred_log.push((ts, st.book.get_mid_price(), st.engine.predicted_price));
+        if st.pred_log.len() > 1_000_000 {
+            st.pred_log.drain(..500_000);
+        }
+    }
+
     st.pnl_path
         .push(st.cash + st.gen.position * st.book.get_mid_price());
 
@@ -453,6 +551,7 @@ pub async fn run(record_path: &str, config: &Config) -> Result<BacktestReport, S
                 cash: 0.0,
                 pnl_path: Vec::new(),
                 last_fund_ts: 0,
+                pred_log: Vec::new(),
                 report,
             },
         );
@@ -531,6 +630,12 @@ pub async fn run(record_path: &str, config: &Config) -> Result<BacktestReport, S
         st.report.final_position = st.gen.position;
         st.report.final_mid = st.book.get_mid_price();
         st.report.total_pnl = st.cash + st.gen.position * st.report.final_mid;
+        st.report.adverse_ratio = st.gen.adverse_ratio;
+        st.report.grid_amends = st.gen.grid_amends;
+        st.report.rebalance_count = st.gen.rebalance_count;
+        let (pred_evals, pred_hits) = evaluate_predictions(&st.pred_log, &config.strategy);
+        st.report.pred_evals = pred_evals;
+        st.report.pred_hits = pred_hits;
         let deltas: Vec<f64> = st.pnl_path.windows(2).map(|w| w[1] - w[0]).collect();
         if deltas.len() > 1 {
             let mean = deltas.iter().sum::<f64>() / deltas.len() as f64;

@@ -10,11 +10,11 @@ fn drawdown_limit_halts() {
         ..Default::default()
     };
     assert_eq!(
-        evaluate_risk(1000.0, 900.0, 0.0, &strategy),
+        evaluate_risk(1000.0, 900.0, 0.0, 0.0, &strategy),
         RiskDecision::Ok
     );
     assert_eq!(
-        evaluate_risk(1000.0, 790.0, 0.0, &strategy),
+        evaluate_risk(1000.0, 790.0, 0.0, 0.0, &strategy),
         RiskDecision::Halt
     );
 }
@@ -26,11 +26,11 @@ fn portfolio_inventory_limit_halts() {
         ..Default::default()
     };
     assert_eq!(
-        evaluate_risk(1000.0, 1000.0, 0.5, &strategy),
+        evaluate_risk(1000.0, 1000.0, 0.5, 0.0, &strategy),
         RiskDecision::Ok
     );
     assert_eq!(
-        evaluate_risk(1000.0, 1000.0, 0.9, &strategy),
+        evaluate_risk(1000.0, 1000.0, 0.9, 0.0, &strategy),
         RiskDecision::Halt
     );
 }
@@ -39,9 +39,55 @@ fn portfolio_inventory_limit_halts() {
 fn zero_limits_never_halt() {
     let strategy = StrategyConfig::default();
     assert_eq!(
-        evaluate_risk(1000.0, 0.0, 1000.0, &strategy),
+        evaluate_risk(1000.0, 0.0, 1000.0, 0.0, &strategy),
         RiskDecision::Ok
     );
+    assert_eq!(
+        evaluate_risk(1000.0, 0.0, 1000.0, 1000.0, &strategy),
+        RiskDecision::Ok
+    );
+}
+
+#[test]
+fn volatility_limit_halts() {
+    let strategy = StrategyConfig {
+        max_vol_bps: 50.0,
+        ..Default::default()
+    };
+    assert_eq!(
+        evaluate_risk(1000.0, 1000.0, 0.0, 30.0, &strategy),
+        RiskDecision::Ok
+    );
+    assert_eq!(
+        evaluate_risk(1000.0, 1000.0, 0.0, 80.0, &strategy),
+        RiskDecision::Halt
+    );
+}
+
+#[test]
+fn prediction_hit_rate_evaluation() {
+    use skeleton::util::helpers::StrategyConfig;
+
+    // A steep uptrend: the 30 bps up barrier is reached quickly, so a
+    // +1 prediction should always be right.
+    let entries: Vec<(u64, f64, f64)> = (0..20)
+        .map(|i| {
+            let mid = 100.0 + i as f64 * 0.1;
+            (i * 10, mid, mid * 1.003)
+        })
+        .collect();
+    let strategy = StrategyConfig {
+        predict_horizon_bps: 30.0,
+        ..Default::default()
+    };
+    let (evals, hits) = rs_smm::backtest::evaluate_predictions(&entries, &strategy);
+    assert!(evals > 0, "should evaluate some predictions");
+    assert_eq!(evals, hits, "all up-trend predictions should hit");
+
+    // Without a configured horizon nothing is evaluated.
+    let (evals0, hits0) =
+        rs_smm::backtest::evaluate_predictions(&entries, &StrategyConfig::default());
+    assert_eq!((evals0, hits0), (0, 0));
 }
 
 #[test]

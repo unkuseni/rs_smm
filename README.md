@@ -104,6 +104,11 @@ RS_SMM is a sophisticated market making bot implemented in Rust. It's designed t
    as_kappa = 1.0
    # Cont et al. OFI impact fallback predictor (0 disables).
    ofi_impact_k = 0.0
+   # Regression prediction horizon (0 = one-update-ahead).
+   # ms: mid at least this far ahead (3000..10000 = 3-10 s).
+   # bps: first +-N bps touch (e.g. 30.0); takes precedence over ms.
+   predict_horizon_ms = 0
+   predict_horizon_bps = 0.0
    # Cartea-style regime-smoothed imbalance offset (0 disables).
    regime_weight = 0.0
    # Funding cost in bps/hour for the backtest (0 disables).
@@ -111,6 +116,8 @@ RS_SMM is a sophisticated market making bot implemented in Rust. It's designed t
    # Portfolio risk kill switch (0 disables): halt + cancel-all on breach.
    max_drawdown_frac = 0.0
    max_portfolio_delta = 0.0
+   # Flash-crash defense (0 disables): halt at this per-second vol in bps.
+   max_vol_bps = 0.0
    # Optional: persist position/live orders across restarts.
    # state_file = "state.json"
    ```

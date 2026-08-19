@@ -61,9 +61,16 @@ Notes:
 - Deep OFI now enters the skew with its **magnitude**, normalized by the
 depth-weighted volume at the widest requested depth (Cont, Kukanov &
 Stoikov 2011: price impact is linear in OFI, scaled by inverse depth).
-- The regression uses lagged feature pairs `[f_t, f_{t-1}]` (8 columns) to
-predict the next mid price (Shen 2015 finds instantaneous and lag-1
-imbalance are the significant predictors).
+- The regression uses lagged feature pairs `[f_t, f_{t-1}]` (8 columns;
+Shen 2015 finds instantaneous and lag-1 imbalance are the significant
+predictors). The prediction horizon is configurable:
+  - `predict_horizon_ms = 0` (default): one-update-ahead mid,
+  - `predict_horizon_ms > 0`: mid at least that far ahead in wall-clock
+    time (e.g. 3000..10000 for 3-10 second predictions),
+  - `predict_horizon_bps > 0` (takes precedence): price at the first
+    +-N bps touch (e.g. 30.0 for 30 bps), or the last mid in the window
+    if the barrier is never touched - the model learns the conditional
+    direction of an N-bps move.
 - `Engine::mid_return_vol` exposes the rolling std of mid returns, which the
   quote generator uses for its volatility-adaptive spread (rescaled to
   per-second volatility under the ~10ms update cadence).

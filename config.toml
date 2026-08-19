@@ -93,6 +93,13 @@ as_horizon_secs = 10.0
 as_kappa = 1.0
 # Cont et al. linear OFI impact fallback predictor (0 disables).
 ofi_impact_k = 0.0
+# Regression prediction horizon (both 0 = one-update-ahead, the default).
+# ms: predict the mid at least this far ahead in wall-clock time
+#     (3-10 seconds => 3000..10000).
+# bps: predict the first +-N bps touch (e.g. 30.0 for 30 bps); takes
+#      precedence over ms. Any value works.
+predict_horizon_ms = 0
+predict_horizon_bps = 0.0
 # Cartea-style regime-smoothed imbalance offset (0 disables).
 regime_weight = 0.0
 # Funding cost for held inventory in bps per hour (backtest; 0 disables).
@@ -101,3 +108,6 @@ funding_bps_per_hour = 0.0
 # mark-to-market drawdown or aggregate inventory exceeds the limit.
 max_drawdown_frac = 0.0
 max_portfolio_delta = 0.0
+# Flash-crash defense (0 disables): halt and cancel all orders when the
+# realized per-second volatility exceeds this many basis points.
+max_vol_bps = 0.0

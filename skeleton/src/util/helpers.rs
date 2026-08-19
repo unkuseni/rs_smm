@@ -345,6 +345,20 @@ pub struct StrategyConfig {
     // predicted mid = mid * (1 + ofi_impact_k * ofi_scaled), used when the
     // regression cannot produce a prediction. 0 disables.
     pub ofi_impact_k: f64,
+    // Regression prediction horizon in milliseconds: 0 keeps the
+    // one-update-ahead target; when > 0 the target for each row is the mid
+    // observed at least this far ahead in wall-clock time (from book
+    // timestamps, so the event-driven update cadence does not bias it).
+    // e.g. 3000..10000 for 3-10 second predictions.
+    pub predict_horizon_ms: u64,
+    // Regression prediction horizon in basis points: 0 keeps the
+    // one-update-ahead target; when > 0 the target for each row is the mid
+    // price at the first +-predict_horizon_bps touch inside the lookahead
+    // window (bounded by predict_horizon_ms when set), e.g. 30.0 for 30 bps
+    // = 0.30%, or the last mid in the window when the barrier is never
+    // touched. Takes precedence over predict_horizon_ms. The model
+    // therefore learns the conditional direction of an N-bps move.
+    pub predict_horizon_bps: f64,
     // Cartea et al. (2018) regime-smoothed imbalance: the EMA-smoothed
     // imbalance is quantized into 5 regimes (-2..=2) and regime_weight *
     // regime is added to the skew. 0 disables.
@@ -354,10 +368,12 @@ pub struct StrategyConfig {
     pub funding_bps_per_hour: f64,
     // Portfolio risk limits (0 disables): halt quoting and cancel all orders
     // when the mark-to-market drawdown exceeds max_drawdown_frac of initial
-    // equity, or when the sum of |inventory_delta| across symbols exceeds
-    // max_portfolio_delta.
+    // equity, when the sum of |inventory_delta| across symbols exceeds
+    // max_portfolio_delta, or when the realized per-second volatility
+    // exceeds max_vol_bps basis points (the flash-crash defense).
     pub max_drawdown_frac: f64,
     pub max_portfolio_delta: f64,
+    pub max_vol_bps: f64,
 }
 
 impl Default for StrategyConfig {
@@ -386,10 +402,13 @@ impl Default for StrategyConfig {
             as_horizon_secs: 10.0,
             as_kappa: 1.0,
             ofi_impact_k: 0.0,
+            predict_horizon_ms: 0,
+            predict_horizon_bps: 0.0,
             regime_weight: 0.0,
             funding_bps_per_hour: 0.0,
             max_drawdown_frac: 0.0,
             max_portfolio_delta: 0.0,
+            max_vol_bps: 0.0,
         }
     }
 }

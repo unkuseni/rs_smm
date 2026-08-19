@@ -28,13 +28,17 @@ fn market_time(message: &MarketMessage) -> u64 {
 }
 
 /// Pure risk evaluation: halt when the mark-to-market drawdown exceeds
-/// `max_drawdown_frac` of initial equity, or when the sum of absolute
-/// inventory deltas across symbols exceeds `max_portfolio_delta`.
-/// Limits of 0 disable the respective check.
+/// `max_drawdown_frac` of initial equity, the sum of absolute inventory
+/// deltas across symbols exceeds `max_portfolio_delta`, or the realized
+/// per-second volatility exceeds `max_vol_bps` basis points (the flash-crash
+/// defense: Bieganowski & Slepaczuk 2026 show naive makers get picked off in
+/// volatility spikes, and Yagi et al. 2023 find OBI strategies withdraw in
+/// crashes). Limits of 0 disable the respective check.
 pub fn evaluate_risk(
     initial_equity: f64,
     equity: f64,
     portfolio_delta: f64,
+    vol_bps: f64,
     strategy: &StrategyConfig,
 ) -> RiskDecision {
     if initial_equity > 0.0 && strategy.max_drawdown_frac > 0.0 {
@@ -44,6 +48,9 @@ pub fn evaluate_risk(
         }
     }
     if strategy.max_portfolio_delta > 0.0 && portfolio_delta > strategy.max_portfolio_delta {
+        return RiskDecision::Halt;
+    }
+    if strategy.max_vol_bps > 0.0 && vol_bps > strategy.max_vol_bps {
         return RiskDecision::Halt;
     }
     RiskDecision::Ok
@@ -58,6 +65,8 @@ pub struct MarketMaker {
     pub generators: HashMap<String, QuoteGenerator>,
     pub depths: Vec<usize>,
     pub tick_window: usize,
+    /// Number of grid levels per side (telemetry + reporting).
+    pub orders_per_side: usize,
     /// Initial account equity (sum of configured balances), for the
     /// mark-to-market drawdown kill switch.
     pub initial_equity: f64,
@@ -121,6 +130,7 @@ impl MarketMaker {
             .await,
             depths,
             tick_window,
+            orders_per_side,
             initial_equity,
             halted: false,
             state_file: None,
@@ -209,24 +219,31 @@ impl MarketMaker {
             engine.set_strategy(config.strategy.clone());
         }
         self.strategy = config.strategy.clone();
+        self.db_sync_ms = config.turso.sync_interval_secs.saturating_mul(1000);
         println!(
             "Config hot-reloaded: {} symbols, strategy updated",
             self.generators.len()
         );
     }
 
-    /// Mark-to-market equity and aggregate inventory exposure, fed to the
-    /// pure risk evaluation.
+    /// Mark-to-market equity, aggregate inventory exposure, and the worst
+    /// per-second volatility across symbols, fed to the pure risk evaluation.
     fn risk_decision(&self) -> RiskDecision {
         let mut equity = self.initial_equity;
         let mut portfolio_delta = 0.0;
+        let mut max_vol = 0.0f64;
         for (symbol, generator) in &self.generators {
             if let Some(book) = self.old_books.get(symbol) {
                 equity += generator.position * book.get_mid_price();
             }
             portfolio_delta += generator.inventory_delta.abs();
         }
-        evaluate_risk(self.initial_equity, equity, portfolio_delta, &self.strategy)
+        for engine in self.features.values() {
+            max_vol = max_vol.max(engine.mid_return_vol());
+        }
+        // Per-update vol -> per-second vol (x10) -> basis points (x10000).
+        let vol_bps = max_vol * 10.0 * 10_000.0;
+        evaluate_risk(self.initial_equity, equity, portfolio_delta, vol_bps, &self.strategy)
     }
 
     /// Collects the pending telemetry (engine snapshots, fills, grid events)
@@ -268,7 +285,7 @@ impl MarketMaker {
                     ts,
                     symbol,
                     "refresh",
-                    self.depths.len() as i64,
+                    self.orders_per_side as i64,
                 ));
             }
             if generator.grid_amends > last_amend {
@@ -276,7 +293,7 @@ impl MarketMaker {
                     ts,
                     symbol,
                     "amend",
-                    self.depths.len() as i64,
+                    self.orders_per_side as i64,
                 ));
             }
             self.last_grid_counters
