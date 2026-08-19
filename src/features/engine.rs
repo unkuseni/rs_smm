@@ -241,6 +241,11 @@ impl Engine {
         self.strategy = strategy;
     }
 
+    /// The most recent mid price observed, if any.
+    pub fn last_mid(&self) -> Option<f64> {
+        self.mid_prices.back().copied()
+    }
+
     /// Standard deviation of mid-price log returns over the rolling window.
     ///
     /// Feeds the quote generator's volatility-adaptive spread: wider quotes

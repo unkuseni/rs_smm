@@ -140,6 +140,9 @@ pub struct QuoteGenerator {
     spread_roundtrips: u64,
     /// FIFO queue of unmatched buy fills: (execution price, quote price).
     open_buy_entries: VecDeque<(f64, f64)>,
+    /// Recent fills for telemetry; drained by the market maker on its
+    /// database sync cadence (capped so a disconnected sink cannot grow it).
+    pub fill_log: VecDeque<FillRecord>,
     /// Highest cumulative fill quantity seen per order id for orders that do
     /// not match a live grid order (market-order rebalances on Binance, where
     /// executions report cumulative quantities). Bounded deque so growth is
@@ -243,6 +246,7 @@ impl QuoteGenerator {
             adverse_ratio: 0.0,
             spread_roundtrips: 0,
             open_buy_entries: VecDeque::new(),
+            fill_log: VecDeque::new(),
             market_fill_seen: VecDeque::new(),
             seen_exec_ids: VecDeque::new(),
             strategy,
@@ -286,6 +290,11 @@ impl QuoteGenerator {
                 order.queue_ahead = Some(book.ask_qty_at(order.price).unwrap_or(0.0));
             }
         }
+    }
+
+    /// Takes the accumulated fill records for telemetry.
+    pub fn drain_fills(&mut self) -> Vec<FillRecord> {
+        self.fill_log.drain(..).collect()
     }
 
     /// Structured stats summary for shutdown/logging.
@@ -798,6 +807,7 @@ impl QuoteGenerator {
             exec_id,
             exec_price,
             exec_qty,
+            exec_time,
             side,
             ..
         } in fills
@@ -844,10 +854,14 @@ impl QuoteGenerator {
                         fill_occurred = true;
                         self.total_fills += 1;
                         queue[i].filled_qty += delta;
+                        let mut roundtrip_ratio = None;
                         if is_buy {
                             self.position += delta;
                             // Open a roundtrip leg for the adverse-selection
-                            // monitor.
+                            // monitor (bounded so unpaired legs cannot grow).
+                            if self.open_buy_entries.len() >= 10_000 {
+                                self.open_buy_entries.pop_front();
+                            }
                             self.open_buy_entries.push_back((exec_price, queue[i].price));
                         } else {
                             self.position -= delta;
@@ -862,9 +876,22 @@ impl QuoteGenerator {
                                     self.adverse_ratio =
                                         self.adverse_ratio * (n / (n + 1.0)) + ratio / (n + 1.0);
                                     self.spread_roundtrips += 1;
+                                    roundtrip_ratio = Some(ratio);
                                 }
                             }
                         }
+                        // Telemetry record (capped).
+                        if self.fill_log.len() >= 2000 {
+                            self.fill_log.pop_front();
+                        }
+                        self.fill_log.push_back(FillRecord {
+                            ts: exec_time,
+                            side: if is_buy { "Buy".to_string() } else { "Sell".to_string() },
+                            qty: delta,
+                            price: exec_price,
+                            maker: true,
+                            adverse_ratio: roundtrip_ratio,
+                        });
                         if is_buy {
                             println!(
                                 "Buy order filled: ID {}, Qty {}, New position {:.6}",
@@ -907,6 +934,17 @@ impl QuoteGenerator {
                     } else {
                         self.position -= delta;
                     }
+                    if self.fill_log.len() >= 2000 {
+                        self.fill_log.pop_front();
+                    }
+                    self.fill_log.push_back(FillRecord {
+                        ts: exec_time,
+                        side: if is_buy { "Buy".to_string() } else { "Sell".to_string() },
+                        qty: delta,
+                        price: exec_price,
+                        maker: false,
+                        adverse_ratio: None,
+                    });
                     println!(
                         "Market order filled: ID {}, Qty {}, New position {:.6}",
                         order_id, delta, self.position
@@ -1078,23 +1116,25 @@ impl QuoteGenerator {
             }
             GridAction::Amend => {
                 let orders = self.generate_quotes(symbol.clone(), &book, skew, vol);
-                if self.rate_limit > 1 {
-                    if !self.amend_grid(orders, &symbol).await {
-                        // Backend cannot amend (or level counts diverged):
-                        // fall back to a full replacement.
-                        if self.client.cancel_all(&symbol).await.is_ok() {
-                            self.live_buys_orders.clear();
-                            self.live_sells_orders.clear();
-                        }
+                if self.rate_limit > 1 && self.amend_grid(orders, &symbol).await {
+                    // Only re-center the bounds when the levels actually
+                    // moved; otherwise the next update retries.
+                    self.rate_limit = self.rate_limit.saturating_sub(1);
+                    self.last_update_price = book.mid_price;
+                    self.time_limit = book.last_update;
+                } else if self.rate_limit > 1 {
+                    // Backend cannot amend (or level counts diverged):
+                    // fall back to a full replacement.
+                    if self.client.cancel_all(&symbol).await.is_ok() {
+                        self.live_buys_orders.clear();
+                        self.live_sells_orders.clear();
                         let orders = self.generate_quotes(symbol.clone(), &book, skew, vol);
                         self.grid_refreshes += 1;
                         self.send_batch_orders(orders).await;
-                    } else {
-                        self.rate_limit = self.rate_limit.saturating_sub(1);
+                        self.last_update_price = book.mid_price;
+                        self.time_limit = book.last_update;
                     }
                 }
-                self.last_update_price = book.mid_price;
-                self.time_limit = book.last_update;
             }
         }
     }
@@ -1133,6 +1173,20 @@ pub struct SymbolState {
     pub position: f64,
     pub live_buys: Vec<LiveOrder>,
     pub live_sells: Vec<LiveOrder>,
+}
+
+/// One fill recorded for telemetry (Turso DB / observability).
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub struct FillRecord {
+    /// Exchange execution timestamp in milliseconds.
+    pub ts: u64,
+    pub side: String,
+    pub qty: f64,
+    pub price: f64,
+    /// True for resting grid fills, false for market-order rebalances.
+    pub maker: bool,
+    /// Realized/quoted spread ratio for this roundtrip leg, when known.
+    pub adverse_ratio: Option<f64>,
 }
 
 impl PartialEq for LiveOrder {
@@ -1286,15 +1340,34 @@ impl OrderManagement {
                         ..Default::default()
                     });
                 }
+                let total = requests.len();
                 let req = BatchAmendRequest {
                     category: Category::Linear,
                     requests,
                 };
-                trader
-                    .batch_amend_order(req)
-                    .await
-                    .map(|_| true)
-                    .map_err(|e| e.to_string())
+                match trader.batch_amend_order(req).await {
+                    Ok(v) => {
+                        let ok_count = v
+                            .ret_ext_info
+                            .list
+                            .iter()
+                            .filter(|info| info.msg == "OK")
+                            .count();
+                        if ok_count == 0 {
+                            Err("exchange rejected all amendments".to_string())
+                        } else {
+                            if ok_count < total {
+                                eprintln!(
+                                    "Bybit rejected {} of {} amendments",
+                                    total - ok_count,
+                                    total
+                                );
+                            }
+                            Ok(true)
+                        }
+                    }
+                    Err(e) => Err(e.to_string()),
+                }
             }
             // The Binance client has no amend endpoint; fall back to replace.
             OrderManagement::Binance(_) => Ok(false),

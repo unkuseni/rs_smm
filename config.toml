@@ -45,6 +45,13 @@ NOTUSDT = 25
 # Optional: persist position and live orders here across restarts.
 # state_file = "state.json"
 
+# Turso (libSQL) telemetry database (optional). Logs feature snapshots,
+# fills, and grid events. url and auth_token may use the env: indirection.
+[turso]
+# url = "libsql://your-db-yourorg.turso.io"
+# auth_token = "env:RS_SMM_TURSO_TOKEN"
+sync_interval_secs = 5
+
 # Strategy constants. Every key is optional and falls back to the default
 # shown; a config without this table keeps the historical behavior.
 [strategy]

@@ -119,6 +119,27 @@ RS_SMM is a sophisticated market making bot implemented in Rust. It's designed t
    the bot is running and the new spreads/strategy constants are applied
    within a few seconds (hot reload).
 
+## Turso (libSQL) Telemetry
+
+Optionally stream telemetry to a [Turso](https://turso.tech) database:
+
+   ```toml
+   [turso]
+   url = "libsql://your-db-yourorg.turso.io"
+   auth_token = "env:RS_SMM_TURSO_TOKEN"
+   sync_interval_secs = 5
+   ```
+
+   The bot creates (idempotently) three tables and flushes to them on the
+   sync cadence: feature_snapshots (mid, skew, volatility, imbalance, OFI,
+   trade imbalance, VOI, regime, prediction per symbol per tick),
+   fills (every fill with side, size, price, maker flag, and the
+   realized/quoted adverse-selection ratio), and grid_events (refreshes
+   and in-place amendments). Connection failures are non-fatal: the bot
+   logs a warning and keeps trading. The same schema works against a local
+   file (set url to a path such as file:telemetry.db - see src/db.rs)
+   for offline analysis.
+
 3. Adjust the values according to your trading strategy and risk tolerance.
 
 ## Backtesting / Offline Replay

@@ -25,6 +25,7 @@ fn make_config(record: &str) -> Config {
         record: Some(record.to_string()),
         state_file: None,
         strategy: StrategyConfig::default(),
+        turso: skeleton::util::helpers::TursoConfig::default(),
     }
 }
 

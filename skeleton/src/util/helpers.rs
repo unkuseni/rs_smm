@@ -269,6 +269,32 @@ where
     }
 }
 
+/// Turso (libSQL) telemetry database configuration. Disabled unless `url`
+/// is set. Both url and auth_token may use the env:VAR indirection.
+#[derive(Deserialize, Debug, Clone, PartialEq)]
+pub struct TursoConfig {
+    pub url: Option<String>,
+    pub auth_token: Option<String>,
+    /// How often feature/fill/grid telemetry is flushed, in seconds.
+    pub sync_interval_secs: u64,
+}
+
+impl Default for TursoConfig {
+    fn default() -> Self {
+        Self {
+            url: None,
+            auth_token: None,
+            sync_interval_secs: 5,
+        }
+    }
+}
+
+impl TursoConfig {
+    pub fn is_enabled(&self) -> bool {
+        self.url.is_some()
+    }
+}
+
 /// Strategy constants that used to be hardcoded in the engine and quote
 /// generator. Every field has a default (matching the historical constants),
 /// so a config file that omits the [strategy] table keeps the old behavior.
@@ -392,6 +418,9 @@ pub struct Config {
     /// Strategy constants; omitted keys fall back to StrategyConfig::default().
     #[serde(default)]
     pub strategy: StrategyConfig,
+    /// Turso telemetry database; disabled unless its url is set.
+    #[serde(default)]
+    pub turso: TursoConfig,
 }
 
 impl PartialEq for Config {
@@ -410,5 +439,6 @@ impl PartialEq for Config {
             && self.record == other.record
             && self.state_file == other.state_file
             && self.strategy == other.strategy
+            && self.turso == other.turso
     }
 }

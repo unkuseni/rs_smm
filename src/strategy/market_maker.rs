@@ -8,6 +8,7 @@ use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::mpsc::UnboundedReceiver;
 
+use crate::db::{FeatureSnapshot, TursoDb};
 use crate::features::engine::Engine;
 use crate::trader::quote_gen::{QuoteGenerator, SymbolState};
 
@@ -16,6 +17,14 @@ use crate::trader::quote_gen::{QuoteGenerator, SymbolState};
 pub enum RiskDecision {
     Ok,
     Halt,
+}
+
+/// Extracts the timestamp of the latest market snapshot.
+fn market_time(message: &MarketMessage) -> u64 {
+    match message {
+        MarketMessage::Bybit(v) => v.time,
+        MarketMessage::Binance(v) => v.time,
+    }
 }
 
 /// Pure risk evaluation: halt when the mark-to-market drawdown exceeds
@@ -58,6 +67,13 @@ pub struct MarketMaker {
     pub state_file: Option<String>,
     /// Current strategy constants (kept in sync by apply_config).
     pub strategy: StrategyConfig,
+    /// Turso telemetry database, when configured.
+    pub db: Option<TursoDb>,
+    /// Database flush cadence in milliseconds.
+    pub db_sync_ms: u64,
+    last_db_flush: u64,
+    /// Last seen grid refresh/amend counters per symbol (drives grid_events).
+    last_grid_counters: HashMap<String, (u64, u64)>,
 }
 
 impl MarketMaker {
@@ -109,6 +125,10 @@ impl MarketMaker {
             halted: false,
             state_file: None,
             strategy: strategy.clone(),
+            db: None,
+            db_sync_ms: 5_000,
+            last_db_flush: 0,
+            last_grid_counters: HashMap::new(),
         }
     }
 
@@ -132,6 +152,7 @@ impl MarketMaker {
                     let Some(data) = data else { break };
                     match data.exchange.as_str() {
                         "bybit" | "binance" => {
+                            let ts = market_time(&data.markets[0]);
                             // Update features with the latest market data.
                             self.update_features(data.markets[0].clone(), self.depths.clone());
 
@@ -143,6 +164,14 @@ impl MarketMaker {
                                 }
                             } else {
                                 warmup_ticks += 1;
+                            }
+
+                            // Flush telemetry to Turso on the sync cadence.
+                            if self.db.is_some()
+                                && ts.saturating_sub(self.last_db_flush) >= self.db_sync_ms
+                            {
+                                self.flush_db(ts).await;
+                                self.last_db_flush = ts;
                             }
                         }
                         "both" => {
@@ -200,6 +229,69 @@ impl MarketMaker {
         evaluate_risk(self.initial_equity, equity, portfolio_delta, &self.strategy)
     }
 
+    /// Collects the pending telemetry (engine snapshots, fills, grid events)
+    /// into one SQL batch and sends it to the Turso database.
+    async fn flush_db(&mut self, ts: u64) {
+        let mut batch = String::new();
+
+        for (symbol, engine) in &self.features {
+            if let Some(mid) = engine.last_mid() {
+                batch.push_str(&TursoDb::feature_insert_sql(
+                    ts,
+                    symbol,
+                    &FeatureSnapshot {
+                        mid,
+                        skew: engine.skew,
+                        vol: engine.mid_return_vol(),
+                        imb: engine.imbalance_ratio,
+                        ofi_scaled: engine.ofi_scaled,
+                        trade_imb: engine.trade_imb,
+                        voi: engine.voi,
+                        regime: engine.imbalance_regime,
+                        predicted: engine.predicted_price,
+                    },
+                ));
+            }
+        }
+
+        for (symbol, generator) in self.generators.iter_mut() {
+            for fill in generator.drain_fills() {
+                batch.push_str(&TursoDb::fill_insert_sql(symbol, &fill));
+            }
+            let (last_refresh, last_amend) = self
+                .last_grid_counters
+                .get(symbol)
+                .copied()
+                .unwrap_or((0, 0));
+            if generator.grid_refreshes > last_refresh {
+                batch.push_str(&TursoDb::grid_insert_sql(
+                    ts,
+                    symbol,
+                    "refresh",
+                    self.depths.len() as i64,
+                ));
+            }
+            if generator.grid_amends > last_amend {
+                batch.push_str(&TursoDb::grid_insert_sql(
+                    ts,
+                    symbol,
+                    "amend",
+                    self.depths.len() as i64,
+                ));
+            }
+            self.last_grid_counters
+                .insert(symbol.clone(), (generator.grid_refreshes, generator.grid_amends));
+        }
+
+        if !batch.is_empty() {
+            if let Some(db) = &self.db {
+                if let Err(e) = db.execute_batch_raw(batch).await {
+                    eprintln!("Turso flush failed: {}", e);
+                }
+            }
+        }
+    }
+
     /// Saves per-symbol position and live orders to the configured state file.
     pub fn save_state(&self) -> Result<(), String> {
         let Some(path) = &self.state_file else {
@@ -244,6 +336,11 @@ impl MarketMaker {
             }
             println!("Final position for {}: {:.6}", symbol, generator.position);
             println!("Stats for {}: {}", symbol, generator.stats_summary());
+        }
+        // Final telemetry flush before exit.
+        if self.db.is_some() {
+            let now = skeleton::util::helpers::generate_timestamp();
+            self.flush_db(now).await;
         }
         if let Err(e) = self.save_state() {
             eprintln!("Failed to save state: {}", e);

@@ -24,6 +24,7 @@ async fn main() {
         record,
         state_file,
         strategy,
+        turso,
     } = use_toml();
 
     // Initialize shared state with the exchange, clients, and symbols.
@@ -64,6 +65,25 @@ async fn main() {
     market_maker.state_file = state_file;
     if let Err(e) = market_maker.load_state() {
         eprintln!("Failed to restore state: {}", e);
+    }
+
+    // Optional Turso (libSQL) telemetry database. Connection failures are
+    // non-fatal: the bot continues without telemetry.
+    if let Some(url) = turso.url {
+        let token = turso.auth_token.unwrap_or_default();
+        let url = resolve_secret(url);
+        let token = resolve_secret(token);
+        match rs_smm::db::TursoDb::connect(&url, &token).await {
+            Ok(db) => {
+                if let Err(e) = db.init().await {
+                    eprintln!("Turso schema init failed: {}", e);
+                }
+                market_maker.db_sync_ms = turso.sync_interval_secs.saturating_mul(1000);
+                market_maker.db = Some(db);
+                println!("Turso telemetry connected");
+            }
+            Err(e) => eprintln!("Turso connection failed (continuing without database): {}", e),
+        }
     }
 
     // Create a channel for shared-state snapshots.
