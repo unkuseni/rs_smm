@@ -15,9 +15,7 @@ mod tests {
     use rs_smm::{
         features::{
             imbalance::{calculate_ofi, imbalance_ratio, voi},
-            impact::{
-                avg_trade_price, expected_return, expected_value, mid_price_avg, price_flu,
-            },
+            impact::{avg_trade_price, expected_return, expected_value, mid_price_avg, price_flu},
             linear_reg::mid_price_regression,
         },
         parameters::use_toml,
@@ -302,8 +300,13 @@ mod tests {
         let result = avg_trade_price(101.5, Some(&old_trades), &curr_trades, 7.25, 0.0);
         assert!((result - 7.25).abs() < 1e-9);
 
-        // No previous window: return the current mid price.
+        // No previous window: return the current mid price expressed in the
+        // same tick units documented for the rest of the function.
         let result = avg_trade_price(101.5, None, &curr_trades, 0.0, 0.5);
+        assert!((result - 203.0).abs() < 1e-9);
+
+        // Unknown tick value falls back to the raw mid (no normalization).
+        let result = avg_trade_price(101.5, None, &curr_trades, 0.0, 0.0);
         assert!((result - 101.5).abs() < 1e-9);
     }
 

@@ -1,8 +1,6 @@
-
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use ndarray::array;
 use rs_smm::features::linear_reg::mid_price_regression;
-
 
 fn benchmark_linfa_linear(c: &mut Criterion) {
     // Example data
@@ -12,7 +10,11 @@ fn benchmark_linfa_linear(c: &mut Criterion) {
 
     c.bench_function("linfa_linear_regression", |b| {
         b.iter(|| {
-        black_box(mid_price_regression(mid_price_array.clone(), features.clone(), curr_spread))
+            black_box(mid_price_regression(
+                mid_price_array.clone(),
+                features.clone(),
+                curr_spread,
+            ))
         })
     });
 }

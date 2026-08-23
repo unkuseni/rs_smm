@@ -82,7 +82,10 @@ async fn main() {
                 market_maker.db = Some(db);
                 println!("Turso telemetry connected");
             }
-            Err(e) => eprintln!("Turso connection failed (continuing without database): {}", e),
+            Err(e) => eprintln!(
+                "Turso connection failed (continuing without database): {}",
+                e
+            ),
         }
     }
 

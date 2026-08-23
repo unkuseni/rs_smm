@@ -3,13 +3,14 @@ use std::collections::VecDeque;
 use bybit::WsTrade;
 use skeleton::util::localorderbook::{calculate_weighted_ask, calculate_weighted_bid, LocalBook};
 
-/// Calculates the imbalance ratio of a `LocalBook` at the given depth.
+/// Calculates the raw imbalance ratio of a `LocalBook` at the given depth.
 ///
 /// The imbalance ratio is the difference between the weighted bid and ask
-/// quantities divided by their sum, and lies in [-1, 1].
-///
-/// A deadband of ±0.20 is applied: values inside the band are returned as 0.0
-/// so that only meaningful buy/sell pressure reaches the skew calculation.
+/// quantities divided by their sum, and lies in [-1, 1]. No deadband is
+/// applied here: the configurable `imb_deadband` from the engine's
+/// `StrategyConfig` decides whether a signal is strong enough to enter the
+/// skew (it used to be hardcoded at ±0.20, which made the config key
+/// ineffective for the top-of-book term).
 ///
 /// # Arguments
 ///
@@ -33,12 +34,12 @@ pub fn imbalance_ratio(book: &LocalBook, depth: Option<usize>) -> f64 {
     // Calculate the imbalance ratio by dividing the difference by the sum.
     let ratio = diff / sum;
 
-    // Return the imbalance ratio, guarding against NaN and applying the deadband.
-    match ratio {
-        x if x.is_nan() => 0.0,
-        x if x > 0.20 => x,
-        x if x < -0.20 => x,
-        _ => 0.0,
+    // Guard against NaN only (an empty book divides 0/0); the deadband is
+    // the caller's concern so it can be tuned from configuration.
+    if ratio.is_nan() {
+        0.0
+    } else {
+        ratio
     }
 }
 

@@ -113,7 +113,11 @@ impl MarketMaker {
     ) -> Self {
         let initial_equity = assets.values().sum();
         MarketMaker {
-            features: MarketMaker::build_features(ss.symbols.clone(), tick_window, strategy.clone()),
+            features: MarketMaker::build_features(
+                ss.symbols.clone(),
+                tick_window,
+                strategy.clone(),
+            ),
             old_books: HashMap::new(),
             old_trades: HashMap::new(),
             curr_trades: HashMap::new(),
@@ -156,6 +160,13 @@ impl MarketMaker {
     ) {
         let mut warmup_ticks = 0;
         let mut warned_both = false;
+        // The loader emits a snapshot per websocket event, public *and*
+        // private. Private-only snapshots carry the same market message as
+        // the previous one, so the feature engine must only be advanced when
+        // the market timestamp moves; otherwise every execution event would
+        // push duplicate (identical) rows into the mid/feature windows,
+        // biasing the regression and deflating the volatility estimate.
+        let mut last_market_ts = 0u64;
         loop {
             tokio::select! {
                 data = receiver.recv() => {
@@ -163,17 +174,23 @@ impl MarketMaker {
                     match data.exchange.as_str() {
                         "bybit" | "binance" => {
                             let ts = market_time(&data.markets[0]);
-                            // Update features with the latest market data.
-                            self.update_features(data.markets[0].clone(), self.depths.clone());
+                            let new_market = ts != last_market_ts;
+                            if new_market {
+                                // Update features with the latest market data.
+                                self.update_features(data.markets[0].clone(), self.depths.clone());
+                                last_market_ts = ts;
+                                if warmup_ticks <= self.tick_window {
+                                    warmup_ticks += 1;
+                                }
+                            }
 
                             // Replace the grid once the features are warmed up.
-                            if warmup_ticks > self.tick_window {
-                                if !self.halted {
-                                    self.potentially_update(data.private.clone(), data.markets[0].clone())
-                                        .await;
-                                }
-                            } else {
-                                warmup_ticks += 1;
+                            // Runs on every snapshot so private data (fills,
+                            // order updates) is consumed promptly even when
+                            // the book itself has not moved.
+                            if warmup_ticks > self.tick_window && !self.halted {
+                                self.potentially_update(data.private.clone(), data.markets[0].clone())
+                                    .await;
                             }
 
                             // Flush telemetry to Turso on the sync cadence.
@@ -228,13 +245,18 @@ impl MarketMaker {
 
     /// Mark-to-market equity, aggregate inventory exposure, and the worst
     /// per-second volatility across symbols, fed to the pure risk evaluation.
+    ///
+    /// Equity = initial balance + realized PnL from completed roundtrips +
+    /// the open position marked at the current mid, so the drawdown kill
+    /// switch reacts to trading results and not to inventory value alone
+    /// (realized PnL excludes fees, which skews it slightly optimistic).
     fn risk_decision(&self) -> RiskDecision {
         let mut equity = self.initial_equity;
         let mut portfolio_delta = 0.0;
         let mut max_vol = 0.0f64;
         for (symbol, generator) in &self.generators {
             if let Some(book) = self.old_books.get(symbol) {
-                equity += generator.position * book.get_mid_price();
+                equity += generator.realized_pnl + generator.position * book.get_mid_price();
             }
             portfolio_delta += generator.inventory_delta.abs();
         }
@@ -243,7 +265,13 @@ impl MarketMaker {
         }
         // Per-update vol -> per-second vol (x10) -> basis points (x10000).
         let vol_bps = max_vol * 10.0 * 10_000.0;
-        evaluate_risk(self.initial_equity, equity, portfolio_delta, vol_bps, &self.strategy)
+        evaluate_risk(
+            self.initial_equity,
+            equity,
+            portfolio_delta,
+            vol_bps,
+            &self.strategy,
+        )
     }
 
     /// Collects the pending telemetry (engine snapshots, fills, grid events)
@@ -296,8 +324,10 @@ impl MarketMaker {
                     self.orders_per_side as i64,
                 ));
             }
-            self.last_grid_counters
-                .insert(symbol.clone(), (generator.grid_refreshes, generator.grid_amends));
+            self.last_grid_counters.insert(
+                symbol.clone(),
+                (generator.grid_refreshes, generator.grid_amends),
+            );
         }
 
         if !batch.is_empty() {
@@ -475,7 +505,7 @@ impl MarketMaker {
     /// Updates each symbol's quote grid with new market and private data.
     async fn potentially_update(
         &mut self,
-        private: HashMap<String, PrivateData>,
+        private: HashMap<String, Arc<PrivateData>>,
         data: MarketMessage,
     ) {
         // Portfolio risk kill switch: halt quoting (and cancel everything)
@@ -510,8 +540,17 @@ impl MarketMaker {
             };
 
             if let Some(private_data) = private.get(&symbol) {
+                // The map stores Arc<PrivateData>; only the symbol being
+                // updated is materialized (clone of its buffers), and only
+                // when it actually has private data on this snapshot.
                 symbol_quoter
-                    .update_grid(private_data.clone(), skew, vol, (*book).clone(), symbol)
+                    .update_grid(
+                        private_data.as_ref().clone(),
+                        skew,
+                        vol,
+                        (*book).clone(),
+                        symbol,
+                    )
                     .await;
             }
         }

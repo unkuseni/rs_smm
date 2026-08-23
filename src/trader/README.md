@@ -39,7 +39,8 @@ let quote_gen = QuoteGenerator::new(
     leverage,
     orders_per_side,
     final_order_distance,
-    rate_limit
+    rate_limit,
+    strategy // skeleton::util::helpers::StrategyConfig
 );
 
 // In your main loop:

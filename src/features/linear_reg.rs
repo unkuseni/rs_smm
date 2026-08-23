@@ -59,7 +59,11 @@ pub const RIDGE_LAMBDA: f64 = 0.01;
 /// intercept. Deterministic and exact for these tiny matrices; the L2
 /// penalty keeps the fit stable under the near-collinear lagged feature
 /// pairs the engine uses (plain least squares can explode there).
-pub fn ridge_fit(x: &Array2<f64>, y: &Array1<f64>, lambda: f64) -> Result<(f64, Array1<f64>), String> {
+pub fn ridge_fit(
+    x: &Array2<f64>,
+    y: &Array1<f64>,
+    lambda: f64,
+) -> Result<(f64, Array1<f64>), String> {
     let (n, d) = x.dim();
     if n < 2 || d == 0 {
         return Err("Not enough observations for ridge regression".to_string());
@@ -176,6 +180,10 @@ mod tests {
         let y = Array1::from(ys);
         let weights = ridge_fit(&x, &y, 0.01).expect("fit");
         let pred = ridge_predict(&weights, &[0.1, 0.1, 0.9, 0.2, 0.1, 0.1, 0.9, 0.2]);
-        assert!(pred.is_finite() && (pred - 100.1).abs() < 1.0, "pred {}", pred);
+        assert!(
+            pred.is_finite() && (pred - 100.1).abs() < 1.0,
+            "pred {}",
+            pred
+        );
     }
 }

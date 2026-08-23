@@ -39,7 +39,10 @@ pub struct SharedState {
     pub exchange: String,
     pub logging: Logger,
     pub clients: HashMap<String, Client>,
-    pub private: HashMap<String, PrivateData>,
+    /// Symbol -> latest private data, behind `Arc` so every snapshot is a
+    /// shallow map clone instead of a deep copy of the execution/order
+    /// buffers (which can hold thousands of entries).
+    pub private: HashMap<String, Arc<PrivateData>>,
     pub markets: Vec<MarketMessage>,
     pub symbols: Vec<String>,
     /// Optional path to record websocket deltas to for offline replay.
@@ -266,9 +269,10 @@ async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<
     // Seed private-data entries before sharing the state.
     let mut state = state;
     for symbol in clients.keys() {
-        state
-            .private
-            .insert(symbol.clone(), PrivateData::Bybit(BybitPrivate::default()));
+        state.private.insert(
+            symbol.clone(),
+            Arc::new(PrivateData::Bybit(BybitPrivate::default())),
+        );
     }
     let mut shared = Arc::new(state);
 
@@ -278,10 +282,8 @@ async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<
 
     // Optional delta recorder for offline replay.
     let mut recorder = record_path.as_ref().and_then(|path| {
-        let meta: Vec<(String, &LocalBook)> = books
-            .iter()
-            .map(|(s, b)| (s.clone(), b.as_ref()))
-            .collect();
+        let meta: Vec<(String, &LocalBook)> =
+            books.iter().map(|(s, b)| (s.clone(), b.as_ref())).collect();
         match Recorder::new(
             path,
             &exchange,
@@ -372,7 +374,7 @@ async fn load_bybit(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<
 
             Some(data) = private_receiver.recv() => {
                 let state = Arc::make_mut(&mut shared);
-                state.private.insert(data.symbol, data.data);
+                state.private.insert(data.symbol, Arc::new(data.data));
                 if state_sender.send(shared.clone()).is_err() {
                     break;
                 }
@@ -392,7 +394,7 @@ async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Ar
     for symbol in clients.keys() {
         state.private.insert(
             symbol.clone(),
-            PrivateData::Binance(BinancePrivate::default()),
+            Arc::new(PrivateData::Binance(BinancePrivate::default())),
         );
     }
     let mut shared = Arc::new(state);
@@ -402,10 +404,8 @@ async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Ar
 
     // Optional delta recorder for offline replay.
     let mut recorder = record_path.as_ref().and_then(|path| {
-        let meta: Vec<(String, &LocalBook)> = books
-            .iter()
-            .map(|(s, b)| (s.clone(), b.as_ref()))
-            .collect();
+        let meta: Vec<(String, &LocalBook)> =
+            books.iter().map(|(s, b)| (s.clone(), b.as_ref())).collect();
         match Recorder::new(
             path,
             &exchange,
@@ -494,7 +494,7 @@ async fn load_binance(state: SharedState, state_sender: mpsc::UnboundedSender<Ar
 
             Some(data) = private_receiver.recv() => {
                 let state = Arc::make_mut(&mut shared);
-                state.private.insert(data.symbol, data.data);
+                state.private.insert(data.symbol, Arc::new(data.data));
                 if state_sender.send(shared.clone()).is_err() {
                     break;
                 }
@@ -559,9 +559,10 @@ async fn load_both(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<S
         match client {
             Client::Bybit(client) => {
                 let state = Arc::make_mut(&mut shared);
-                state
-                    .private
-                    .insert(symbol.clone(), PrivateData::Bybit(BybitPrivate::default()));
+                state.private.insert(
+                    symbol.clone(),
+                    Arc::new(PrivateData::Bybit(BybitPrivate::default())),
+                );
                 tokio::spawn(async move {
                     client.private_subscribe(sender_clone, symbol).await;
                 });
@@ -570,7 +571,7 @@ async fn load_both(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<S
                 let state = Arc::make_mut(&mut shared);
                 state.private.insert(
                     symbol.clone(),
-                    PrivateData::Binance(BinancePrivate::default()),
+                    Arc::new(PrivateData::Binance(BinancePrivate::default())),
                 );
                 tokio::spawn(async move {
                     client.private_subscribe(sender_clone, symbol).await;
@@ -679,7 +680,7 @@ async fn load_both(state: SharedState, state_sender: mpsc::UnboundedSender<Arc<S
 
             Some(data) = private_receiver.recv() => {
                 let state = Arc::make_mut(&mut shared);
-                state.private.insert(data.symbol, data.data);
+                state.private.insert(data.symbol, Arc::new(data.data));
                 if state_sender.send(shared.clone()).is_err() {
                     break;
                 }

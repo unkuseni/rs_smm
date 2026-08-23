@@ -20,7 +20,7 @@ api_keys = [
 ]
 
 # Initial balances for tracked symbols (symbol, balance)
-balances = [["NOTUSDT", 100.0], ["NOTUSDT", 100.0]]
+balances = [["NOTUSDT", 100.0], ["DOGSUSDT", 100.0]]
 
 # Leverage for trading positions (e.g., 5.0 for 5x leverage)
 leverage = 10.0

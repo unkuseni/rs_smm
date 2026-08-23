@@ -29,6 +29,10 @@ binance = { git = "https://github.com/unkuseni/binance-rs", branch = "master" }
 name = "backtest"
 path = "src/bin/backtest.rs"
 
+[dev-dependencies]
+# Benchmarks (binaries under benches/) use the criterion harness.
+criterion = "0.5"
+
 # Trading is latency-sensitive; trade build time for a faster binary.
 [profile.release]
 lto = "thin"

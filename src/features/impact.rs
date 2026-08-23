@@ -22,6 +22,11 @@ pub fn mid_price_avg(old_mid: f64, curr_mid: f64) -> f64 {
 /// reversion back to 0: a negative basis means recent trades were closer to
 /// the bid, so the mid price tends to decrease toward the average trade price,
 /// and vice versa.
+///
+/// All three inputs must be expressed in the same units (price, or tick units
+/// when avg_trade_price is the output of avg_trade_price) \u{2014} mixing a
+/// price with a price-per-tick makes the basis dimensionless-but-gigantic
+/// and defeats any gate that compares it to the mid price.
 pub fn mid_price_basis(old_price: f64, curr_price: f64, avg_trade_price: f64) -> f64 {
     avg_trade_price - mid_price_avg(old_price, curr_price)
 }
@@ -54,7 +59,9 @@ pub fn price_flu(old_price: f64, curr_price: f64) -> f64 {
 ///   USDT-margined linear contracts the caller passes the book's tick size
 ///   as an approximation of the per-contract tick value.
 ///
-/// The result is the VWAP of the new trades expressed in tick units.
+/// The result is the VWAP of the new trades expressed in tick units (the
+/// price divided by the per-tick USD value), so it is comparable across
+/// assets and stays a fixed order of magnitude for the regression.
 pub fn avg_trade_price(
     curr_mid: f64,
     old_trades: Option<&VecDeque<WsTrade>>,
@@ -63,7 +70,13 @@ pub fn avg_trade_price(
     tick_value: f64,
 ) -> f64 {
     let Some(old_trades) = old_trades else {
-        return curr_mid;
+        // No prior trade window: the mid itself, in the same tick units so
+        // every return value of this function shares one unit system.
+        return if tick_value > 0.0 {
+            curr_mid / tick_value
+        } else {
+            curr_mid
+        };
     };
 
     let mut old_volume = 0.0;

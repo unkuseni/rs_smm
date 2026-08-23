@@ -36,7 +36,7 @@ This module implements a suite of advanced market microstructure features for hi
 The `Engine` struct serves as the main interface for feature calculation:
 
 ```rust
-let mut engine = Engine::new(tick_window);
+let mut engine = Engine::new(tick_window, strategy); // strategy: StrategyConfig
 engine.update(&curr_book, &prev_book, &curr_trades, &prev_trades, &prev_avg, depth_levels);
 let skew = engine.skew;
 ```

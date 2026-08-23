@@ -139,12 +139,14 @@ impl ReplayStream {
         if magic != MAGIC || version != VERSION {
             return Err(std::io::Error::new(
                 std::io::ErrorKind::InvalidData,
-                format!("not an rs_smm recording (magic {:?}, version {})", magic, version),
+                format!(
+                    "not an rs_smm recording (magic {:?}, version {})",
+                    magic, version
+                ),
             ));
         }
         reader.rewind()?;
-        let header: SessionHeader =
-            bincode::deserialize_from(&mut reader).map_err(io_error)?;
+        let header: SessionHeader = bincode::deserialize_from(&mut reader).map_err(io_error)?;
         Ok(Self { reader, header })
     }
 
@@ -176,8 +178,14 @@ mod tests {
         vec![
             MarketEvent::Book {
                 symbol: "BTCUSDT".into(),
-                bids: vec![Bid { price: 100.0, qty: 1.5 }],
-                asks: vec![Ask { price: 100.5, qty: 2.0 }],
+                bids: vec![Bid {
+                    price: 100.0,
+                    qty: 1.5,
+                }],
+                asks: vec![Ask {
+                    price: 100.5,
+                    qty: 2.0,
+                }],
                 timestamp: 1_000,
                 bba: true,
             },
@@ -196,8 +204,14 @@ mod tests {
             },
             MarketEvent::Book {
                 symbol: "BTCUSDT".into(),
-                bids: vec![Bid { price: 100.25, qty: 0.5 }],
-                asks: vec![Ask { price: 100.75, qty: 1.0 }],
+                bids: vec![Bid {
+                    price: 100.25,
+                    qty: 0.5,
+                }],
+                asks: vec![Ask {
+                    price: 100.75,
+                    qty: 1.0,
+                }],
                 timestamp: 1_002,
                 bba: false,
             },

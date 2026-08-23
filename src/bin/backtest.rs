@@ -93,8 +93,11 @@ async fn main() {
 fn print_report(report: &BacktestReport) {
     println!("Recording: {} ms", report.duration_ms);
     for s in &report.symbols {
-        println!("
-=== {} ===", s.symbol);
+        println!(
+            "
+=== {} ===",
+            s.symbol
+        );
         println!("  book updates:      {}", s.book_updates);
         println!("  trades:            {}", s.trades);
         println!("  grid refreshes:    {}", s.grid_refreshes);
@@ -107,7 +110,10 @@ fn print_report(report: &BacktestReport) {
             s.taker_fills, s.taker_notional, s.taker_fees
         );
         println!("  funding paid:      {:.6}", s.funding_paid);
-        println!("  fills per level:   {:?} (best level first)", s.fill_by_level);
+        println!(
+            "  fills per level:   {:?} (best level first)",
+            s.fill_by_level
+        );
         println!(
             "  final position:    {:.6} @ mid {:.6}",
             s.final_position, s.final_mid

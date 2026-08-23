@@ -18,8 +18,8 @@
 use std::collections::{HashMap, VecDeque};
 
 use bybit::{Ask, Bid, FastExecData, WsTrade};
-use skeleton::exchanges::exchange::{MarketEvent, PrivateData};
 use skeleton::exchanges::ex_bybit::BybitPrivate;
+use skeleton::exchanges::exchange::{MarketEvent, PrivateData};
 use skeleton::util::helpers::{Config, StrategyConfig};
 use skeleton::util::localorderbook::LocalBook;
 use skeleton::util::recorder::ReplayStream;
@@ -104,10 +104,7 @@ pub fn funding_pnl(position: f64, mark: f64, bps_per_hour: f64, dt_hours: f64) -
 /// or +-bps barrier first touch) applied to the recorded mids that follow.
 /// Returns (evaluated, hits). Only meaningful when a horizon is configured;
 /// returns (0, 0) otherwise.
-pub fn evaluate_predictions(
-    entries: &[(u64, f64, f64)],
-    strategy: &StrategyConfig,
-) -> (u64, u64) {
+pub fn evaluate_predictions(entries: &[(u64, f64, f64)], strategy: &StrategyConfig) -> (u64, u64) {
     let horizon_ms = strategy.predict_horizon_ms;
     let bps = strategy.predict_horizon_bps;
     if horizon_ms == 0 && bps <= 0.0 {
@@ -415,7 +412,10 @@ async fn on_book_event(
         if price <= 0.0 || !price.is_finite() {
             // Book not ready yet; requeue for the next update.
             if let Some(sim) = st.gen.sim() {
-                sim.lock().await.pending_market.push((order_id, is_buy, qty));
+                sim.lock()
+                    .await
+                    .pending_market
+                    .push((order_id, is_buy, qty));
             }
             continue;
         }
@@ -448,7 +448,8 @@ async fn on_book_event(
     // Record the latest prediction (as of this update) for the offline
     // horizon evaluation. Capped so very long recordings stay bounded.
     if st.engine.predicted_price > 0.0 {
-        st.pred_log.push((ts, st.book.get_mid_price(), st.engine.predicted_price));
+        st.pred_log
+            .push((ts, st.book.get_mid_price(), st.engine.predicted_price));
         if st.pred_log.len() > 1_000_000 {
             st.pred_log.drain(..500_000);
         }
@@ -639,8 +640,7 @@ pub async fn run(record_path: &str, config: &Config) -> Result<BacktestReport, S
         let deltas: Vec<f64> = st.pnl_path.windows(2).map(|w| w[1] - w[0]).collect();
         if deltas.len() > 1 {
             let mean = deltas.iter().sum::<f64>() / deltas.len() as f64;
-            let var = deltas.iter().map(|d| (d - mean).powi(2)).sum::<f64>()
-                / deltas.len() as f64;
+            let var = deltas.iter().map(|d| (d - mean).powi(2)).sum::<f64>() / deltas.len() as f64;
             st.report.sharpe = if var > 0.0 { mean / var.sqrt() } else { 0.0 };
         }
         symbols.push(st.report.clone());

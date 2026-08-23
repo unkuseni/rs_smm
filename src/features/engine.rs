@@ -105,7 +105,7 @@ impl Engine {
         // Update imbalance ratio (top of book).
         self.imbalance_ratio = imbalance_ratio(curr_book, Some(first_depth));
 
-        // Smooth the (deadbanded) imbalance and quantize it into a regime.
+        // Smooth the imbalance and quantize it into a regime.
         self.imb_ema.update(self.imbalance_ratio);
         self.imbalance_regime = quantize_regime(self.imb_ema.value());
 
@@ -144,20 +144,30 @@ impl Engine {
         // Update the average trade price: the incremental trade VWAP
         // normalized by the USD value of one tick (the book's tick size for
         // USDT-margined linear contracts).
+        let tick_value = curr_book.tick_size * curr_book.contract_size;
         self.avg_trade_price = avg_trade_price(
             curr_book.get_mid_price(),
             Some(prev_trades),
             curr_trades,
             *prev_avg,
-            curr_book.tick_size * curr_book.contract_size,
+            tick_value,
         );
 
-        // Update the basis of the average trade price relative to the mid price.
-        self.mid_price_basis = mid_price_basis(
-            prev_book.get_mid_price(),
-            curr_book.get_mid_price(),
-            self.avg_trade_price,
-        );
+        // Update the basis of the average trade price relative to the mid
+        // price. avg_trade_price is denominated in tick units (see
+        // impact::avg_trade_price), so the mid must be converted to the same
+        // units before subtracting: previously a price was subtracted from a
+        // price-per-tick, which made the basis enormous relative to the mid
+        // and kept the basis gate in generate_skew permanently open.
+        self.mid_price_basis = if tick_value > 0.0 {
+            mid_price_basis(
+                prev_book.get_mid_price() / tick_value,
+                curr_book.get_mid_price() / tick_value,
+                self.avg_trade_price,
+            )
+        } else {
+            0.0
+        };
 
         // Update the EMA of the basis.
         self.price_basis.update(self.mid_price_basis);
@@ -249,10 +259,8 @@ impl Engine {
             // Features are normalized by the current spread (in bps) so the
             // regression is scale-free across assets and regimes, matching
             // the historical mid_price_regression normalization.
-            let row: [f64; 8] = [
-                f0[0], f0[1], f0[2], f0[3], f1[0], f1[1], f1[2], f1[3],
-            ]
-            .map(|x| x / curr_spread);
+            let row: [f64; 8] =
+                [f0[0], f0[1], f0[2], f0[3], f1[0], f1[1], f1[2], f1[3]].map(|x| x / curr_spread);
 
             if t == n - 1 {
                 last_row = Some(row);
@@ -384,8 +392,17 @@ impl Engine {
     fn generate_skew(&mut self, book: &LocalBook) {
         let s = &self.strategy;
 
-        // Weighted top-of-book imbalance.
-        let imb = self.imbalance_ratio * s.imb_weight;
+        // Weighted top-of-book imbalance (beyond the configured deadband;
+        // the old code deadbanded this signal inside imbalance_ratio at a
+        // hardcoded ±0.20, so imb_deadband could never tune it).
+        let imb = {
+            let v = self.imbalance_ratio;
+            if v.abs() > s.imb_deadband {
+                v * s.imb_weight
+            } else {
+                0.0
+            }
+        };
 
         // Weighted average deep imbalance (only significant values).
         let deep_imb = {
@@ -419,10 +436,13 @@ impl Engine {
         let deep_ofi = self.ofi_scaled * s.deep_ofi_weight;
 
         // Predicted price movement relative to the current mid, gated by the
-        // trade-price basis to avoid acting on noise.
+        // trade-price basis to avoid acting on noise. The basis EMA is in
+        // tick units; convert to a price fraction (the same units as
+        // predict_gate) so the gate compares like with like.
         let mid = book.get_mid_price();
-        let basis_frac = if mid > 0.0 {
-            self.price_basis.current_basis() / mid
+        let tick_value = book.tick_size * book.contract_size;
+        let basis_frac = if mid > 0.0 && tick_value > 0.0 {
+            self.price_basis.current_basis() * tick_value / mid
         } else {
             0.0
         };
@@ -442,8 +462,8 @@ impl Engine {
         // Regime-smoothed imbalance offset (Cartea et al. 2018).
         let regime = s.regime_weight * self.imbalance_regime as f64;
 
-        self.skew =
-            (imb + deep_imb + voi + trade_imb + deep_ofi + predicted_value + regime).clamp(-1.0, 1.0);
+        self.skew = (imb + deep_imb + voi + trade_imb + deep_ofi + predicted_value + regime)
+            .clamp(-1.0, 1.0);
     }
 }
 
@@ -509,15 +529,28 @@ mod tests {
         book.min_notional = 1.0;
         book.post_only_max = 1000.0;
         book.update(
-            bids.iter().map(|&(p, q)| Bid { price: p, qty: q }).collect(),
-            asks.iter().map(|&(p, q)| Ask { price: p, qty: q }).collect(),
+            bids.iter()
+                .map(|&(p, q)| Bid { price: p, qty: q })
+                .collect(),
+            asks.iter()
+                .map(|&(p, q)| Ask { price: p, qty: q })
+                .collect(),
             ts,
         );
         book
     }
 
     fn trade(side: &str, volume: f64, price: f64) -> WsTrade {
-        WsTrade::new(1, "BTCUSDT", side, volume, price, TickDirection::PlusTick, "t", false)
+        WsTrade::new(
+            1,
+            "BTCUSDT",
+            side,
+            volume,
+            price,
+            TickDirection::PlusTick,
+            "t",
+            false,
+        )
     }
 
     fn empty_trades() -> VecDeque<WsTrade> {
@@ -576,7 +609,11 @@ mod tests {
             let price = 100.0 + (i as f64) * 0.01;
             let next = make_book(&[(price, 10.0)], &[(price + 0.5, 10.0)], 2 + i);
             engine.update(&next, &prev, &trades, &empty, &0.0, vec![3, 8, 34]);
-            assert!(engine.skew.abs() <= 1.0, "skew out of bounds: {}", engine.skew);
+            assert!(
+                engine.skew.abs() <= 1.0,
+                "skew out of bounds: {}",
+                engine.skew
+            );
             assert!(engine.ofi_scaled.abs() <= 1.0);
             prev = next;
         }
@@ -590,7 +627,11 @@ mod tests {
         let b2 = make_book(&[(100.4, 12.0)], &[(100.5, 10.0)], 2);
         let empty = empty_trades();
         engine.update(&b2, &b1, &empty, &empty, &0.0, vec![3, 8]);
-        assert!(engine.ofi_scaled > 0.0, "ofi_scaled was {}", engine.ofi_scaled);
+        assert!(
+            engine.ofi_scaled > 0.0,
+            "ofi_scaled was {}",
+            engine.ofi_scaled
+        );
         assert!(engine.ofi_scaled <= 1.0);
     }
 

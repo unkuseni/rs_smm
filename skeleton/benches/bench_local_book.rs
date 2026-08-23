@@ -1,8 +1,7 @@
-
-use bybit::model::{Ask, Bid};
+// rs_bybit 0.4 re-exports Ask/Bid at the crate root.
+use bybit::{Ask, Bid};
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use skeleton::util::localorderbook::LocalBook;
-
 
 fn bench_local_book(c: &mut Criterion) {
     c.bench_function("local_book", |b| {

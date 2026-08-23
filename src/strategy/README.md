@@ -43,7 +43,8 @@
       final_order_distance,
       depths,
       rate_limit,
-      tick_window
+      tick_window,
+      strategy // skeleton::util::helpers::StrategyConfig
   ).await;
   ```
 
@@ -53,12 +54,10 @@
   market_maker.start_loop(receiver).await;
   ```
 
-  3. Set spreads (either manually or from TOML config):
+  3. Set spreads from the TOML config (a `bps` map keyed by symbol):
 
   ```rust
-  market_maker.set_spread_bps_input();
-  // or
-  market_maker.set_spread_toml(bps_vector);
+  market_maker.set_spread_toml(bps_map);
   ```
 
   ## Configuration

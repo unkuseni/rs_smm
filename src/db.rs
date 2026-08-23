@@ -272,7 +272,9 @@ mod tests {
                 adverse_ratio: Some(0.5),
             },
         );
-        db.execute_batch_raw(with_quote).await.expect("quoted batch");
+        db.execute_batch_raw(with_quote)
+            .await
+            .expect("quoted batch");
         assert_eq!(db.count_rows("fills").await.expect("count"), 1);
     }
 }

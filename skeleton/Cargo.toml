@@ -18,3 +18,8 @@ rs_bybit = "0.4"
 serde = "1.0.197"
 tokio = "1.36.0"
 toml = "0.8.12"
+
+[dev-dependencies]
+# Benchmarks (binaries under benches/) use the criterion harness.
+criterion = "0.5"
+

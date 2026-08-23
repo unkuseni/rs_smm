@@ -4,10 +4,10 @@ use std::collections::HashMap;
 
 use bybit::{Ask, Bid, TickDirection, WsTrade};
 use rs_smm::backtest;
+use skeleton::exchanges::exchange::MarketEvent;
 use skeleton::util::helpers::{Config, StrategyConfig};
 use skeleton::util::localorderbook::LocalBook;
 use skeleton::util::recorder::Recorder;
-use skeleton::exchanges::exchange::MarketEvent;
 
 fn make_config(record: &str) -> Config {
     Config {
@@ -56,7 +56,10 @@ fn write_recording(path: &str) {
             .record(&MarketEvent::Book {
                 symbol: "BTCUSDT".to_string(),
                 bids: vec![Bid { price, qty: 5.0 }],
-                asks: vec![Ask { price: price + 0.05, qty: 5.0 }],
+                asks: vec![Ask {
+                    price: price + 0.05,
+                    qty: 5.0,
+                }],
                 timestamp: ts,
                 bba: true,
             })

@@ -112,6 +112,14 @@ pub struct QuoteGenerator {
     pub live_buys_orders: VecDeque<LiveOrder>,
     pub live_sells_orders: VecDeque<LiveOrder>,
     pub position: f64,
+    /// Volume-weighted average entry price of the current position.
+    /// `None` while flat, or when the baseline is unknown (restored state,
+    /// position synced from the exchange).
+    avg_entry_price: Option<f64>,
+    /// Cumulative realized PnL from reducing trades (excludes fees and
+    /// mark-to-market of the open position). Feeds the drawdown kill switch
+    /// so trading results — not just inventory value — count against equity.
+    pub realized_pnl: f64,
     max_position_usd: f64,
     pub inventory_delta: f64,
     total_order: usize,
@@ -226,6 +234,8 @@ impl QuoteGenerator {
             live_buys_orders: VecDeque::new(),
             live_sells_orders: VecDeque::new(),
             position: 0.0,
+            avg_entry_price: None,
+            realized_pnl: 0.0,
             inventory_delta: 0.0,
             max_position_usd: QuoteGenerator::update_max(asset, leverage),
             total_order: orders_per_side,
@@ -262,14 +272,20 @@ impl QuoteGenerator {
     pub fn snapshot_state(&self) -> SymbolState {
         SymbolState {
             position: self.position,
+            avg_entry_price: self.avg_entry_price,
+            realized_pnl: self.realized_pnl,
             live_buys: self.live_buys_orders.iter().cloned().collect(),
             live_sells: self.live_sells_orders.iter().cloned().collect(),
         }
     }
 
     /// Restores a previously saved state (position and live order queues).
+    /// The average entry price may be missing in state files written by an
+    /// older version; it is left `None` and re-anchored by the next fill.
     pub fn restore_state(&mut self, state: SymbolState) {
         self.position = state.position;
+        self.avg_entry_price = state.avg_entry_price;
+        self.realized_pnl = state.realized_pnl;
         self.live_buys_orders = state.live_buys.into();
         self.live_sells_orders = state.live_sells.into();
         sort_grid(&mut self.live_buys_orders, 1);
@@ -300,13 +316,17 @@ impl QuoteGenerator {
     /// Structured stats summary for shutdown/logging.
     pub fn stats_summary(&self) -> String {
         format!(
-            "grid_refreshes={} grid_amends={} fills={} rebalances={} adverse_ratio={:.3} position={:.6}",
+            "grid_refreshes={} grid_amends={} fills={} rebalances={} adverse_ratio={:.3} position={:.6} realized_pnl={:.4} avg_entry={}",
             self.grid_refreshes,
             self.grid_amends,
             self.total_fills,
             self.rebalance_count,
             self.adverse_ratio,
-            self.position
+            self.position,
+            self.realized_pnl,
+            self.avg_entry_price
+                .map(|p| format!("{:.4}", p))
+                .unwrap_or_else(|| "unknown".to_string())
         )
     }
 
@@ -335,7 +355,11 @@ impl QuoteGenerator {
 
     /// Records the highest cumulative fill quantity for an order id.
     fn market_fill_set(&mut self, order_id: String, qty: f64) {
-        if let Some(entry) = self.market_fill_seen.iter_mut().find(|(id, _)| *id == order_id) {
+        if let Some(entry) = self
+            .market_fill_seen
+            .iter_mut()
+            .find(|(id, _)| *id == order_id)
+        {
             entry.1 = entry.1.max(qty);
             return;
         }
@@ -375,6 +399,10 @@ impl QuoteGenerator {
     }
 
     /// Reconciles the local position with the exchange's reported position.
+    /// When the exchange disagrees with the local bookkeeping, the average
+    /// entry price becomes unknown (we cannot attribute the gap to fills we
+    /// saw) and is re-anchored by the next fill; realized PnL stays
+    /// cumulative so the risk monitor never understates it.
     pub async fn sync_position(&mut self, symbol: &str) {
         match self.client.sync_position(symbol).await {
             Ok(pos) => {
@@ -384,6 +412,7 @@ impl QuoteGenerator {
                         symbol, self.position, pos
                     );
                     self.position = pos;
+                    self.avg_entry_price = None;
                 }
             }
             Err(e) => eprintln!("Failed to sync position for {}: {}", symbol, e),
@@ -488,10 +517,7 @@ impl QuoteGenerator {
             let res_shift = -gamma * self.position * sigma * sigma * tau;
             let as_spread =
                 gamma * sigma * sigma * tau + (2.0 / gamma) * (1.0 + gamma / kappa).ln();
-            (
-                start + res_shift,
-                base_spread.max(as_spread),
-            )
+            (start + res_shift, base_spread.max(as_spread))
         } else {
             (start, base_spread)
         };
@@ -784,6 +810,46 @@ impl QuoteGenerator {
         }
     }
 
+    /// Applies a fill to the running position, maintaining the
+    /// volume-weighted average entry price and the realized PnL from
+    /// reducing trades.
+    ///
+    /// Same-direction fills extend the average entry (weighted by size);
+    /// reducing fills realize `(price - avg_entry) * closed * sign(position)`
+    /// (so a short cover profits when the exit price is below the entry);
+    /// crossing the zero line re-anchors the average entry at the crossing
+    /// fill's price. When the average entry is unknown (`None`, e.g. after
+    /// a position re-sync) reducing fills conservatively realize nothing.
+    fn position_update(&mut self, is_buy: bool, delta: f64, price: f64) {
+        let d = if is_buy { delta } else { -delta };
+        if d == 0.0 {
+            return;
+        }
+        let q = self.position;
+        let new_q = q + d;
+        if q == 0.0 {
+            // Fresh position (possibly re-anchoring after a cross-zero).
+            self.avg_entry_price = Some(price);
+        } else if q * d > 0.0 {
+            // Same direction: extend the average entry, weighted by size.
+            let avg = self.avg_entry_price.unwrap_or(price);
+            self.avg_entry_price = Some((avg * q.abs() + price * d.abs()) / new_q.abs());
+        } else {
+            // Reducing: realize PnL on the closed portion.
+            let closed = d.abs().min(q.abs());
+            if let Some(avg) = self.avg_entry_price {
+                self.realized_pnl += (price - avg) * closed * q.signum();
+            }
+            if new_q == 0.0 {
+                self.avg_entry_price = None;
+            } else if q.signum() != new_q.signum() {
+                // Crossed the zero line: the new leg starts at this price.
+                self.avg_entry_price = Some(price);
+            }
+        }
+        self.position = new_q;
+    }
+
     /// Processes private execution data and updates the position and live
     /// order queues for any fills.
     ///
@@ -829,19 +895,22 @@ impl QuoteGenerator {
             // Normalize side casing ("Buy"/"BUY"/"buy").
             let is_buy = side.eq_ignore_ascii_case("buy");
 
+            // Phase 1: locate the live order and apply the bookkeeping change
+            // to the queue while it is borrowed. The position accounting and
+            // the rest of the fill bookkeeping happen *after* the borrow ends
+            // (they mutate other fields of `self`, which cannot overlap with
+            // the queue borrow).
             let matched = {
                 let queue = if is_buy {
                     &mut self.live_buys_orders
                 } else {
                     &mut self.live_sells_orders
                 };
-                let mut matched = false;
+                let mut found = None;
                 for i in 0..queue.len() {
                     if queue[i].order_id != order_id {
                         continue;
                     }
-                    matched = true;
-
                     let remaining = (queue[i].qty - queue[i].filled_qty).max(0.0);
                     let delta = if cumulative {
                         (exec_qty_float - queue[i].filled_qty).max(0.0)
@@ -849,71 +918,77 @@ impl QuoteGenerator {
                         exec_qty_float
                     }
                     .min(remaining);
-
+                    let quote_price = queue[i].price;
                     if delta > 0.0 {
-                        fill_occurred = true;
-                        self.total_fills += 1;
                         queue[i].filled_qty += delta;
-                        let mut roundtrip_ratio = None;
-                        if is_buy {
-                            self.position += delta;
-                            // Open a roundtrip leg for the adverse-selection
-                            // monitor (bounded so unpaired legs cannot grow).
-                            if self.open_buy_entries.len() >= 10_000 {
-                                self.open_buy_entries.pop_front();
-                            }
-                            self.open_buy_entries.push_back((exec_price, queue[i].price));
-                        } else {
-                            self.position -= delta;
-                            // Close the oldest buy leg FIFO and compare the
-                            // realized spread against the quoted spread.
-                            if let Some((buy_exec, buy_quote)) = self.open_buy_entries.pop_front() {
-                                let realized = exec_price - buy_exec;
-                                let quoted = queue[i].price - buy_quote;
-                                if quoted > 0.0 && realized.is_finite() {
-                                    let ratio = realized / quoted;
-                                    let n = self.spread_roundtrips as f64;
-                                    self.adverse_ratio =
-                                        self.adverse_ratio * (n / (n + 1.0)) + ratio / (n + 1.0);
-                                    self.spread_roundtrips += 1;
-                                    roundtrip_ratio = Some(ratio);
-                                }
-                            }
-                        }
-                        // Telemetry record (capped).
-                        if self.fill_log.len() >= 2000 {
-                            self.fill_log.pop_front();
-                        }
-                        self.fill_log.push_back(FillRecord {
-                            ts: exec_time,
-                            side: if is_buy { "Buy".to_string() } else { "Sell".to_string() },
-                            qty: delta,
-                            price: exec_price,
-                            maker: true,
-                            adverse_ratio: roundtrip_ratio,
-                        });
-                        if is_buy {
-                            println!(
-                                "Buy order filled: ID {}, Qty {}, New position {:.6}",
-                                order_id, delta, self.position
-                            );
-                        } else {
-                            println!(
-                                "Sell order filled: ID {}, Qty {}, New position {:.6}",
-                                order_id, delta, self.position
-                            );
-                        }
                     }
-
                     if queue[i].filled_qty >= queue[i].qty {
                         queue.remove(i);
                     }
+                    found = Some((delta, quote_price));
                     break;
                 }
-                matched
+                found
             };
 
-            if !matched {
+            if let Some((delta, quote_price)) = matched {
+                if delta > 0.0 {
+                    fill_occurred = true;
+                    self.total_fills += 1;
+                    self.position_update(is_buy, delta, exec_price);
+                    let mut roundtrip_ratio = None;
+                    if is_buy {
+                        // Open a roundtrip leg for the adverse-selection
+                        // monitor (bounded so unpaired legs cannot grow).
+                        if self.open_buy_entries.len() >= 10_000 {
+                            self.open_buy_entries.pop_front();
+                        }
+                        self.open_buy_entries.push_back((exec_price, quote_price));
+                    } else {
+                        // Close the oldest buy leg FIFO and compare the
+                        // realized spread against the quoted spread.
+                        if let Some((buy_exec, buy_quote)) = self.open_buy_entries.pop_front() {
+                            let realized = exec_price - buy_exec;
+                            let quoted = quote_price - buy_quote;
+                            if quoted > 0.0 && realized.is_finite() {
+                                let ratio = realized / quoted;
+                                let n = self.spread_roundtrips as f64;
+                                self.adverse_ratio =
+                                    self.adverse_ratio * (n / (n + 1.0)) + ratio / (n + 1.0);
+                                self.spread_roundtrips += 1;
+                                roundtrip_ratio = Some(ratio);
+                            }
+                        }
+                    }
+                    // Telemetry record (capped).
+                    if self.fill_log.len() >= 2000 {
+                        self.fill_log.pop_front();
+                    }
+                    self.fill_log.push_back(FillRecord {
+                        ts: exec_time,
+                        side: if is_buy {
+                            "Buy".to_string()
+                        } else {
+                            "Sell".to_string()
+                        },
+                        qty: delta,
+                        price: exec_price,
+                        maker: true,
+                        adverse_ratio: roundtrip_ratio,
+                    });
+                    if is_buy {
+                        println!(
+                            "Buy order filled: ID {}, Qty {}, New position {:.6}",
+                            order_id, delta, self.position
+                        );
+                    } else {
+                        println!(
+                            "Sell order filled: ID {}, Qty {}, New position {:.6}",
+                            order_id, delta, self.position
+                        );
+                    }
+                }
+            } else {
                 // A fill with no matching live order is a market order we
                 // submitted for inventory rebalancing. Reconcile the position
                 // directly; the periodic sync_position keeps any drift in
@@ -929,17 +1004,17 @@ impl QuoteGenerator {
                 };
                 if delta > 0.0 {
                     fill_occurred = true;
-                    if is_buy {
-                        self.position += delta;
-                    } else {
-                        self.position -= delta;
-                    }
+                    self.position_update(is_buy, delta, exec_price);
                     if self.fill_log.len() >= 2000 {
                         self.fill_log.pop_front();
                     }
                     self.fill_log.push_back(FillRecord {
                         ts: exec_time,
-                        side: if is_buy { "Buy".to_string() } else { "Sell".to_string() },
+                        side: if is_buy {
+                            "Buy".to_string()
+                        } else {
+                            "Sell".to_string()
+                        },
                         qty: delta,
                         price: exec_price,
                         maker: false,
@@ -1032,7 +1107,13 @@ impl QuoteGenerator {
         }
         match self
             .client
-            .amend_orders(symbol, &self.live_buys_orders, &new_buys, &self.live_sells_orders, &new_sells)
+            .amend_orders(
+                symbol,
+                &self.live_buys_orders,
+                &new_buys,
+                &self.live_sells_orders,
+                &new_sells,
+            )
             .await
         {
             Ok(true) => {
@@ -1084,7 +1165,8 @@ impl QuoteGenerator {
         // Reconcile the local position with the exchange on the configured
         // cadence (default 60 seconds).
         if self.last_position_sync == 0
-            || book.last_update.saturating_sub(self.last_position_sync) > self.strategy.position_sync_ms
+            || book.last_update.saturating_sub(self.last_position_sync)
+                > self.strategy.position_sync_ms
         {
             self.sync_position(&symbol).await;
             self.last_position_sync = book.last_update;
@@ -1171,6 +1253,12 @@ impl LiveOrder {
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct SymbolState {
     pub position: f64,
+    /// Average entry price of the position; `None` when unknown.
+    #[serde(default)]
+    pub avg_entry_price: Option<f64>,
+    /// Cumulative realized PnL (excludes fees and open-position MTM).
+    #[serde(default)]
+    pub realized_pnl: f64,
     pub live_buys: Vec<LiveOrder>,
     pub live_sells: Vec<LiveOrder>,
 }
@@ -1490,19 +1578,22 @@ impl OrderManagement {
                 // time-in-force, the Binance equivalent of post-only.
                 let key = client.key.clone();
                 let secret = client.secret.clone();
-                let placements = order_array.into_iter().map(|BatchOrder(qty, price, symbol, side)| {
-                    let key = key.clone();
-                    let secret = secret.clone();
-                    async move {
-                        let api: FuturesAccount = Binance::new(Some(key), Some(secret));
-                        let result = if side < 0 {
-                            api.limit_sell(symbol, qty, price, TimeInForce::GTX).await
-                        } else {
-                            api.limit_buy(symbol, qty, price, TimeInForce::GTX).await
-                        };
-                        (result, qty, price, side)
-                    }
-                });
+                let placements =
+                    order_array
+                        .into_iter()
+                        .map(|BatchOrder(qty, price, symbol, side)| {
+                            let key = key.clone();
+                            let secret = secret.clone();
+                            async move {
+                                let api: FuturesAccount = Binance::new(Some(key), Some(secret));
+                                let result = if side < 0 {
+                                    api.limit_sell(symbol, qty, price, TimeInForce::GTX).await
+                                } else {
+                                    api.limit_buy(symbol, qty, price, TimeInForce::GTX).await
+                                };
+                                (result, qty, price, side)
+                            }
+                        });
                 let results = join_all(placements).await;
                 let mut buy_array = VecDeque::new();
                 let mut sell_array = VecDeque::new();
@@ -1556,8 +1647,12 @@ mod tests {
         book.min_notional = 1.0;
         book.post_only_max = 1000.0;
         book.update(
-            bids.iter().map(|&(p, q)| Bid { price: p, qty: q }).collect(),
-            asks.iter().map(|&(p, q)| Ask { price: p, qty: q }).collect(),
+            bids.iter()
+                .map(|&(p, q)| Bid { price: p, qty: q })
+                .collect(),
+            asks.iter()
+                .map(|&(p, q)| Ask { price: p, qty: q })
+                .collect(),
             1,
         );
         book
@@ -1605,7 +1700,12 @@ mod tests {
         let book = test_book(&[(100.0, 10.0)], &[(100.5, 10.0)]);
         let base = gen.adjusted_spread(10.0, &book, 0.0);
         let widened = gen.adjusted_spread(10.0, &book, 0.001);
-        assert!(widened > base, "vol should widen the spread: {} vs {}", widened, base);
+        assert!(
+            widened > base,
+            "vol should widen the spread: {} vs {}",
+            widened,
+            base
+        );
         // Per-second vol = 0.001 * 10, scaling 200 => +200%.
         assert!((widened / base - 3.0).abs() < 1e-9);
     }
@@ -1632,7 +1732,11 @@ mod tests {
         let mid_orders = mid_anchored.generate_quotes("BTCUSDT".to_string(), &book, 0.0, 0.0);
 
         let best_bid = |orders: &[BatchOrder]| -> f64 {
-            orders.iter().filter(|o| o.3 > 0).map(|o| o.1).fold(0.0, f64::max)
+            orders
+                .iter()
+                .filter(|o| o.3 > 0)
+                .map(|o| o.1)
+                .fold(0.0, f64::max)
         };
         assert!(
             best_bid(&anchored_orders) > best_bid(&mid_orders),
@@ -1778,7 +1882,8 @@ mod tests {
             ..Default::default()
         });
         assert!(matches!(
-            gen.out_of_bounds(&book, "BTCUSDT".to_string(), private).await,
+            gen.out_of_bounds(&book, "BTCUSDT".to_string(), private)
+                .await,
             GridAction::Replace
         ));
     }
@@ -1807,7 +1912,11 @@ mod tests {
         let plain_orders = plain.generate_quotes("BTCUSDT".to_string(), &book, 0.0, 0.0001);
 
         let best_bid = |orders: &[BatchOrder]| -> f64 {
-            orders.iter().filter(|o| o.3 > 0).map(|o| o.1).fold(0.0, f64::max)
+            orders
+                .iter()
+                .filter(|o| o.3 > 0)
+                .map(|o| o.1)
+                .fold(0.0, f64::max)
         };
         // A long position with the AS reservation price should quote lower
         // bids (reservation below the mid).
@@ -1875,6 +1984,8 @@ mod tests {
     fn state_roundtrips_through_json() {
         let mut gen = test_gen(StrategyConfig::default());
         gen.position = 3.5;
+        gen.avg_entry_price = Some(101.25);
+        gen.realized_pnl = 42.5;
         gen.live_buys_orders
             .push_back(LiveOrder::new(99.5, 2.0, "B1".to_string()));
         gen.live_sells_orders
@@ -1887,9 +1998,48 @@ mod tests {
         let mut gen2 = test_gen(StrategyConfig::default());
         gen2.restore_state(restored);
         assert_eq!(gen2.position, 3.5);
+        assert_eq!(gen2.avg_entry_price, Some(101.25));
+        assert_eq!(gen2.realized_pnl, 42.5);
         assert_eq!(gen2.live_buys_orders.len(), 1);
         assert_eq!(gen2.live_buys_orders[0].order_id, "B1");
         assert_eq!(gen2.live_sells_orders[0].order_id, "S1");
+    }
+
+    #[test]
+    fn position_accounting_tracks_realized_pnl() {
+        let mut gen = test_gen(StrategyConfig::default());
+        // Build a long at 100, then extend it at 110 (VWAP entry 105).
+        gen.position_update(true, 10.0, 100.0);
+        gen.position_update(true, 10.0, 110.0);
+        assert!((gen.avg_entry_price.unwrap() - 105.0).abs() < 1e-9);
+        assert_eq!(gen.realized_pnl, 0.0);
+
+        // Reduce 5 @ 108: (108 - 105) * 5 = +15 realized, avg unchanged.
+        gen.position_update(false, 5.0, 108.0);
+        assert!((gen.realized_pnl - 15.0).abs() < 1e-9);
+        assert!((gen.position - 15.0).abs() < 1e-9);
+        assert!((gen.avg_entry_price.unwrap() - 105.0).abs() < 1e-9);
+
+        // Flatten and cross: sell 20 @ 112 closes 15 @ +105, short 5 @ 112.
+        gen.position_update(false, 20.0, 112.0);
+        assert!((gen.realized_pnl - 120.0).abs() < 1e-9);
+        assert!((gen.position + 5.0).abs() < 1e-9);
+        assert!((gen.avg_entry_price.unwrap() - 112.0).abs() < 1e-9);
+
+        // Cover the short at 109: (112 - 109) * 5 = +15, flat again.
+        gen.position_update(true, 5.0, 109.0);
+        assert!((gen.realized_pnl - 135.0).abs() < 1e-9);
+        assert!(gen.avg_entry_price.is_none());
+        assert!(gen.position.abs() < 1e-9);
+
+        // Unknown entry: reducing realizes nothing (conservative).
+        let mut gen2 = test_gen(StrategyConfig::default());
+        gen2.position = -5.0;
+        gen2.avg_entry_price = None;
+        gen2.position_update(true, 3.0, 101.0);
+        assert_eq!(gen2.realized_pnl, 0.0);
+        assert!((gen2.position + 2.0).abs() < 1e-9);
+        assert!(gen2.avg_entry_price.is_none());
     }
 
     #[tokio::test]
@@ -1897,10 +2047,16 @@ mod tests {
         let mut gen = test_gen(StrategyConfig::default());
         let book = test_book(&[(100.0, 10.0)], &[(100.5, 10.0)]);
         for i in 0..4 {
-            gen.live_buys_orders
-                .push_back(LiveOrder::new(99.9 - i as f64 * 0.1, 1.0, format!("B{}", i)));
-            gen.live_sells_orders
-                .push_back(LiveOrder::new(100.6 + i as f64 * 0.1, 1.0, format!("S{}", i)));
+            gen.live_buys_orders.push_back(LiveOrder::new(
+                99.9 - i as f64 * 0.1,
+                1.0,
+                format!("B{}", i),
+            ));
+            gen.live_sells_orders.push_back(LiveOrder::new(
+                100.6 + i as f64 * 0.1,
+                1.0,
+                format!("S{}", i),
+            ));
         }
         gen.last_update_price = book.mid_price;
 
@@ -1911,6 +2067,9 @@ mod tests {
         assert_eq!(gen.grid_amends, 1, "grid should have been amended in place");
         assert_eq!(gen.live_buys_orders.len(), 4);
         assert_eq!(gen.live_buys_orders[0].order_id, "B0", "ids must be kept");
-        assert!(gen.live_buys_orders[0].price > 99.9, "levels should have moved up");
+        assert!(
+            gen.live_buys_orders[0].price > 99.9,
+            "levels should have moved up"
+        );
     }
 }
